@@ -1248,6 +1248,8 @@ var
   total, scale, cx, rowY, rowH, usedH, cw, tableW, tblAvail, explW, ch, vaShift: Single;
   hasBorder: Boolean;
   va: string;
+  colspan: Integer;
+  spanW: Single;
 
   procedure CollectRows(T: THTMLTag);
   var c: THTMLTag;
@@ -1268,7 +1270,8 @@ begin
     begin
       i := 0;
       for cell in r.Children do
-        if SameText(cell.TagName, 'td') or SameText(cell.TagName, 'th') then Inc(i);
+        if SameText(cell.TagName, 'td') or SameText(cell.TagName, 'th') then
+          Inc(i, Max(1, StrToIntDef(cell.GetAttribute('colspan', '1'), 1)));
       ncols := Max(ncols, i);
     end;
     if ncols = 0 then Exit(0);
@@ -1304,8 +1307,11 @@ begin
           end;
           cw := m.Width + cs.Padding.Horz + cs.BorderWidths.Horz + 8;
         end;
-        if ci < ncols then prefW[ci] := Max(prefW[ci], cw);
-        Inc(ci);
+        // a colspan cell spreads its width across the columns it covers
+        colspan := Max(1, StrToIntDef(cell.GetAttribute('colspan', '1'), 1));
+        for i := ci to Min(ci + colspan - 1, ncols - 1) do
+          prefW[i] := Max(prefW[i], cw / colspan);
+        Inc(ci, colspan);
       end;
     end;
     total := 0;
@@ -1350,11 +1356,16 @@ begin
         cbox.Tag := cell;
         cbox.Style := cs;
         rbox.Children.Add(cbox);
-        cbox.X := cx; cbox.Y := rowY; cbox.W := prefW[ci];
+        // colspan: this cell spans the next N columns; its width sums them
+        colspan := StrToIntDef(cell.GetAttribute('colspan', '1'), 1);
+        if colspan < 1 then colspan := 1;
+        spanW := 0;
+        for i := ci to Min(ci + colspan - 1, ncols - 1) do spanW := spanW + prefW[i];
+        cbox.X := cx; cbox.Y := rowY; cbox.W := spanW;
         LayoutChildren(cbox, cell, cs,
           cx + cs.BorderWidths.Left + cs.Padding.Left,
           rowY + cs.BorderWidths.Top + cs.Padding.Top,
-          prefW[ci] - cs.Padding.Horz - cs.BorderWidths.Horz, usedH);
+          spanW - cs.Padding.Horz - cs.BorderWidths.Horz, usedH);
         cbox.NaturalH := usedH + cs.Padding.Vert + cs.BorderWidths.Vert;  // before height honoring
         // honour an explicit cell height (content-box)
         ch := ResolveSize(cs.ExplicitHeight, 0);
@@ -1363,8 +1374,8 @@ begin
           usedH := Max(usedH, TComputedStyle.ParseLength(cell.GetAttribute('height'), cs.FontSize));
         cbox.H := usedH + cs.Padding.Vert + cs.BorderWidths.Vert;
         rowH := Max(rowH, cbox.H);
-        cx := cx + prefW[ci];
-        Inc(ci);
+        cx := cx + spanW;
+        Inc(ci, colspan);
       end;
       // uniform row height + vertical-align of cell content (middle/bottom)
       for i := 0 to rbox.Children.Count - 1 do
