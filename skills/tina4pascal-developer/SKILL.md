@@ -72,13 +72,27 @@ cd examples/htmlviewer && fpc -Mdelphi -Fu../../src htmlviewer.pas
 fpc -Mdelphi -Twin64 -Px86_64 -FE/tmp/w64 -FU/tmp/w64 -Fu../../src ../../tests/test_dom.pas
 ```
 
-Verification discipline: real compiles and real runs, never mocks. For
-renderer changes, produce a `--snapshot` PNG and compare against headless
-Chrome at the same viewport
-(`chrome --headless --screenshot=ref.png --window-size=1024,800 <url>`).
-For DOM/CSS changes, extend `tests/test_dom.pas` with assertions that fail
-when the change is reverted (mutation-proof, not print-and-pray). Ignore
-linker noise: `-macosx_version_min renamed` and `-multiply_defined obsolete`.
+Verification discipline: real compiles and real runs, never mocks.
+
+- **W3C reftests** — `tools/run-compliance.sh` runs the `examples/compliance/`
+  suite (currently 65/65 green). Every CSS/layout change MUST keep it green;
+  add a `<id>-test.html` + `<id>-ref.html` pair for each new feature (the ref
+  reproduces the pixels from already-supported primitives; a FAIL is a real
+  gap, never edit the 0.5% threshold to force a pass).
+- **Visual diff** — `tools/compare.sh <page>` stacks a `--snapshot` PNG over
+  headless Chrome at 1024×800 for a page.
+- **DOM/CSS unit** — extend `tests/test_dom.pas` with revert-detecting
+  assertions (mutation-proof, not print-and-pray).
+- **Memory** — `tests/leakcheck.pas` built with `-gh` exercises
+  parse→layout→refresh→free (synthetic, or any HTML file arg); heaptrc prints
+  a dump only if leaks exist, so silence == clean. Run after touching object
+  lifetimes.
+- Ignore linker noise: `-macosx_version_min renamed`, `-multiply_defined obsolete`.
+
+Latent-bug watch: FPC does NOT zero record/local fields — an uninitialised
+`Single` fed to `MeasureText` returns a garbage-huge width (this caused every
+inline-block to stack). Initialise every field of a `TInlineItem`/style record
+you construct.
 
 ## Porting from Tina4Delphi
 
