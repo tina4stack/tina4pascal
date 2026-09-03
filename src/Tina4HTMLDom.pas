@@ -2469,7 +2469,9 @@ begin
           Style.BackgroundColor := ParseColor(ColorPart);
       end;
     end
-    else
+    else if not BgVal.ToLower.Contains('gradient(') then
+      // a gradient value is handled by the gradient parser below; don't let
+      // ParseColor turn it into a bogus solid colour
       Style.BackgroundColor := ParseColor(BgVal);
   end;
   if Decls.TryGetValue('font-family', Temp) and not ShouldSkip(Temp) then

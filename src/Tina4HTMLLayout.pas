@@ -1168,6 +1168,15 @@ end;
 
 { painting }
 
+{ Midpoint of two ARGB colours (opaque result) — gradient approximation. }
+function AvgColor(A, B: TTina4Color): TTina4Color;
+begin
+  Result := $FF000000
+    or (TTina4Color((((A shr 16) and $FF) + ((B shr 16) and $FF)) div 2) shl 16)
+    or (TTina4Color((((A shr 8) and $FF) + ((B shr 8) and $FF)) div 2) shl 8)
+    or  TTina4Color(((A and $FF) + (B and $FF)) div 2);
+end;
+
 { Scale a colour's alpha channel by factor (0..1) — for CSS opacity. }
 function ScaleAlpha(C: TTina4Color; Factor: Single): TTina4Color;
 var
@@ -1197,10 +1206,17 @@ var
   sizeTxt, val: string;
   m: TTina4TextMetrics;
   didClip: Boolean;
-  op: Single;
+  op, tx, ty: Single;
+  shifted: Boolean;
   bg, bd, fg: TTina4Color;
 begin
   st := Box.Style;
+  // transform: translate — shift this box + subtree, unshift after paint
+  tx := st.TransformTranslateX;
+  ty := st.TransformTranslateY;
+  shifted := (tx <> 0) or (ty <> 0);
+  if shifted then ShiftBoxTree(Box, tx, ty);
+  try
   y := Box.Y - OffsetY;
   // CSS opacity multiplies down the subtree; visibility:hidden hides self+subtree
   op := Opacity;
@@ -1249,8 +1265,20 @@ begin
     Exit;
   end;
 
+  // box-shadow (drawn under the box; blur approximated as a hard edge)
+  if (not Hidden) and st.BoxShadow.Active and not st.BoxShadow.Inset then
+    Canvas.FillRect(
+      Box.X + st.BoxShadow.OffsetX - st.BoxShadow.SpreadRadius,
+      y + st.BoxShadow.OffsetY - st.BoxShadow.SpreadRadius,
+      Box.W + 2 * st.BoxShadow.SpreadRadius,
+      Box.H + 2 * st.BoxShadow.SpreadRadius,
+      ScaleAlpha(st.BoxShadow.Color, op));
+
   bg := ScaleAlpha(st.BackgroundColor, op);
   bd := ScaleAlpha(st.BorderColor, op);
+  // linear-gradient background approximated by the midpoint of its end stops
+  if ((bg shr 24) = 0) and st.BgGradientActive then
+    bg := ScaleAlpha(AvgColor(st.BgGradientStart, st.BgGradientEnd), op);
   if (not Hidden) and ((bg shr 24) > 0) then
   begin
     if st.MaxCornerRadius > 0 then
@@ -1333,6 +1361,9 @@ begin
     if Box.ControlKind = ckSelect then
       Canvas.DrawText(Box.X + Box.W - 18, y + st.BorderWidths.Top + st.Padding.Top,
         '▾', st.FontSize, [], TC_MUTED);
+  end;
+  finally
+    if shifted then ShiftBoxTree(Box, -tx, -ty);
   end;
 end;
 
