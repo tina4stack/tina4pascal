@@ -988,7 +988,7 @@ var
   cs, rs: TComputedStyle;
   sb: TStringBuilder;
   m: TTina4TextMetrics;
-  total, scale, cx, rowY, rowH, usedH, cw, tableW: Single;
+  total, scale, cx, rowY, rowH, usedH, cw, tableW, tblAvail, explW, ch: Single;
   hasBorder: Boolean;
 
   procedure CollectRows(T: THTMLTag);
@@ -1016,8 +1016,48 @@ begin
     if ncols = 0 then Exit(0);
 
     hasBorder := Tag.HasAttribute('border');
-    tableW := AvailW - Style.Margin.Horz;
-    if Style.ExplicitWidth >= 0 then tableW := Min(Style.ExplicitWidth, tableW);
+    tblAvail := AvailW - Style.Margin.Horz;
+    explW := ResolveSize(Style.ExplicitWidth, tblAvail);  // px or % of available
+
+    // preferred column widths: an explicit cell width is exact; otherwise
+    // content plus padding (+ a little slop for content-sized cells).
+    SetLength(prefW, ncols);
+    for i := 0 to ncols - 1 do prefW[i] := 0;
+    for r in rows do
+    begin
+      ci := 0;
+      for cell in r.Children do
+      begin
+        if not (SameText(cell.TagName, 'td') or SameText(cell.TagName, 'th')) then Continue;
+        cs := TComputedStyle.ForTag(cell, Style, FSheet);
+        cw := ResolveSize(cs.ExplicitWidth, tblAvail);
+        if cell.HasAttribute('width') then
+          cw := TComputedStyle.ParseLength(cell.GetAttribute('width'), cs.FontSize);
+        if cw >= 0 then
+          cw := cw + cs.Padding.Horz + cs.BorderWidths.Horz  // content-box + edges
+        else
+        begin
+          sb := TStringBuilder.Create;
+          try
+            CollectInlineText(cell, sb);
+            m := FCanvas.MeasureText(Trim(CollapseWS(sb.ToString)), cs.FontSize, FontStylesOf(cs));
+          finally
+            sb.Free;
+          end;
+          cw := m.Width + cs.Padding.Horz + cs.BorderWidths.Horz + 8;
+        end;
+        if ci < ncols then prefW[ci] := Max(prefW[ci], cw);
+        Inc(ci);
+      end;
+    end;
+    total := 0;
+    for i := 0 to ncols - 1 do total := total + prefW[i];
+    if total <= 0 then total := 1;
+    // auto table sizes to content; an explicit width scales columns to fit
+    if explW >= 0 then tableW := explW
+    else tableW := Min(total, tblAvail);
+    scale := tableW / total;
+    for i := 0 to ncols - 1 do prefW[i] := prefW[i] * scale;
 
     tbox := TLayoutBox.Create;
     tbox.Tag := Tag;
@@ -1026,37 +1066,6 @@ begin
     tbox.X := X + Style.Margin.Left;
     tbox.Y := Y + Style.Margin.Top;
     tbox.W := tableW;
-
-    // preferred column widths (single-line measurement)
-    SetLength(prefW, ncols);
-    for i := 0 to ncols - 1 do prefW[i] := 30;
-    for r in rows do
-    begin
-      ci := 0;
-      for cell in r.Children do
-      begin
-        if not (SameText(cell.TagName, 'td') or SameText(cell.TagName, 'th')) then Continue;
-        cs := TComputedStyle.ForTag(cell, Style, FSheet);
-        sb := TStringBuilder.Create;
-        try
-          CollectInlineText(cell, sb);
-          m := FCanvas.MeasureText(Trim(CollapseWS(sb.ToString)), cs.FontSize, FontStylesOf(cs));
-        finally
-          sb.Free;
-        end;
-        cw := m.Width + cs.Padding.Horz + 8;
-        if cell.HasAttribute('width') then
-          cw := Max(cw, TComputedStyle.ParseLength(cell.GetAttribute('width'), cs.FontSize));
-        // images in cells
-        if cs.ExplicitWidth > 0 then cw := Max(cw, cs.ExplicitWidth);
-        if ci < ncols then prefW[ci] := Max(prefW[ci], cw);
-        Inc(ci);
-      end;
-    end;
-    total := 0;
-    for i := 0 to ncols - 1 do total := total + prefW[i];
-    scale := tableW / total;
-    for i := 0 to ncols - 1 do prefW[i] := prefW[i] * scale;
 
     rowY := tbox.Y;
     for r in rows do
@@ -1088,6 +1097,11 @@ begin
           cx + cs.BorderWidths.Left + cs.Padding.Left,
           rowY + cs.BorderWidths.Top + cs.Padding.Top,
           prefW[ci] - cs.Padding.Horz - cs.BorderWidths.Horz, usedH);
+        // honour an explicit cell height (content-box)
+        ch := ResolveSize(cs.ExplicitHeight, 0);
+        if ch >= 0 then usedH := Max(usedH, ch);
+        if cell.HasAttribute('height') then
+          usedH := Max(usedH, TComputedStyle.ParseLength(cell.GetAttribute('height'), cs.FontSize));
         cbox.H := usedH + cs.Padding.Vert + cs.BorderWidths.Vert;
         rowH := Max(rowH, cbox.H);
         cx := cx + prefW[ci];

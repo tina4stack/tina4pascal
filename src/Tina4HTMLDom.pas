@@ -2253,11 +2253,7 @@ begin
     Result.Margin.Bottom := 2;
   end
   else if TN = 'table' then
-  begin
-    Result.Display := 'table';
-    Result.Margin.Top := ParentStyle.FontSize * 0.5;
-    Result.Margin.Bottom := ParentStyle.FontSize * 0.5;
-  end
+    Result.Display := 'table'  // no UA margin (browsers give tables none)
   else if TN = 'tr' then
     Result.Display := 'table-row'
   else if (TN = 'td') then
