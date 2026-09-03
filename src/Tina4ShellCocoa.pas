@@ -88,7 +88,9 @@ implementation
 
 function NSColorOf(C: TTina4Color): NSColor;
 begin
-  Result := NSColor.colorWithCalibratedRed_green_blue_alpha(
+  { sRGB, NOT calibrated/generic RGB — calibrated maps e.g. 128 to ~146 when
+    captured into the sRGB snapshot bitmap. sRGB keeps CSS values exact. }
+  Result := NSColor.colorWithSRGBRed_green_blue_alpha(
     ((C shr 16) and $FF) / 255.0,
     ((C shr 8) and $FF) / 255.0,
     (C and $FF) / 255.0,

@@ -2475,7 +2475,16 @@ begin
   if Decls.TryGetValue('font-family', Temp) and not ShouldSkip(Temp) then
     Style.FontFamily := Temp.DeQuotedString('''').DeQuotedString('"');
   if Decls.TryGetValue('font-size', Temp) and not ShouldSkip(Temp) then
-    Style.FontSize := ParseLength(Temp, ParentStyle.FontSize);
+  begin
+    Temp := Temp.Trim;
+    if Temp.EndsWith('%') then
+      // font-size:% resolves against the PARENT font-size (ParseLength would
+      // return a negative percentage marker that corrupts layout)
+      Style.FontSize := ParentStyle.FontSize *
+        StrToFloatDef(Copy(Temp, 1, Length(Temp) - 1), 100) / 100
+    else
+      Style.FontSize := ParseLength(Temp, ParentStyle.FontSize);
+  end;
   if Decls.TryGetValue('font-weight', Temp) and not ShouldSkip(Temp) then
     Style.Bold := SameText(Temp, 'bold') or SameText(Temp, 'bolder') or
       (StrToIntDef(Temp, 400) >= 500);

@@ -160,6 +160,33 @@ begin
   end;
 end;
 
+function ApplyTextTransform(const S, Transform: string): string;
+var
+  i: Integer;
+  atStart: Boolean;
+  t: string;
+begin
+  t := LowerCase(Transform);
+  if t = 'uppercase' then
+    Result := UpperCase(S)
+  else if t = 'lowercase' then
+    Result := LowerCase(S)
+  else if t = 'capitalize' then
+  begin
+    Result := LowerCase(S);
+    atStart := True;
+    for i := 1 to Length(Result) do
+      if Result[i] in [' ', #9, #10, #13] then atStart := True
+      else if atStart then
+      begin
+        Result[i] := UpCase(Result[i]);
+        atStart := False;
+      end;
+  end
+  else
+    Result := S;
+end;
+
 function CollapseWS(const S: string): string;
 var
   i: Integer;
@@ -605,6 +632,8 @@ var
     if IsTextNode(T) then
     begin
       txt := CollapseWS(T.Text);
+      if (St.TextTransform <> '') and not SameText(St.TextTransform, 'none') then
+        txt := ApplyTextTransform(txt, St.TextTransform);
       if Trim(txt) = '' then
       begin
         // whitespace-only text node between inline elements is still a space
@@ -879,7 +908,7 @@ var
   box: TLayoutBox;
   contentX, contentY, contentW, usedH: Single;
   edgeL, edgeT, edgeR, edgeB: Single;
-  mL, mR, mT, mB, ew, eh, availInner, naturalH: Single;
+  mL, mR, mT, mB, ew, eh, availInner, naturalH, mnw, mxw: Single;
   autoL, autoR: Boolean;
   ov: string;
 begin
@@ -911,6 +940,11 @@ begin
     if autoL and autoR then
       box.X := X + mL + Max(0, (availInner - box.W) / 2); // margin:0 auto centering
   end;
+  // min-width / max-width clamp (px or % resolved against availInner)
+  mnw := ResolveSize(st.MinWidth, availInner);
+  mxw := ResolveSize(st.MaxWidth, availInner);
+  if (mxw >= 0) and (box.W > mxw) then box.W := mxw;
+  if (mnw >= 0) and (box.W < mnw) then box.W := mnw;
 
   edgeL := st.BorderWidths.Left + st.Padding.Left;
   edgeT := st.BorderWidths.Top + st.Padding.Top;
@@ -1134,7 +1168,27 @@ end;
 
 { painting }
 
+{ Scale a colour's alpha channel by factor (0..1) — for CSS opacity. }
+function ScaleAlpha(C: TTina4Color; Factor: Single): TTina4Color;
+var
+  a: Integer;
+begin
+  if Factor >= 1.0 then Exit(C);
+  a := Round(((C shr 24) and $FF) * Factor);
+  if a < 0 then a := 0 else if a > 255 then a := 255;
+  Result := (TTina4Color(a) shl 24) or (C and $00FFFFFF);
+end;
+
+procedure PaintBoxEx(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single;
+  Opacity: Single; Hidden: Boolean); forward;
+
 procedure PaintBox(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single);
+begin
+  PaintBoxEx(Canvas, Box, OffsetY, 1.0, False);
+end;
+
+procedure PaintBoxEx(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single;
+  Opacity: Single; Hidden: Boolean);
 var
   i: Integer;
   r: TTextRun;
@@ -1143,9 +1197,15 @@ var
   sizeTxt, val: string;
   m: TTina4TextMetrics;
   didClip: Boolean;
+  op: Single;
+  bg, bd, fg: TTina4Color;
 begin
   st := Box.Style;
   y := Box.Y - OffsetY;
+  // CSS opacity multiplies down the subtree; visibility:hidden hides self+subtree
+  op := Opacity;
+  if (st.Opacity >= 0) and (st.Opacity < 1) then op := op * st.Opacity;
+  if SameText(st.Visibility, 'hidden') then Hidden := True;
   if Box.IsImagePlaceholder then
   begin
     if Box.ImageHandle >= 0 then
@@ -1189,20 +1249,22 @@ begin
     Exit;
   end;
 
-  if (st.BackgroundColor shr 24) > 0 then
+  bg := ScaleAlpha(st.BackgroundColor, op);
+  bd := ScaleAlpha(st.BorderColor, op);
+  if (not Hidden) and ((bg shr 24) > 0) then
   begin
     if st.MaxCornerRadius > 0 then
-      Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, st.MaxCornerRadius, st.BackgroundColor)
+      Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, st.MaxCornerRadius, bg)
     else
-      Canvas.FillRect(Box.X, y, Box.W, Box.H, st.BackgroundColor);
+      Canvas.FillRect(Box.X, y, Box.W, Box.H, bg);
   end;
-  if st.BorderWidths.Top > 0 then
+  if (not Hidden) and (st.BorderWidths.Top > 0) then
   begin
     if st.MaxCornerRadius > 0 then
       Canvas.StrokeRoundRect(Box.X, y, Box.W, Box.H, st.MaxCornerRadius,
-        st.BorderWidths.Top, st.BorderColor)
+        st.BorderWidths.Top, bd)
     else
-      Canvas.StrokeRect(Box.X, y, Box.W, Box.H, st.BorderWidths.Top, st.BorderColor);
+      Canvas.StrokeRect(Box.X, y, Box.W, Box.H, st.BorderWidths.Top, bd);
   end;
 
   // scrollable / clipped inner box: clip, then draw content shifted by ScrollTop.
@@ -1219,13 +1281,15 @@ begin
     innerOfs := OffsetY + Box.ScrollTop;
   end;
 
-  for i := 0 to Box.Runs.Count - 1 do
-  begin
-    r := Box.Runs[i];
-    Canvas.DrawText(r.X, r.Y - innerOfs, r.Text, r.FontSize, r.Styles, r.Color);
-  end;
+  if not Hidden then
+    for i := 0 to Box.Runs.Count - 1 do
+    begin
+      r := Box.Runs[i];
+      fg := ScaleAlpha(r.Color, op);
+      Canvas.DrawText(r.X, r.Y - innerOfs, r.Text, r.FontSize, r.Styles, fg);
+    end;
   for i := 0 to Box.Children.Count - 1 do
-    PaintBox(Canvas, Box.Children[i], innerOfs);
+    PaintBoxEx(Canvas, Box.Children[i], innerOfs, op, Hidden);
 
   if didClip then
   begin
