@@ -599,10 +599,12 @@ var
   isCol: Boolean;
   dir, jc, ai: string;
   sumMain, freeMain, curr, gap, crossOff, usedFixed, sumGrow, targetW: Single;
+  lineW, lineH, lineFree, lx, lgap, lineY, totalH: Single;
   baseW, growF: array of Single;
   sb: TStringBuilder;
   m: TTina4TextMetrics;
-  i: Integer;
+  i, k, lineEnd: Integer;
+  fw: string;
 begin
   st := TComputedStyle.ForTag(Tag, ParentStyle, FSheet);
   if LowerCase(st.Display) = 'none' then Exit(0);
@@ -695,7 +697,9 @@ begin
       begin
         cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
         targetW := baseW[i];
-        if (growF[i] > 0) and (sumGrow > 0) then
+        // grow only when NOT wrapping (wrapped items keep their base size)
+        if (growF[i] > 0) and (sumGrow > 0) and
+           not ((LowerCase(st.FlexWrap) = 'wrap') or (LowerCase(st.FlexWrap) = 'wrap-reverse')) then
           targetW := targetW + freeMain * growF[i] / sumGrow;
         cs.ExplicitWidth := targetW;    // force the resolved main size
         cs.BoxSizing := 'border-box';
@@ -723,7 +727,49 @@ begin
       else contentH := Max(contentH, eh);
     end;
 
-    // main-axis packing
+    // flex-wrap (row): greedy-pack items into lines, stack on the cross axis
+    fw := LowerCase(st.FlexWrap);
+    if (not isCol) and ((fw = 'wrap') or (fw = 'wrap-reverse')) then
+    begin
+      lineY := contentY; totalH := 0; i := 0;
+      while i < items.Count do
+      begin
+        lineW := 0; lineEnd := i;
+        while (lineEnd < items.Count) and
+              ((lineEnd = i) or (lineW + items[lineEnd].W <= contentW + 0.5)) do
+        begin
+          lineW := lineW + items[lineEnd].W;
+          Inc(lineEnd);
+        end;
+        lineH := 0;
+        for k := i to lineEnd - 1 do lineH := Max(lineH, items[k].H);
+        lineFree := contentW - lineW; if lineFree < 0 then lineFree := 0;
+        lx := 0; lgap := 0;
+        if jc = 'center' then lx := lineFree / 2
+        else if (jc = 'flex-end') or (jc = 'end') then lx := lineFree
+        else if (jc = 'space-between') and (lineEnd - i > 1) then lgap := lineFree / (lineEnd - i - 1)
+        else if (jc = 'space-around') and (lineEnd - i > 0) then
+        begin lx := lineFree / ((lineEnd - i) * 2); lgap := lineFree / (lineEnd - i); end;
+        for k := i to lineEnd - 1 do
+        begin
+          cb := items[k];
+          if ai = 'center' then crossOff := (lineH - cb.H) / 2
+          else if (ai = 'flex-end') or (ai = 'end') then crossOff := lineH - cb.H
+          else crossOff := 0;
+          ShiftBoxTree(cb, contentX + lx, lineY + crossOff);
+          lx := lx + cb.W + lgap;
+        end;
+        lineY := lineY + lineH;
+        totalH := totalH + lineH;
+        i := lineEnd;
+      end;
+      if totalH > contentH then contentH := totalH;
+      box.H := contentH + edgeT + edgeB;
+      Result := box.H + mT + mB;
+      Exit;   // finally frees items/itemTags
+    end;
+
+    // main-axis packing (single line)
     sumMain := 0;
     for i := 0 to items.Count - 1 do
       if isCol then sumMain := sumMain + items[i].H

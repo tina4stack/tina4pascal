@@ -287,6 +287,7 @@ type
     CSSFloat: string;      // 'none' (default) | 'left' | 'right'
     // CSS Flexbox (subset)
     FlexDirection: string;
+    FlexWrap: string;
     JustifyContent: string;
     AlignItems: string;
     FlexGrow: Single;
@@ -1855,6 +1856,7 @@ begin
   Result.OutlineOffset := 0;
   Result.CSSFloat := 'none';
   Result.FlexDirection := 'row';
+  Result.FlexWrap := 'nowrap';
   Result.JustifyContent := 'flex-start';
   Result.AlignItems := 'stretch';
   Result.FlexGrow := 0;
@@ -2135,6 +2137,7 @@ begin
   Result.OutlineOffset := 0;
   Result.CSSFloat := 'none';
   Result.FlexDirection := 'row';
+  Result.FlexWrap := 'nowrap';
   Result.JustifyContent := 'flex-start';
   Result.AlignItems := 'stretch';
   Result.FlexGrow := 0;
@@ -2894,6 +2897,8 @@ begin
   // Flexbox container properties
   if Decls.TryGetValue('flex-direction', Temp) and not ShouldSkip(Temp) then
     Style.FlexDirection := Temp.Trim.ToLower;
+  if Decls.TryGetValue('flex-wrap', Temp) and not ShouldSkip(Temp) then
+    Style.FlexWrap := Temp.Trim.ToLower;
   if Decls.TryGetValue('justify-content', Temp) and not ShouldSkip(Temp) then
     Style.JustifyContent := Temp.Trim.ToLower;
   if Decls.TryGetValue('align-items', Temp) and not ShouldSkip(Temp) then
