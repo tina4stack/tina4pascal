@@ -23,6 +23,12 @@ type
     Color: TTina4Color;
   end;
 
+  { Form controls are DRAWN by the renderer (no native widgets); their state
+    lives in the DOM: input/textarea in 'value', checkbox/radio in 'checked',
+    select in 'value'. The app mutates attributes and rebuilds. }
+  TControlKind = (ckNone, ckTextInput, ckTextarea, ckCheckbox, ckRadio,
+    ckSelect, ckButton);
+
   TLayoutBox = class
   public
     Tag: THTMLTag;                 // may be nil for anonymous boxes
@@ -32,6 +38,10 @@ type
     Runs: TList<TTextRun>;
     IsImagePlaceholder: Boolean;
     ImageHandle: Integer;          // canvas image handle, -1 = none/failed
+    ControlKind: TControlKind;
+    Scrollable: Boolean;           // overflow-y auto/scroll with an explicit height
+    ScrollTop: Single;
+    MaxScroll: Single;
     constructor Create;
     destructor Destroy; override;
   end;
@@ -40,6 +50,7 @@ type
   private
     FCanvas: TTina4Canvas;
     FSheet: TCSSStyleSheet;
+    FBaseStyle: TComputedStyle;
     function FontStylesOf(const St: TComputedStyle): TTina4FontStyles;
     function LineHeightOf(const St: TComputedStyle): Single;
     procedure LayoutChildren(Box: TLayoutBox; Tag: THTMLTag;
@@ -49,14 +60,28 @@ type
     function LayoutTable(Parent: TLayoutBox; Tag: THTMLTag;
       const Style: TComputedStyle; X, Y, AvailW: Single): Single;
     function MakeInlineBlock(Tag: THTMLTag; const St: TComputedStyle): TLayoutBox;
+    function MakeInlineContainer(Tag: THTMLTag; const St: TComputedStyle;
+      AvailW: Single): TLayoutBox;
+    function MakeControl(Tag: THTMLTag; St: TComputedStyle): TLayoutBox;
     procedure CollectInlineText(Tag: THTMLTag; SB: TStringBuilder);
   public
     constructor Create(Canvas: TTina4Canvas; Sheet: TCSSStyleSheet);
     function Build(Root: THTMLTag; ViewportW: Single): TLayoutBox;
+    { Recompute styles only (hover/active/focus flips) without relayout —
+      geometry is untouched, so this is cheap enough for mouse-move. }
+    procedure RefreshStyles(Box: TLayoutBox); overload;
+    procedure RefreshStyles(Box: TLayoutBox; const ParentStyle: TComputedStyle); overload;
   end;
 
 procedure PaintBox(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single);
 function HitTest(Box: TLayoutBox; X, Y: Single): THTMLTag;
+{ Deepest overflow-scrollable box containing the point (doc coords). }
+function FindScrollBox(Box: TLayoutBox; X, Y: Single): TLayoutBox;
+{ Box whose Tag = T (first match). }
+function FindBoxForTag(Box: TLayoutBox; T: THTMLTag): TLayoutBox;
+{ Concatenated descendant text of a tag (entities already decoded). }
+function InnerText(Tag: THTMLTag): string;
+function IsFormControlTag(const Name: string): Boolean;
 
 implementation
 
@@ -101,6 +126,36 @@ begin
   if V >= 0 then Result := V
   else if (V < -1.5) and (V > -1000) and (V <> -3) then Result := Avail * (-V) / 100
   else Result := -1; // auto
+end;
+
+function IsFormControlTag(const Name: string): Boolean;
+begin
+  Result := SameText(Name, 'input') or SameText(Name, 'textarea') or
+    SameText(Name, 'select') or SameText(Name, 'button');
+end;
+
+procedure CollectText(Tag: THTMLTag; SB: TStringBuilder);
+var
+  c: THTMLTag;
+begin
+  if Tag.TagName = '#text' then
+    SB.Append(Tag.Text)
+  else
+    for c in Tag.Children do
+      CollectText(c, SB);
+end;
+
+function InnerText(Tag: THTMLTag): string;
+var
+  sb: TStringBuilder;
+begin
+  sb := TStringBuilder.Create;
+  try
+    CollectText(Tag, sb);
+    Result := Trim(sb.ToString);
+  finally
+    sb.Free;
+  end;
 end;
 
 function CollapseWS(const S: string): string;
@@ -212,6 +267,216 @@ begin
   end;
 end;
 
+function ControlKindOf(Tag: THTMLTag): TControlKind;
+var
+  typ: string;
+begin
+  typ := LowerCase(Tag.GetAttribute('type', 'text'));
+  if SameText(Tag.TagName, 'textarea') then Result := ckTextarea
+  else if SameText(Tag.TagName, 'select') then Result := ckSelect
+  else if SameText(Tag.TagName, 'button') then Result := ckButton
+  else if typ = 'checkbox' then Result := ckCheckbox
+  else if typ = 'radio' then Result := ckRadio
+  else if (typ = 'submit') or (typ = 'button') then Result := ckButton
+  else Result := ckTextInput;
+end;
+
+{ UA fallback chrome for controls the stylesheet didn't style; also the
+  focus ring. Shared by MakeControl and RefreshStyles. }
+procedure ApplyControlChrome(var St: TComputedStyle; Kind: TControlKind; Focused: Boolean);
+begin
+  case Kind of
+    ckTextInput, ckTextarea, ckSelect:
+      begin
+        if St.BorderWidths.Top <= 0 then
+        begin
+          St.SetBorderWidth(1);
+          St.SetBorderColor($FFADB5BD);
+        end;
+        if not St.Padding.Any then begin St.Padding.SetAll(6); St.Padding.Left := 10; St.Padding.Right := 10; end;
+        if (St.BackgroundColor shr 24) = 0 then St.BackgroundColor := $FFFFFFFF;
+        if St.BorderRadius < 0 then St.BorderRadius := 4;
+      end;
+    ckButton:
+      begin
+        if (St.BackgroundColor shr 24) = 0 then St.BackgroundColor := $FFE9ECEF;
+        if not St.Padding.Any then begin St.Padding.SetAll(6); St.Padding.Left := 14; St.Padding.Right := 14; end;
+        if St.BorderRadius < 0 then St.BorderRadius := 4;
+      end;
+  end;
+  if Focused and (Kind in [ckTextInput, ckTextarea, ckSelect]) then
+  begin
+    St.SetBorderWidth(2);
+    St.SetBorderColor($FF0D6EFD); // focus ring
+  end;
+end;
+
+{ Build a layout box for a form control. Runs are stored relative to the
+  box origin (FlushLine shifts them to absolute, same as inline-blocks). }
+function TLayoutEngine.MakeControl(Tag: THTMLTag; St: TComputedStyle): TLayoutBox;
+var
+  kind: TControlKind;
+  txt, ph: string;
+  m: TTina4TextMetrics;
+  run: TTextRun;
+  padH, padV, lineH, wChars: Single;
+  rows, i: Integer;
+  lines: TStringList;
+  opt: THTMLTag;
+begin
+  kind := ControlKindOf(Tag);
+  Result := TLayoutBox.Create;
+  Result.Tag := Tag;
+  Result.ControlKind := kind;
+  ApplyControlChrome(St, kind, Tag.IsFocused);
+  Result.Style := St;
+
+  padH := St.Padding.Horz + St.BorderWidths.Horz;
+  padV := St.Padding.Vert + St.BorderWidths.Vert;
+  lineH := LineHeightOf(St);
+
+  case kind of
+    ckCheckbox, ckRadio:
+      begin
+        Result.W := 16;
+        Result.H := 16;
+        Exit;
+      end;
+    ckButton:
+      begin
+        txt := Trim(Tag.GetAttribute('value'));
+        if txt = '' then txt := InnerText(Tag);
+        if txt = '' then txt := 'Submit';
+      end;
+    ckSelect:
+      begin
+        txt := '';
+        // show the option matching 'value', else the first option's text
+        for opt in Tag.Children do
+          if SameText(opt.TagName, 'option') then
+          begin
+            if txt = '' then txt := InnerText(opt);
+            if Tag.HasAttribute('value') and
+               ((opt.GetAttribute('value') = Tag.GetAttribute('value')) or
+                (InnerText(opt) = Tag.GetAttribute('value'))) then
+            begin
+              txt := InnerText(opt);
+              Break;
+            end;
+          end;
+      end;
+    ckTextarea:
+      txt := Tag.GetAttribute('value', InnerText(Tag));
+  else // ckTextInput
+    txt := Tag.GetAttribute('value');
+  end;
+
+  // width: explicit → size attr (chars) → sensible default
+  wChars := 0;
+  if Tag.HasAttribute('size') then
+    wChars := StrToFloatDef(Tag.GetAttribute('size'), 0) * St.FontSize * 0.55;
+  if ResolveSize(St.ExplicitWidth, 0) >= 0 then
+    Result.W := St.ExplicitWidth + padH
+  else if wChars > 0 then
+    Result.W := wChars + padH
+  else if kind = ckButton then
+    Result.W := FCanvas.MeasureText(txt, St.FontSize, FontStylesOf(St)).Width + padH
+  else
+    Result.W := 220 + padH;
+
+  if kind = ckTextarea then
+  begin
+    rows := StrToIntDef(Tag.GetAttribute('rows'), 4);
+    Result.H := rows * lineH + padV;
+    // naive wrap of the value into lines
+    lines := TStringList.Create;
+    try
+      lines.Text := txt;
+      for i := 0 to Min(lines.Count - 1, rows * 4) do
+      begin
+        run.Text := lines[i];
+        run.X := St.BorderWidths.Left + St.Padding.Left;
+        run.Y := St.BorderWidths.Top + St.Padding.Top + i * lineH;
+        run.FontSize := St.FontSize;
+        run.Styles := FontStylesOf(St);
+        run.Color := St.Color;
+        Result.Runs.Add(run);
+      end;
+    finally
+      lines.Free;
+    end;
+    Exit;
+  end;
+
+  Result.H := lineH + padV;
+  ph := '';
+  if (txt = '') and (kind = ckTextInput) then ph := Tag.GetAttribute('placeholder');
+  run.Text := txt;
+  if ph <> '' then run.Text := ph;
+  if run.Text <> '' then
+  begin
+    run.X := St.BorderWidths.Left + St.Padding.Left;
+    run.Y := St.BorderWidths.Top + St.Padding.Top;
+    run.FontSize := St.FontSize;
+    run.Styles := FontStylesOf(St);
+    if ph <> '' then run.Color := $FF9CA3AF else run.Color := St.Color;
+    if kind = ckButton then
+    begin // center button captions
+      m := FCanvas.MeasureText(run.Text, St.FontSize, run.Styles);
+      run.X := (Result.W - m.Width) / 2;
+    end;
+    Result.Runs.Add(run);
+  end;
+end;
+
+{ Move a laid-out subtree (boxes + runs) by a delta — atomic inline items
+  are built at origin (0,0) and shifted into place by FlushLine. }
+procedure ShiftBoxTree(B: TLayoutBox; DX, DY: Single);
+var
+  i: Integer;
+  r: TTextRun;
+begin
+  B.X := B.X + DX;
+  B.Y := B.Y + DY;
+  for i := 0 to B.Runs.Count - 1 do
+  begin
+    r := B.Runs[i];
+    r.X := r.X + DX;
+    r.Y := r.Y + DY;
+    B.Runs[i] := r;
+  end;
+  for i := 0 to B.Children.Count - 1 do
+    ShiftBoxTree(B.Children[i], DX, DY);
+end;
+
+{ Full inner layout for an inline-block CONTAINER (block children, explicit
+  width) — e.g. side-by-side panels. Built at origin, shifted by FlushLine. }
+function TLayoutEngine.MakeInlineContainer(Tag: THTMLTag; const St: TComputedStyle;
+  AvailW: Single): TLayoutBox;
+var
+  edgeL, edgeT, edgeR, edgeB, w, usedH, eh: Single;
+begin
+  Result := TLayoutBox.Create;
+  Result.Tag := Tag;
+  Result.Style := St;
+  edgeL := St.BorderWidths.Left + St.Padding.Left;
+  edgeT := St.BorderWidths.Top + St.Padding.Top;
+  edgeR := St.BorderWidths.Right + St.Padding.Right;
+  edgeB := St.BorderWidths.Bottom + St.Padding.Bottom;
+  w := ResolveSize(St.ExplicitWidth, AvailW);
+  if w < 0 then w := AvailW;
+  if not SameText(St.BoxSizing, 'border-box') then w := w + edgeL + edgeR;
+  Result.W := Min(w, AvailW);
+  LayoutChildren(Result, Tag, St, edgeL, edgeT, Result.W - edgeL - edgeR, usedH);
+  eh := ResolveSize(St.ExplicitHeight, 0);
+  if eh >= 0 then
+  begin
+    if SameText(St.BoxSizing, 'border-box') then usedH := Max(0, eh - edgeT - edgeB)
+    else usedH := eh;
+  end;
+  Result.H := usedH + edgeT + edgeB;
+end;
+
 type
   TInlineItem = record
     Text: string;          // '' for atomic boxes
@@ -221,6 +486,7 @@ type
     Styles: TTina4FontStyles;
     Color: TTina4Color;
     SpaceBefore: Boolean;
+    LineBreak: Boolean;    // <br>
   end;
 
 { Lay out the mixed inline/block children of Tag into Box.
@@ -230,6 +496,22 @@ procedure TLayoutEngine.LayoutChildren(Box: TLayoutBox; Tag: THTMLTag;
 var
   y: Single;
   items: TList<TInlineItem>;
+
+  function HasBlockChild(T: THTMLTag; const St: TComputedStyle): Boolean;
+  var
+    c: THTMLTag;
+    ccs: TComputedStyle;
+    d: string;
+  begin
+    Result := False;
+    for c in T.Children do
+    begin
+      if IsTextNode(c) then Continue;
+      ccs := TComputedStyle.ForTag(c, St, FSheet);
+      d := LowerCase(ccs.Display);
+      if (d = 'block') or (d = 'table') or (d = 'list-item') then Exit(True);
+    end;
+  end;
 
   procedure GatherInline(T: THTMLTag; const St: TComputedStyle);
   var
@@ -243,6 +525,17 @@ var
     leadingSpace: Boolean;
     iw, ih: Single;
   begin
+    it.LineBreak := False;
+    if SameText(T.TagName, 'br') then
+    begin
+      it.Text := ''; it.Box := nil; it.W := 0;
+      it.H := LineHeightOf(St);
+      it.FontSize := St.FontSize; it.Styles := []; it.Color := 0;
+      it.SpaceBefore := False;
+      it.LineBreak := True;
+      items.Add(it);
+      Exit;
+    end;
     if IsTextNode(T) then
     begin
       txt := CollapseWS(T.Text);
@@ -316,14 +609,29 @@ var
       items.Add(it);
       Exit;
     end;
+    if IsFormControlTag(T.TagName) then
+    begin
+      it.Text := '';
+      it.Box := MakeControl(T, cs);
+      it.W := it.Box.W; it.H := it.Box.H;
+      it.SpaceBefore := items.Count > 0;
+      Box.Children.Add(it.Box);
+      items.Add(it);
+      Exit;
+    end;
     { An inline element with visible box styling (background, border,
       padding) is treated as an atomic inline-block so its box paints —
-      covers Bootstrap badges and styled <span>s. }
-    if (LowerCase(cs.Display) = 'inline-block') or SameText(T.TagName, 'button')
+      covers Bootstrap badges and styled <span>s. True inline-block
+      CONTAINERS (block children or an explicit width) get full inner
+      layout instead of the single-line fast path. }
+    if (LowerCase(cs.Display) = 'inline-block')
       or ((cs.BackgroundColor shr 24 > 0) or cs.Padding.Any or (cs.BorderWidths.Top > 0)) then
     begin
       it.Text := '';
-      it.Box := MakeInlineBlock(T, cs);
+      if (ResolveSize(cs.ExplicitWidth, CW) >= 0) or HasBlockChild(T, cs) then
+        it.Box := MakeInlineContainer(T, cs, CW)
+      else
+        it.Box := MakeInlineBlock(T, cs);
       it.W := it.Box.W; it.H := it.Box.H;
       it.SpaceBefore := items.Count > 0;
       Box.Children.Add(it.Box);
@@ -369,16 +677,10 @@ var
         x := x + FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width;
       if it.Box <> nil then
       begin
-        it.Box.X := x;
-        it.Box.Y := lineTop + (lineH - it.H); // bottom-align atoms
-        // shift its relative runs to absolute
-        for j := 0 to it.Box.Runs.Count - 1 do
-        begin
-          r := it.Box.Runs[j];
-          r.X := r.X + it.Box.X;
-          r.Y := r.Y + it.Box.Y;
-          it.Box.Runs[j] := r;
-        end;
+        if SameText(it.Box.Style.VerticalAlign, 'top') then
+          ShiftBoxTree(it.Box, x, lineTop)
+        else
+          ShiftBoxTree(it.Box, x, lineTop + (lineH - it.H)); // bottom-align
       end
       else
       begin
@@ -409,6 +711,13 @@ var
       for i := 0 to items.Count - 1 do
       begin
         it := items[i];
+        if it.LineBreak then
+        begin // <br>: hard break, even mid-line
+          FlushLine(i, lineItems, y, Max(lineH, it.H));
+          y := y + Max(lineH, it.H);
+          curW := 0; lineH := 0;
+          Continue;
+        end;
         spaceW := 0;
         if it.SpaceBefore and (lineItems.Count > 0) then
           spaceW := FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width;
@@ -455,7 +764,7 @@ begin
       disp := DisplayOf(c, cs);
       if disp = 'none' then Continue;
       if (disp = 'inline') or (disp = 'inline-block') or SameText(c.TagName, 'img')
-        or SameText(c.TagName, 'button') then
+        or IsFormControlTag(c.TagName) then
       begin
         GatherInline(c, ParentStyle);
         hadInline := True;
@@ -489,8 +798,9 @@ var
   box: TLayoutBox;
   contentX, contentY, contentW, usedH: Single;
   edgeL, edgeT, edgeR, edgeB: Single;
-  mL, mR, mT, mB, ew, eh, availInner: Single;
+  mL, mR, mT, mB, ew, eh, availInner, naturalH: Single;
   autoL, autoR: Boolean;
+  ov: string;
 begin
   st := TComputedStyle.ForTag(Tag, ParentStyle, FSheet);
   if LowerCase(st.Display) = 'none' then Exit(0);
@@ -533,10 +843,19 @@ begin
   eh := ResolveSize(st.ExplicitHeight, 0);
   if eh >= 0 then
   begin
+    naturalH := usedH;
     if SameText(st.BoxSizing, 'border-box') then
       usedH := Max(0, eh - edgeT - edgeB)
     else
       usedH := eh;
+    // overflow-y: auto/scroll → inner scroller owned by the renderer
+    ov := LowerCase(st.OverflowY);
+    if ov = '' then ov := LowerCase(st.Overflow);
+    if ((ov = 'auto') or (ov = 'scroll') or (ov = 'hidden')) and (naturalH > usedH) then
+    begin
+      box.Scrollable := (ov <> 'hidden');
+      box.MaxScroll := naturalH - usedH;
+    end;
   end;
   box.H := usedH + edgeT + edgeB;
 
@@ -694,6 +1013,7 @@ begin
   base.FontFamily := 'Helvetica';
   base.FontSize := 16;       // web default; Delphi default is 14
   base.LineHeight := 1.5;    // bootstrap body line-height
+  FBaseStyle := base;
   body := FindBody(Root);
   if body = nil then body := Root;
   Result := TLayoutBox.Create;
@@ -707,6 +1027,30 @@ begin
   Result.H := usedH + Result.Style.Padding.Vert + Result.Style.Margin.Vert;
 end;
 
+procedure TLayoutEngine.RefreshStyles(Box: TLayoutBox);
+begin
+  RefreshStyles(Box, FBaseStyle);
+end;
+
+procedure TLayoutEngine.RefreshStyles(Box: TLayoutBox; const ParentStyle: TComputedStyle);
+var
+  i: Integer;
+  st: TComputedStyle;
+begin
+  if (Box.Tag <> nil) and not IsTextNode(Box.Tag) then
+  begin
+    st := TComputedStyle.ForTag(Box.Tag, ParentStyle, FSheet);
+    if Box.ControlKind <> ckNone then
+      ApplyControlChrome(st, Box.ControlKind, Box.Tag.IsFocused);
+    // keep layout-critical fields from the original pass; only visuals swap
+    st.ExplicitWidth := Box.Style.ExplicitWidth;
+    st.ExplicitHeight := Box.Style.ExplicitHeight;
+    Box.Style := st;
+  end;
+  for i := 0 to Box.Children.Count - 1 do
+    RefreshStyles(Box.Children[i], Box.Style);
+end;
+
 { painting }
 
 procedure PaintBox(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single);
@@ -714,8 +1058,8 @@ var
   i: Integer;
   r: TTextRun;
   st: TComputedStyle;
-  y: Single;
-  sizeTxt: string;
+  y, innerOfs, thumbH, thumbY, cx, cy: Single;
+  sizeTxt, val: string;
   m: TTina4TextMetrics;
 begin
   st := Box.Style;
@@ -740,6 +1084,29 @@ begin
     end;
     Exit;
   end;
+  // checkbox / radio: small drawn glyphs, state from the 'checked' attribute
+  if Box.ControlKind in [ckCheckbox, ckRadio] then
+  begin
+    if Box.ControlKind = ckRadio then
+    begin
+      Canvas.FillRoundRect(Box.X, y, 16, 16, 8, $FFFFFFFF);
+      Canvas.StrokeRoundRect(Box.X, y, 16, 16, 8, 1.5, $FF6C757D);
+      if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
+        Canvas.FillRoundRect(Box.X + 4, y + 4, 8, 8, 4, $FF0D6EFD);
+    end
+    else
+    begin
+      if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
+        Canvas.FillRoundRect(Box.X, y, 16, 16, 3, $FF0D6EFD)
+      else
+        Canvas.FillRoundRect(Box.X, y, 16, 16, 3, $FFFFFFFF);
+      Canvas.StrokeRoundRect(Box.X, y, 16, 16, 3, 1.5, $FF6C757D);
+      if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
+        Canvas.DrawText(Box.X + 2.5, y - 0.5, '✓', 12, [tfsBold], $FFFFFFFF);
+    end;
+    Exit;
+  end;
+
   if (st.BackgroundColor shr 24) > 0 then
   begin
     if st.MaxCornerRadius > 0 then
@@ -755,37 +1122,122 @@ begin
     else
       Canvas.StrokeRect(Box.X, y, Box.W, Box.H, st.BorderWidths.Top, st.BorderColor);
   end;
+
+  // scrollable inner box: clip, then draw content shifted by ScrollTop
+  innerOfs := OffsetY;
+  if Box.Scrollable or ((Box.MaxScroll > 0) and not Box.Scrollable) then
+  begin
+    Canvas.SetClip(Box.X + st.BorderWidths.Left, y + st.BorderWidths.Top,
+      Box.W - st.BorderWidths.Horz, Box.H - st.BorderWidths.Vert);
+    innerOfs := OffsetY + Box.ScrollTop;
+  end;
+
   for i := 0 to Box.Runs.Count - 1 do
   begin
     r := Box.Runs[i];
-    Canvas.DrawText(r.X, r.Y - OffsetY, r.Text, r.FontSize, r.Styles, r.Color);
+    Canvas.DrawText(r.X, r.Y - innerOfs, r.Text, r.FontSize, r.Styles, r.Color);
   end;
   for i := 0 to Box.Children.Count - 1 do
-    PaintBox(Canvas, Box.Children[i], OffsetY);
+    PaintBox(Canvas, Box.Children[i], innerOfs);
+
+  if innerOfs <> OffsetY then
+  begin
+    Canvas.ClearClip;
+    if Box.Scrollable and (Box.MaxScroll > 0) then
+    begin // slim scrollbar thumb inside the box
+      thumbH := Box.H * (Box.H / (Box.H + Box.MaxScroll));
+      thumbY := y + (Box.ScrollTop / Box.MaxScroll) * (Box.H - thumbH);
+      Canvas.FillRoundRect(Box.X + Box.W - 7, thumbY, 4, thumbH, 2, $50000000);
+    end;
+  end;
+
+  // caret + select arrow for the focused/dropdown controls
+  if (Box.Tag <> nil) then
+  begin
+    if (Box.ControlKind in [ckTextInput, ckTextarea]) and Box.Tag.IsFocused then
+    begin
+      if Box.ControlKind = ckTextarea then
+        val := Box.Tag.GetAttribute('value', InnerText(Box.Tag))
+      else
+        val := Box.Tag.GetAttribute('value');
+      cx := Box.X + st.BorderWidths.Left + st.Padding.Left + 1;
+      cy := y + st.BorderWidths.Top + st.Padding.Top;
+      if (Box.Runs.Count > 0) and (val <> '') then
+      begin
+        r := Box.Runs[Box.Runs.Count - 1];
+        if Box.ControlKind = ckTextInput then
+        begin
+          // caret at the byte offset carried in '_caret' (default: end)
+          i := StrToIntDef(Box.Tag.GetAttribute('_caret'), Length(val));
+          i := Max(0, Min(i, Length(val)));
+          m := Canvas.MeasureText(Copy(val, 1, i), r.FontSize, r.Styles);
+        end
+        else
+          m := Canvas.MeasureText(r.Text, r.FontSize, r.Styles);
+        cx := r.X + m.Width + 1;
+        cy := r.Y - innerOfs;
+      end;
+      Canvas.FillRect(cx, cy, 1.5, st.FontSize + 4, $FF1F2937);
+    end;
+    if Box.ControlKind = ckSelect then
+      Canvas.DrawText(Box.X + Box.W - 18, y + st.BorderWidths.Top + st.Padding.Top,
+        '▾', st.FontSize, [], $FF6C757D);
+  end;
 end;
 
 function HitTest(Box: TLayoutBox; X, Y: Single): THTMLTag;
 var
   i: Integer;
   r: THTMLTag;
+  inside: Boolean;
+  childY: Single;
 begin
   Result := nil;
-  if (X < Box.X) or (X > Box.X + Box.W) or (Y < Box.Y) or (Y > Box.Y + Box.H) then
-  begin
-    // children may overflow the parent box (inline atoms); still search them
-    for i := Box.Children.Count - 1 downto 0 do
-    begin
-      r := HitTest(Box.Children[i], X, Y);
-      if r <> nil then Exit(r);
-    end;
-    Exit;
-  end;
+  inside := (X >= Box.X) and (X <= Box.X + Box.W) and
+            (Y >= Box.Y) and (Y <= Box.Y + Box.H);
+  // a clipped scroller swallows anything outside its rect
+  if Box.Scrollable and not inside then Exit;
+  childY := Y;
+  if Box.Scrollable then childY := Y + Box.ScrollTop;
   for i := Box.Children.Count - 1 downto 0 do
   begin
-    r := HitTest(Box.Children[i], X, Y);
+    r := HitTest(Box.Children[i], X, childY);
     if r <> nil then Exit(r);
   end;
-  if Box.Tag <> nil then Result := Box.Tag;
+  if inside and (Box.Tag <> nil) then Result := Box.Tag;
+end;
+
+function FindScrollBox(Box: TLayoutBox; X, Y: Single): TLayoutBox;
+var
+  i: Integer;
+  inside: Boolean;
+  childY: Single;
+begin
+  Result := nil;
+  inside := (X >= Box.X) and (X <= Box.X + Box.W) and
+            (Y >= Box.Y) and (Y <= Box.Y + Box.H);
+  if Box.Scrollable and not inside then Exit;
+  childY := Y;
+  if Box.Scrollable then childY := Y + Box.ScrollTop;
+  for i := Box.Children.Count - 1 downto 0 do
+  begin
+    Result := FindScrollBox(Box.Children[i], X, childY);
+    if Result <> nil then Exit;
+  end;
+  if inside and Box.Scrollable and (Box.MaxScroll > 0) then Result := Box;
+end;
+
+function FindBoxForTag(Box: TLayoutBox; T: THTMLTag): TLayoutBox;
+var
+  i: Integer;
+begin
+  if Box.Tag = T then Exit(Box);
+  Result := nil;
+  for i := 0 to Box.Children.Count - 1 do
+  begin
+    Result := FindBoxForTag(Box.Children[i], T);
+    if Result <> nil then Exit;
+  end;
 end;
 
 end.

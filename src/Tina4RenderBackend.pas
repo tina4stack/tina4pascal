@@ -50,9 +50,19 @@ type
   TTina4PaintEvent = procedure(Canvas: TTina4Canvas; Width, Height: Single) of object;
   TTina4MouseButtonEvent = procedure(X, Y: Single) of object;
   TTina4MouseMoveEvent = procedure(X, Y: Single) of object;
-  TTina4ScrollEvent = procedure(DeltaX, DeltaY: Single) of object;
+  { Scroll carries the cursor position so the app can route the delta to an
+    inner scrollable box (overflow:auto) under the pointer. }
+  TTina4ScrollEvent = procedure(X, Y, DeltaX, DeltaY: Single) of object;
   TTina4ResizeEvent = procedure(Width, Height: Single) of object;
+  { Chars = printable text of the keystroke ('' for pure control keys).
+    KeyCode = platform-neutral: use the TK_* constants below. }
+  TTina4KeyEvent = procedure(const Chars: string; KeyCode: Integer) of object;
 
+const
+  TK_NONE = 0; TK_RETURN = 1; TK_BACKSPACE = 2; TK_TAB = 3; TK_ESCAPE = 4;
+  TK_LEFT = 5; TK_RIGHT = 6; TK_UP = 7; TK_DOWN = 8; TK_DELETE = 9;
+
+type
   TTina4Shell = class
   public
     OnPaint: TTina4PaintEvent;
@@ -61,15 +71,22 @@ type
     OnMouseMove: TTina4MouseMoveEvent;
     OnScroll: TTina4ScrollEvent;
     OnResize: TTina4ResizeEvent;
+    OnKeyDown: TTina4KeyEvent;
     procedure Initialize(Width, Height: Integer; const Title: string); virtual; abstract;
     procedure Invalidate; virtual; abstract;   // request repaint
     procedure Run; virtual; abstract;          // enter event loop
     procedure Quit; virtual; abstract;
+    procedure SetTitle(const Title: string); virtual;
     { Text measurement outside a paint cycle (layout needs this). }
     function GetMeasuringCanvas: TTina4Canvas; virtual; abstract;
   end;
 
 implementation
+
+procedure TTina4Shell.SetTitle(const Title: string);
+begin
+  // optional per shell
+end;
 
 procedure TTina4Canvas.FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color);
 begin

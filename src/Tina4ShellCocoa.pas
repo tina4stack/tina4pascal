@@ -55,6 +55,7 @@ type
     procedure mouseUp(event: NSEvent); override;
     procedure mouseMoved(event: NSEvent); override;
     procedure scrollWheel(event: NSEvent); override;
+    procedure keyDown(event: NSEvent); override;
   end;
 
   TCocoaShell = class(TTina4Shell)
@@ -71,6 +72,7 @@ type
     procedure Invalidate; override;
     procedure Run; override;
     procedure Quit; override;
+    procedure SetTitle(const Title: string); override;
     function GetMeasuringCanvas: TTina4Canvas; override;
   end;
 
@@ -87,7 +89,9 @@ end;
 
 function NSStr(const S: string): NSString;
 begin
-  Result := NSString.stringWithUTF8String(PAnsiChar(UTF8Encode(S)));
+  { Strings in this stack are already UTF-8 (see Tina4HTMLDom header) —
+    do NOT UTF8Encode again or multibyte chars double-encode into mojibake. }
+  Result := NSString.stringWithUTF8String(PAnsiChar(S));
 end;
 
 { TCocoaCanvas }
@@ -177,18 +181,17 @@ end;
 function TCocoaCanvas.FontFor(FontSize: Single; Styles: TTina4FontStyles): NSFont;
 var
   fm: NSFontManager;
-  traits: NSFontTraitMask;
 begin
-  traits := 0;
-  if tfsBold in Styles then traits := traits or NSBoldFontMask;
-  if tfsItalic in Styles then traits := traits or NSItalicFontMask;
-  if traits = 0 then
-    Result := NSFont.systemFontOfSize(FontSize)
+  { San Francisco system font — what browsers resolve -apple-system /
+    system-ui to on macOS, so metrics track Chrome closely. }
+  if tfsBold in Styles then
+    Result := NSFont.boldSystemFontOfSize(FontSize)
   else
+    Result := NSFont.systemFontOfSize(FontSize);
+  if tfsItalic in Styles then
   begin
     fm := NSFontManager.sharedFontManager;
-    Result := fm.fontWithFamily_traits_weight_size(NSStr('Helvetica'), traits, 5, FontSize);
-    if Result = nil then Result := NSFont.systemFontOfSize(FontSize);
+    Result := fm.convertFont_toHaveTrait(Result, NSItalicFontMask);
   end;
 end;
 
@@ -352,9 +355,37 @@ begin
     shell.OnMouseMove(p.x, p.y);
 end;
 
+procedure TTina4View.keyDown(event: NSEvent);
+var
+  chars: string;
+  code: Integer;
+  ns: NSString;
+begin
+  ns := event.charactersIgnoringModifiers;
+  if (ns <> nil) and (ns.length > 0) then chars := string(ns.UTF8String) else chars := '';
+  case event.keyCode of
+    36, 76: code := TK_RETURN;
+    51:     code := TK_BACKSPACE;
+    48:     code := TK_TAB;
+    53:     code := TK_ESCAPE;
+    123:    code := TK_LEFT;
+    124:    code := TK_RIGHT;
+    125:    code := TK_DOWN;
+    126:    code := TK_UP;
+    117:    code := TK_DELETE;
+  else
+    code := TK_NONE;
+  end;
+  if code <> TK_NONE then chars := '';
+  if (shell <> nil) and Assigned(shell.OnKeyDown) then
+    shell.OnKeyDown(chars, code);
+  // deliberately not calling inherited: avoids the system beep
+end;
+
 procedure TTina4View.scrollWheel(event: NSEvent);
 var
   dx, dy: Single;
+  p: NSPoint;
 begin
   { Trackpads report pixel-precise deltas (with momentum events for free);
     wheel mice report lines — scale those up. The renderer owns scrolling,
@@ -369,8 +400,9 @@ begin
     dx := event.deltaX * 24;
     dy := event.deltaY * 24;
   end;
+  p := convertPoint_fromView(event.locationInWindow, nil);
   if (shell <> nil) and Assigned(shell.OnScroll) then
-    shell.OnScroll(dx, dy);
+    shell.OnScroll(p.x, p.y, dx, dy);
 end;
 
 { TCocoaShell }
@@ -423,6 +455,11 @@ end;
 procedure TCocoaShell.Quit;
 begin
   NSApp.terminate(nil);
+end;
+
+procedure TCocoaShell.SetTitle(const Title: string);
+begin
+  if FWindow <> nil then FWindow.setTitle(NSStr(Title));
 end;
 
 function TCocoaShell.GetMeasuringCanvas: TTina4Canvas;
