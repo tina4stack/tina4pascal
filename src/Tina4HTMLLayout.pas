@@ -1042,8 +1042,9 @@ var
   c: THTMLTag;
   cs: TComputedStyle;
   disp: string;
-  prevMB, mTc: Single;
+  prevMB, mTc, absX, absY, absCH: Single;
   hadInline: Boolean;
+  absBox: TLayoutBox;
 begin
   y := CY;
   prevMB := 0;
@@ -1064,6 +1065,28 @@ begin
       cs := TComputedStyle.ForTag(c, ParentStyle, FSheet);
       disp := DisplayOf(c, cs);
       if disp = 'none' then Continue;
+      // position: absolute/fixed — out of flow, positioned in this container's
+      // content box (the common case: an absolutely-positioned child of a
+      // position:relative parent). Takes no space; siblings ignore it.
+      if SameText(cs.CSSPosition, 'absolute') or SameText(cs.CSSPosition, 'fixed') then
+      begin
+        LayoutBlock(Box, c, ParentStyle, CX, CY, CW);
+        absBox := Box.Children[Box.Children.Count - 1];
+        absX := CX; absY := CY;
+        if cs.CSSLeft > -9998 then absX := CX + cs.CSSLeft
+        else if cs.CSSRight > -9998 then absX := CX + CW - absBox.W - cs.CSSRight;
+        if cs.CSSTop > -9998 then absY := CY + cs.CSSTop
+        else if cs.CSSBottom > -9998 then
+        begin
+          // bottom needs the container content height — use its explicit
+          // height (known now via the container's own style)
+          absCH := ResolveSize(ParentStyle.ExplicitHeight, 0);
+          if absCH < 0 then absCH := Box.NaturalH;
+          absY := CY + absCH - absBox.H - cs.CSSBottom;
+        end;
+        ShiftBoxTree(absBox, absX - absBox.X, absY - absBox.Y);
+        Continue;  // no flow advance
+      end;
       // form control keeps its computed display: inline/inline-block flow inline,
       // block (e.g. Bootstrap .form-control) stacks full-width.
       if (disp = 'inline') or (disp = 'inline-block') or SameText(c.TagName, 'img')
@@ -1106,7 +1129,7 @@ var
   box: TLayoutBox;
   contentX, contentY, contentW, usedH: Single;
   edgeL, edgeT, edgeR, edgeB: Single;
-  mL, mR, mT, mB, ew, eh, availInner, naturalH, mnw, mxw: Single;
+  mL, mR, mT, mB, ew, eh, availInner, naturalH, mnw, mxw, relDX, relDY: Single;
   autoL, autoR: Boolean;
   ov: string;
   liIdx: Integer;
@@ -1195,6 +1218,18 @@ begin
     box.MaxScrollX := box.NaturalW - contentW;
   end;
   box.H := usedH + edgeT + edgeB;
+
+  // position: relative — offset visually by top/left (or right/bottom),
+  // without changing the space the box occupies in normal flow.
+  if SameText(st.CSSPosition, 'relative') then
+  begin
+    relDX := 0; relDY := 0;
+    if st.CSSLeft > -9998 then relDX := st.CSSLeft
+    else if st.CSSRight > -9998 then relDX := -st.CSSRight;
+    if st.CSSTop > -9998 then relDY := st.CSSTop
+    else if st.CSSBottom > -9998 then relDY := -st.CSSBottom;
+    if (relDX <> 0) or (relDY <> 0) then ShiftBoxTree(box, relDX, relDY);
+  end;
 
   Result := box.H + mT + mB;
 end;
