@@ -1,0 +1,18 @@
+# build artifacts
+*.o
+*.ppu
+*.rsj
+*.res
+link*.res
+ppas.sh
+*.dSYM/
+nohup.out
+*.log
+
+# binaries
+examples/htmlviewer/htmlviewer
+tests/test_dom
+toolchain/test/hello
+
+# fetched caches
+csscache/
