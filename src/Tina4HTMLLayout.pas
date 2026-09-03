@@ -526,6 +526,7 @@ procedure TLayoutEngine.LayoutChildren(Box: TLayoutBox; Tag: THTMLTag;
 var
   y: Single;
   items: TList<TInlineItem>;
+  pendingSpace: Boolean;   // trailing whitespace carried across inline nodes
 
   function HasBlockChild(T: THTMLTag; const St: TComputedStyle): Boolean;
   var
@@ -569,8 +570,14 @@ var
     if IsTextNode(T) then
     begin
       txt := CollapseWS(T.Text);
-      if Trim(txt) = '' then Exit;
-      leadingSpace := (txt <> '') and (txt[1] = ' ');
+      if Trim(txt) = '' then
+      begin
+        // whitespace-only text node between inline elements is still a space
+        if (txt <> '') and (items.Count > 0) then pendingSpace := True;
+        Exit;
+      end;
+      leadingSpace := ((txt <> '') and (txt[1] = ' ')) or pendingSpace;
+      pendingSpace := (txt <> '') and (txt[Length(txt)] = ' ');
       words := TStringList.Create;
       try
         words.Delimiter := ' ';
@@ -634,7 +641,8 @@ var
         it.Box.W := CW;
       end;
       it.W := it.Box.W; it.H := it.Box.H;
-      it.SpaceBefore := False;
+      it.SpaceBefore := (items.Count > 0) and pendingSpace;
+      pendingSpace := False;
       Box.Children.Add(it.Box);
       items.Add(it);
       Exit;
@@ -644,7 +652,8 @@ var
       it.Text := '';
       it.Box := MakeControl(T, cs, CW);
       it.W := it.Box.W; it.H := it.Box.H;
-      it.SpaceBefore := items.Count > 0;
+      it.SpaceBefore := (items.Count > 0) and pendingSpace;
+      pendingSpace := False;
       Box.Children.Add(it.Box);
       items.Add(it);
       Exit;
@@ -663,7 +672,8 @@ var
       else
         it.Box := MakeInlineBlock(T, cs);
       it.W := it.Box.W; it.H := it.Box.H;
-      it.SpaceBefore := items.Count > 0;
+      it.SpaceBefore := (items.Count > 0) and pendingSpace;
+      pendingSpace := False;
       Box.Children.Add(it.Box);
       items.Add(it);
       Exit;
@@ -780,6 +790,7 @@ begin
   y := CY;
   prevMB := 0;
   hadInline := False;
+  pendingSpace := False;
   items := TList<TInlineItem>.Create;
   try
     for c in Tag.Children do
@@ -804,6 +815,7 @@ begin
       else
       begin
         FlowInlineItems; // finish pending inline line(s)
+        pendingSpace := False;
         if hadInline then begin prevMB := 0; hadInline := False; end;
         // collapse adjacent vertical margins: gap = max(prevBottom, thisTop)
         mTc := cs.Margin.Top; if mTc = -1 then mTc := 0;
