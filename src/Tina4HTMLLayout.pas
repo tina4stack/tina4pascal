@@ -1061,6 +1061,7 @@ var
   y, innerOfs, thumbH, thumbY, cx, cy: Single;
   sizeTxt, val: string;
   m: TTina4TextMetrics;
+  didClip: Boolean;
 begin
   st := Box.Style;
   y := Box.Y - OffsetY;
@@ -1123,9 +1124,14 @@ begin
       Canvas.StrokeRect(Box.X, y, Box.W, Box.H, st.BorderWidths.Top, st.BorderColor);
   end;
 
-  // scrollable inner box: clip, then draw content shifted by ScrollTop
+  // scrollable / clipped inner box: clip, then draw content shifted by ScrollTop.
+  // didClip MUST gate ClearClip (not "innerOfs<>OffsetY") — a scroller sitting
+  // at ScrollTop=0 still opened a clip and must close it, else the saved
+  // graphics state leaks and swallows everything drawn afterwards (e.g. the
+  // dropdown overlay).
   innerOfs := OffsetY;
-  if Box.Scrollable or ((Box.MaxScroll > 0) and not Box.Scrollable) then
+  didClip := Box.Scrollable or ((Box.MaxScroll > 0) and not Box.Scrollable);
+  if didClip then
   begin
     Canvas.SetClip(Box.X + st.BorderWidths.Left, y + st.BorderWidths.Top,
       Box.W - st.BorderWidths.Horz, Box.H - st.BorderWidths.Vert);
@@ -1140,7 +1146,7 @@ begin
   for i := 0 to Box.Children.Count - 1 do
     PaintBox(Canvas, Box.Children[i], innerOfs);
 
-  if innerOfs <> OffsetY then
+  if didClip then
   begin
     Canvas.ClearClip;
     if Box.Scrollable and (Box.MaxScroll > 0) then

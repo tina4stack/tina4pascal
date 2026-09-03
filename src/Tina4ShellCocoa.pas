@@ -44,6 +44,13 @@ type
     procedure ClearClip; override;
   end;
 
+  { NSTimer target bridging into the shell's OnTick }
+  TTina4Ticker = objcclass(NSObject)
+  public
+    shell: TCocoaShell;
+    procedure tick(t: NSTimer); message 'tick:';
+  end;
+
   { NSView subclass forwarding everything to the shell }
   TTina4View = objcclass(NSView)
   public
@@ -73,6 +80,7 @@ type
     procedure Run; override;
     procedure Quit; override;
     procedure SetTitle(const Title: string); override;
+    procedure StartTicker(IntervalMs: Integer); override;
     function GetMeasuringCanvas: TTina4Canvas; override;
   end;
 
@@ -460,6 +468,22 @@ end;
 procedure TCocoaShell.SetTitle(const Title: string);
 begin
   if FWindow <> nil then FWindow.setTitle(NSStr(Title));
+end;
+
+procedure TTina4Ticker.tick(t: NSTimer);
+begin
+  if (shell <> nil) and Assigned(shell.OnTick) then
+    shell.OnTick;
+end;
+
+procedure TCocoaShell.StartTicker(IntervalMs: Integer);
+var
+  ticker: TTina4Ticker;
+begin
+  ticker := TTina4Ticker.alloc.init;
+  ticker.shell := Self;
+  NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+    IntervalMs / 1000.0, ticker, objcselector('tick:'), nil, True);
 end;
 
 function TCocoaShell.GetMeasuringCanvas: TTina4Canvas;

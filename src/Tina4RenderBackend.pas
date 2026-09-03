@@ -57,6 +57,7 @@ type
   { Chars = printable text of the keystroke ('' for pure control keys).
     KeyCode = platform-neutral: use the TK_* constants below. }
   TTina4KeyEvent = procedure(const Chars: string; KeyCode: Integer) of object;
+  TTina4TickEvent = procedure of object;
 
 const
   TK_NONE = 0; TK_RETURN = 1; TK_BACKSPACE = 2; TK_TAB = 3; TK_ESCAPE = 4;
@@ -72,6 +73,10 @@ type
     OnScroll: TTina4ScrollEvent;
     OnResize: TTina4ResizeEvent;
     OnKeyDown: TTina4KeyEvent;
+    OnTick: TTina4TickEvent;
+    { Fire OnTick every IntervalMs on the UI thread (scripted drivers,
+      caret blink, animations). Default: not supported. }
+    procedure StartTicker(IntervalMs: Integer); virtual;
     procedure Initialize(Width, Height: Integer; const Title: string); virtual; abstract;
     procedure Invalidate; virtual; abstract;   // request repaint
     procedure Run; virtual; abstract;          // enter event loop
@@ -84,6 +89,11 @@ type
 implementation
 
 procedure TTina4Shell.SetTitle(const Title: string);
+begin
+  // optional per shell
+end;
+
+procedure TTina4Shell.StartTicker(IntervalMs: Integer);
 begin
   // optional per shell
 end;

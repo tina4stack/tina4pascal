@@ -151,3 +151,10 @@ Then per cross target: `make crossall crossinstall OS_TARGET=<os> CPU_TARGET=<cp
 - Next: CSS fidelity pass, click/hover interaction, software rasterizer
   (pixel-identical everywhere incl. Android), then tina4pascal repo +
   data layer (websockets, SSE, DB, API) — HTML-template-driven native apps.
+
+21. **Clip save/restore must balance on a flag, not a coincidence** — in the
+    Cocoa canvas `SetClip` does `saveGraphicsState`+clip and `ClearClip` does
+    `restoreGraphicsState`. A scrollable box at `ScrollTop=0` still opens a clip;
+    if ClearClip is gated on "scroll offset changed" it is skipped and the saved
+    state leaks, silently clipping everything drawn afterwards (dropdown overlays,
+    later siblings). Gate ClearClip on the same boolean that gated SetClip.

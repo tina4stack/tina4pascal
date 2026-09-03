@@ -26,12 +26,15 @@ type
     FocusTag: THTMLTag;
     ActiveTag: THTMLTag;
     OpenSelect: THTMLTag;         // dropdown currently expanded, nil = none
+    Script: TStringList;          // --script: one driver command per tick
+    ScriptPos: Integer;
     procedure Paint(Canvas: TTina4Canvas; W, H: Single);
     procedure Scroll(X, Y, DX, DY: Single);
     procedure MouseDown(X, Y: Single);
     procedure MouseUp(X, Y: Single);
     procedure MouseMove(X, Y: Single);
     procedure KeyDown(const Chars: string; KeyCode: Integer);
+    procedure Tick;
     procedure Rebuild;
     procedure Event(const S: string);
     procedure SetFocus(T: THTMLTag);
@@ -83,7 +86,57 @@ end;
 procedure TViewer.Event(const S: string);
 begin
   WriteLn('[event] ', S);
+  Flush(Output);
   Shell.SetTitle('Tina4 — ' + S);
+end;
+
+{ Scripted driver: click X Y | key TEXT | enter|tab|backspace|esc |
+  wheel X Y DY | snap PATH | quit — one command per tick. This is the seed
+  of headless GUI automation: same events, no human. }
+procedure TViewer.Tick;
+var
+  line, cmd, a, b, c: string;
+  parts: TStringList;
+begin
+  if (Script = nil) or (ScriptPos >= Script.Count) then Exit;
+  line := Trim(Script[ScriptPos]);
+  Inc(ScriptPos);
+  if (line = '') or (line[1] = '#') then Exit;
+  parts := TStringList.Create;
+  try
+    parts.Delimiter := ' ';
+    parts.StrictDelimiter := False;
+    parts.DelimitedText := line;
+    cmd := LowerCase(parts[0]);
+    a := ''; b := ''; c := '';
+    if parts.Count > 1 then a := parts[1];
+    if parts.Count > 2 then b := parts[2];
+    if parts.Count > 3 then c := parts[3];
+    WriteLn('[script] ', line);
+    Flush(Output);
+    if cmd = 'click' then
+    begin
+      MouseDown(StrToFloatDef(a, 0), StrToFloatDef(b, 0));
+      MouseUp(StrToFloatDef(a, 0), StrToFloatDef(b, 0));
+    end
+    else if cmd = 'key' then
+      KeyDown(Copy(line, 5, MaxInt), TK_NONE)
+    else if cmd = 'enter' then KeyDown('', TK_RETURN)
+    else if cmd = 'tab' then KeyDown('', TK_TAB)
+    else if cmd = 'backspace' then KeyDown('', TK_BACKSPACE)
+    else if cmd = 'esc' then KeyDown('', TK_ESCAPE)
+    else if cmd = 'wheel' then
+      Scroll(StrToFloatDef(a, 0), StrToFloatDef(b, 0), 0, StrToFloatDef(c, 0))
+    else if cmd = 'snap' then
+    begin
+      Shell.SnapshotPath := a;
+      Shell.Invalidate;
+    end
+    else if cmd = 'quit' then
+      Shell.Quit;
+  finally
+    parts.Free;
+  end;
 end;
 
 procedure TViewer.Rebuild;
@@ -504,7 +557,7 @@ begin
 end;
 
 var
-  FileName, SnapPath, HTML, CSSFile: string;
+  FileName, SnapPath, HTML, CSSFile, ScriptPath: string;
   SL: TStringList;
   i: Integer;
   autof: TList<THTMLTag>;
@@ -512,12 +565,18 @@ begin
   FileName := ExpandFileName(ExtractFilePath(ParamStr(0)) + 'bootstrap_test.html');
   SnapPath := '';
   i := 1;
+  ScriptPath := '';
   while i <= ParamCount do
   begin
     if ParamStr(i) = '--snapshot' then
     begin
       Inc(i);
       SnapPath := ParamStr(i);
+    end
+    else if ParamStr(i) = '--script' then
+    begin
+      Inc(i);
+      ScriptPath := ParamStr(i);
     end
     else
       FileName := ExpandFileName(ParamStr(i));
@@ -593,6 +652,15 @@ begin
     autof.Free;
   end;
 
+  if ScriptPath <> '' then
+  begin
+    Viewer.Script := TStringList.Create;
+    Viewer.Script.LoadFromFile(ScriptPath);
+    Viewer.ScriptPos := 0;
+    Viewer.Shell.OnTick := Viewer.Tick;
+  end;
+
   Viewer.Shell.Initialize(1024, 800, 'Tina4 HTMLRender — Free Pascal');
+  if ScriptPath <> '' then Viewer.Shell.StartTicker(400);
   Viewer.Shell.Run;
 end.
