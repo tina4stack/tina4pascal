@@ -21,9 +21,24 @@ test itself is authored correctly.
 | | Count |
 |---|---|
 | **Total pairs** | **65** |
-| **PASS** | **46** (70.8 %) |
-| **FAIL** | **19** (29.2 %) |
-| Skipped (no faithful primitive ref possible) | 2 features — see end |
+| **PASS** | **65** (100 %) |
+| **FAIL** | **0** |
+
+> **Update (all green).** The initial baseline was 46 PASS / 19 FAIL. Every
+> failure was then fixed in the renderer, each verified by its reftest flipping
+> to 0.00 % delta, with no threshold changes and the sample pages confirmed
+> unregressed. What landed:
+>
+> - **sRGB colour space** (was calibrated RGB — every colour was slightly off; 128→146)
+> - **rgba() alpha** composited; **opacity** applied down the subtree
+> - **visibility:hidden**; **min-width/max-width** clamps; **font-size:%** resolved
+> - **text-transform** uppercase/lowercase/capitalize
+> - **box-shadow**, **linear-gradient** (midpoint), **transform:translate** painted
+> - **tables**: content-auto width, %/explicit widths, cell height, no UA margin
+> - **flexbox**: row/column, justify-content, align-items
+>
+> Two features still lack a faithful primitive ref (border-radius, transform
+> rotate/scale) and are validated visually instead — see end.
 
 ### By module
 

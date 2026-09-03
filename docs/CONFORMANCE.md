@@ -91,12 +91,21 @@ Status legend:
 | :hover / :active / :focus | ✅ | matched against live tag state; style-only repaint |
 | @media | 🟡 | rules skipped (not applied) |
 
-## Priority gaps (next)
+## Compliance suite: 65 / 65 green
 
-1. **Flexbox layout** — the single biggest modern-CSS gap; many Bootstrap
-   components (`.d-flex`, navbars, button groups) need it.
-2. **List markers** (`<ul>`/`<ol>` bullets & numbers).
-3. **Paint the parsed-only visuals**: opacity, box-shadow, gradients — all
-   already in the computed style, just need painting.
-4. **Table colspan/rowspan**.
-5. **`font-weight` numeric** and **`letter-spacing`** in text measurement.
+The W3C-style reftest suite (`tools/run-compliance.sh`,
+[COMPLIANCE-REPORT.md](COMPLIANCE-REPORT.md)) passes fully. Landed since the
+first baseline: sRGB colour, rgba alpha, opacity, visibility:hidden,
+min/max-width, font-size:%, text-transform, box-shadow, linear-gradient,
+transform:translate, table sizing/height, and **flexbox** (row/column,
+justify-content, align-items).
+
+## Remaining gaps (next, beyond the suite)
+
+1. **List markers** (`<ul>`/`<ol>` bullets & numbers).
+2. **Flex wrap + grow/shrink** (current flex is single-line, item-sized).
+3. **position: relative/absolute** + top/left + z-index.
+4. **Table colspan/rowspan**, border-collapse borders.
+5. **transform: rotate/scale** application; **real gradient** paint (vs midpoint).
+6. **`font-weight` numeric** and **`letter-spacing`** in text measurement.
+7. `s`/`del` line-through, `sub`/`sup`, `mark` background; the `hidden` attribute.
