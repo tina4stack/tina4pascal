@@ -65,6 +65,8 @@ type
     function MakeControl(Tag: THTMLTag; St: TComputedStyle; AvailW: Single): TLayoutBox;
     function LayoutControlBlock(Parent: TLayoutBox; Tag: THTMLTag;
       const St: TComputedStyle; X, Y, AvailW: Single): Single;
+    function LayoutFlex(Parent: TLayoutBox; Tag: THTMLTag;
+      const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
     procedure CollectInlineText(Tag: THTMLTag; SB: TStringBuilder);
   public
     constructor Create(Canvas: TTina4Canvas; Sheet: TCSSStyleSheet);
@@ -546,6 +548,134 @@ begin
   Result.H := usedH + edgeT + edgeB;
 end;
 
+{ Flexbox: single-line row/column with justify-content (main axis) and
+  align-items (cross axis). No wrap, no grow/shrink resolution yet — items
+  keep their own size. Enough for the common row layouts. }
+function TLayoutEngine.LayoutFlex(Parent: TLayoutBox; Tag: THTMLTag;
+  const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
+var
+  st, cs: TComputedStyle;
+  box, cb: TLayoutBox;
+  items: TObjectList<TLayoutBox>;
+  c: THTMLTag;
+  mL, mR, mT, mB, availInner, ew, eh: Single;
+  edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
+  isCol: Boolean;
+  dir, jc, ai: string;
+  sumMain, freeMain, curr, gap, crossOff: Single;
+  i: Integer;
+begin
+  st := TComputedStyle.ForTag(Tag, ParentStyle, FSheet);
+  if LowerCase(st.Display) = 'none' then Exit(0);
+  box := TLayoutBox.Create;
+  box.Tag := Tag; box.Style := st;
+  Parent.Children.Add(box);
+
+  mL := st.Margin.Left;  if mL = -1 then mL := 0;
+  mR := st.Margin.Right; if mR = -1 then mR := 0;
+  mT := st.Margin.Top;   if mT = -1 then mT := 0;
+  mB := st.Margin.Bottom; if mB = -1 then mB := 0;
+  availInner := AvailW - mL - mR;
+  box.X := X + mL; box.Y := Y + mT;
+  ew := ResolveSize(st.ExplicitWidth, availInner);
+  if ew >= 0 then
+  begin
+    if SameText(st.BoxSizing, 'border-box') then box.W := Min(ew, availInner)
+    else box.W := Min(ew + st.Padding.Horz + st.BorderWidths.Horz, availInner);
+  end
+  else box.W := availInner;
+
+  edgeL := st.BorderWidths.Left + st.Padding.Left;
+  edgeT := st.BorderWidths.Top + st.Padding.Top;
+  edgeR := st.BorderWidths.Right + st.Padding.Right;
+  edgeB := st.BorderWidths.Bottom + st.Padding.Bottom;
+  contentX := box.X + edgeL; contentY := box.Y + edgeT;
+  contentW := box.W - edgeL - edgeR;
+
+  dir := LowerCase(st.FlexDirection); if dir = '' then dir := 'row';
+  isCol := (dir = 'column') or (dir = 'column-reverse');
+  jc := LowerCase(st.JustifyContent); if jc = '' then jc := 'flex-start';
+  ai := LowerCase(st.AlignItems); if ai = '' then ai := 'stretch';
+
+  // build flex items (block children laid out at origin)
+  items := TObjectList<TLayoutBox>.Create(False);
+  try
+    for c in Tag.Children do
+    begin
+      if IsTextNode(c) then Continue;
+      cs := TComputedStyle.ForTag(c, st, FSheet);
+      if LowerCase(cs.Display) = 'none' then Continue;
+      cb := MakeInlineContainer(c, cs, contentW);
+      box.Children.Add(cb);
+      items.Add(cb);
+    end;
+
+    // cross-axis extent of the container
+    eh := ResolveSize(st.ExplicitHeight, 0);
+    if isCol then
+    begin
+      contentH := 0;
+      for i := 0 to items.Count - 1 do contentH := contentH + items[i].H
+    end
+    else
+    begin
+      contentH := 0;
+      for i := 0 to items.Count - 1 do contentH := Max(contentH, items[i].H);
+    end;
+    if eh >= 0 then
+    begin
+      if SameText(st.BoxSizing, 'border-box') then contentH := Max(contentH, eh - edgeT - edgeB)
+      else contentH := Max(contentH, eh);
+    end;
+
+    // main-axis packing
+    sumMain := 0;
+    for i := 0 to items.Count - 1 do
+      if isCol then sumMain := sumMain + items[i].H
+      else sumMain := sumMain + items[i].W;
+    if isCol then freeMain := contentH - sumMain
+    else freeMain := contentW - sumMain;
+    if freeMain < 0 then freeMain := 0;
+
+    curr := 0; gap := 0;
+    if (jc = 'center') then curr := freeMain / 2
+    else if (jc = 'flex-end') or (jc = 'end') then curr := freeMain
+    else if (jc = 'space-between') and (items.Count > 1) then gap := freeMain / (items.Count - 1)
+    else if (jc = 'space-around') and (items.Count > 0) then
+    begin curr := freeMain / (items.Count * 2); gap := freeMain / items.Count; end
+    else if (jc = 'space-evenly') and (items.Count > 0) then
+    begin curr := freeMain / (items.Count + 1); gap := freeMain / (items.Count + 1); end;
+
+    for i := 0 to items.Count - 1 do
+    begin
+      cb := items[i];
+      if isCol then
+      begin
+        // cross axis = horizontal
+        if (ai = 'center') then crossOff := (contentW - cb.W) / 2
+        else if (ai = 'flex-end') or (ai = 'end') then crossOff := contentW - cb.W
+        else crossOff := 0;
+        ShiftBoxTree(cb, contentX + crossOff, contentY + curr);
+        curr := curr + cb.H + gap;
+      end
+      else
+      begin
+        // cross axis = vertical
+        if (ai = 'center') then crossOff := (contentH - cb.H) / 2
+        else if (ai = 'flex-end') or (ai = 'end') then crossOff := contentH - cb.H
+        else crossOff := 0;
+        ShiftBoxTree(cb, contentX + curr, contentY + crossOff);
+        curr := curr + cb.W + gap;
+      end;
+    end;
+
+    box.H := contentH + edgeT + edgeB;
+    Result := box.H + mT + mB;
+  finally
+    items.Free;
+  end;
+end;
+
 { A block-level form control (Bootstrap .form-control): full-width by
   default, honours margins, stacks vertically. }
 function TLayoutEngine.LayoutControlBlock(Parent: TLayoutBox; Tag: THTMLTag;
@@ -885,7 +1015,9 @@ begin
         mTc := cs.Margin.Top; if mTc = -1 then mTc := 0;
         if (prevMB > 0) and (mTc > 0) then
           y := y - Min(prevMB, mTc);
-        if IsFormControlTag(c.TagName) then
+        if (disp = 'flex') or (disp = 'inline-flex') then
+          y := y + LayoutFlex(Box, c, ParentStyle, CX, y, CW)
+        else if IsFormControlTag(c.TagName) then
           y := y + LayoutControlBlock(Box, c, cs, CX, y, CW)
         else if SameText(c.TagName, 'table') then
           y := y + LayoutTable(Box, c, cs, CX, y, CW)
