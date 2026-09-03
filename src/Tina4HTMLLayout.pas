@@ -591,12 +591,16 @@ var
   st, cs: TComputedStyle;
   box, cb: TLayoutBox;
   items: TObjectList<TLayoutBox>;
+  itemTags: TList<THTMLTag>;
   c: THTMLTag;
   mL, mR, mT, mB, availInner, ew, eh: Single;
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
   isCol: Boolean;
   dir, jc, ai: string;
-  sumMain, freeMain, curr, gap, crossOff: Single;
+  sumMain, freeMain, curr, gap, crossOff, usedFixed, sumGrow, targetW: Single;
+  baseW, growF: array of Single;
+  sb: TStringBuilder;
+  m: TTina4TextMetrics;
   i: Integer;
 begin
   st := TComputedStyle.ForTag(Tag, ParentStyle, FSheet);
@@ -631,17 +635,73 @@ begin
   jc := LowerCase(st.JustifyContent); if jc = '' then jc := 'flex-start';
   ai := LowerCase(st.AlignItems); if ai = '' then ai := 'stretch';
 
-  // build flex items (block children laid out at origin)
+  // build flex items. For a row we resolve flex-basis + flex-grow first so
+  // items share the free space (the common flex:1 layout); a column keeps
+  // each item at content width.
   items := TObjectList<TLayoutBox>.Create(False);
+  itemTags := TList<THTMLTag>.Create;
   try
     for c in Tag.Children do
     begin
       if IsTextNode(c) then Continue;
       cs := TComputedStyle.ForTag(c, st, FSheet);
       if LowerCase(cs.Display) = 'none' then Continue;
-      cb := MakeInlineContainer(c, cs, contentW);
-      box.Children.Add(cb);
-      items.Add(cb);
+      itemTags.Add(c);
+    end;
+
+    if isCol then
+    begin
+      for i := 0 to itemTags.Count - 1 do
+      begin
+        cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
+        cb := MakeInlineContainer(itemTags[i], cs, contentW);
+        box.Children.Add(cb); items.Add(cb);
+      end;
+    end
+    else
+    begin
+      // row: base widths + grow factors
+      SetLength(baseW, itemTags.Count);
+      SetLength(growF, itemTags.Count);
+      usedFixed := 0; sumGrow := 0;
+      for i := 0 to itemTags.Count - 1 do
+      begin
+        cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
+        growF[i] := cs.FlexGrow;
+        ew := ResolveSize(cs.ExplicitWidth, contentW);
+        if ew >= 0 then
+        begin
+          if not SameText(cs.BoxSizing, 'border-box') then
+            ew := ew + cs.Padding.Horz + cs.BorderWidths.Horz;
+          baseW[i] := ew;
+        end
+        else if growF[i] > 0 then
+          baseW[i] := 0                        // flex:1 → basis 0
+        else
+        begin                                   // content width (single line)
+          sb := TStringBuilder.Create;
+          try
+            CollectInlineText(itemTags[i], sb);
+            m := FCanvas.MeasureText(Trim(CollapseWS(sb.ToString)), cs.FontSize, FontStylesOf(cs));
+          finally sb.Free; end;
+          baseW[i] := m.Width + cs.Padding.Horz + cs.BorderWidths.Horz;
+        end;
+        usedFixed := usedFixed + baseW[i];
+        sumGrow := sumGrow + growF[i];
+      end;
+      freeMain := contentW - usedFixed; if freeMain < 0 then freeMain := 0;
+      for i := 0 to itemTags.Count - 1 do
+      begin
+        cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
+        targetW := baseW[i];
+        if (growF[i] > 0) and (sumGrow > 0) then
+          targetW := targetW + freeMain * growF[i] / sumGrow;
+        cs.ExplicitWidth := targetW;    // force the resolved main size
+        cs.BoxSizing := 'border-box';
+        cb := MakeInlineContainer(itemTags[i], cs, contentW);
+        cb.W := targetW;
+        box.Children.Add(cb); items.Add(cb);
+      end;
     end;
 
     // cross-axis extent of the container
@@ -707,6 +767,7 @@ begin
     Result := box.H + mT + mB;
   finally
     items.Free;
+    itemTags.Free;
   end;
 end;
 
