@@ -9,7 +9,7 @@ program htmlviewer;
 {$mode delphi}{$H+}
 
 uses
-  SysUtils, Classes, Math, Generics.Collections,
+  SysUtils, StrUtils, Classes, Math, Generics.Collections,
   Tina4HTMLDom, Tina4RenderBackend, Tina4ShellCocoa, Tina4HTMLLayout;
 
 type
@@ -445,7 +445,7 @@ end;
 procedure TViewer.MouseUp(X, Y: Single);
 var
   hit, t, g: THTMLTag;
-  typ, ot, ov, v: string;
+  typ, ot, ov, v, picked: string;
   radios: TList<THTMLTag>;
   cb: TLayoutBox;
   tx, mw: Single;
@@ -489,6 +489,22 @@ begin
       SetFocus(t);
       OpenSelect := t;
       Rebuild;
+      Exit;
+    end;
+    if (typ = 'file') or SameText(t.TagName, 'camera') then
+    begin
+      SetFocus(t);
+      if SameText(t.TagName, 'camera') then
+        picked := Shell.CaptureCamera
+      else
+        picked := Shell.PickFile;
+      if picked <> '' then
+      begin
+        t.Attributes.AddOrSetValue('value', picked);
+        Event('change ' + t.GetAttribute('name',
+          IfThen(SameText(t.TagName, 'camera'), 'camera', 'file')) + '=' + picked);
+        Rebuild;
+      end;
       Exit;
     end;
     if typ = 'checkbox' then
@@ -553,6 +569,22 @@ begin
   end
   else if FocusTag <> nil then
     SetFocus(nil); // clicked empty space: blur
+
+  // <summary> click toggles its <details> open state
+  t := hit;
+  while t <> nil do
+  begin
+    if SameText(t.TagName, 'summary') and (t.Parent <> nil) and
+       SameText(t.Parent.TagName, 'details') then
+    begin
+      if t.Parent.HasAttribute('open') then t.Parent.Attributes.Remove('open')
+      else t.Parent.Attributes.AddOrSetValue('open', 'open');
+      Event('toggle details');
+      Rebuild;
+      Exit;
+    end;
+    t := t.Parent;
+  end;
 
   // semantic events: onclick handlers and links, walking up the tree
   t := hit;

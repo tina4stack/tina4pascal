@@ -12,7 +12,7 @@ interface
 
 uses
   SysUtils, Classes, Math, Generics.Collections,
-  Tina4HTMLDom, Tina4RenderBackend, Tina4Theme;
+  Tina4HTMLDom, Tina4RenderBackend, Tina4Theme, Tina4QR;
 
 type
   TTextRun = record
@@ -28,7 +28,7 @@ type
     lives in the DOM: input/textarea in 'value', checkbox/radio in 'checked',
     select in 'value'. The app mutates attributes and rebuilds. }
   TControlKind = (ckNone, ckTextInput, ckTextarea, ckCheckbox, ckRadio,
-    ckSelect, ckButton);
+    ckSelect, ckButton, ckFile);
 
   TLayoutBox = class
   public
@@ -39,6 +39,8 @@ type
     Runs: TList<TTextRun>;
     IsImagePlaceholder: Boolean;
     ImageHandle: Integer;          // canvas image handle, -1 = none/failed
+    IsQRCode: Boolean;             // <qrcode> replaced element
+    QRMatrix: TQRMatrix;           // pre-encoded module grid, painted as cells
     ControlKind: TControlKind;
     Scrollable: Boolean;           // overflow-y auto/scroll with an explicit height
     ScrollTop: Single;
@@ -142,7 +144,8 @@ end;
 function IsFormControlTag(const Name: string): Boolean;
 begin
   Result := SameText(Name, 'input') or SameText(Name, 'textarea') or
-    SameText(Name, 'select') or SameText(Name, 'button');
+    SameText(Name, 'select') or SameText(Name, 'button') or
+    SameText(Name, 'camera');
 end;
 
 function ToRoman(N: Integer): string;
@@ -263,11 +266,14 @@ begin
 end;
 
 function TLayoutEngine.FontStylesOf(const St: TComputedStyle): TTina4FontStyles;
+var td: string;
 begin
   Result := [];
   if St.Bold then Include(Result, tfsBold);
   if St.Italic then Include(Result, tfsItalic);
-  if Pos('underline', LowerCase(St.TextDecoration)) > 0 then Include(Result, tfsUnderline);
+  td := LowerCase(St.TextDecoration);
+  if Pos('underline', td) > 0 then Include(Result, tfsUnderline);
+  if Pos('line-through', td) > 0 then Include(Result, tfsStrike);
 end;
 
 function TLayoutEngine.LineHeightOf(const St: TComputedStyle): Single;
@@ -351,8 +357,28 @@ begin
   else if SameText(Tag.TagName, 'button') then Result := ckButton
   else if typ = 'checkbox' then Result := ckCheckbox
   else if typ = 'radio' then Result := ckRadio
+  else if (typ = 'file') or SameText(Tag.TagName, 'camera') then Result := ckFile
   else if (typ = 'submit') or (typ = 'button') then Result := ckButton
   else Result := ckTextInput;
+end;
+
+{ Widest replaced descendant (qrcode/img) with an explicit width, so a
+  shrink-to-fit flex/inline-block container reserves room for it instead of
+  measuring only its text and letting the graphic overflow. }
+function MaxReplacedW(Tag: THTMLTag): Single;
+var
+  c: THTMLTag;
+  w: Single;
+begin
+  Result := 0;
+  if (SameText(Tag.TagName, 'qrcode') or SameText(Tag.TagName, 'img')) and
+     Tag.HasAttribute('width') then
+    Result := TComputedStyle.ParseLength(Tag.GetAttribute('width'), 16);
+  for c in Tag.Children do
+  begin
+    w := MaxReplacedW(c);
+    if w > Result then Result := w;
+  end;
 end;
 
 { UA fallback chrome for controls the stylesheet didn't style; also the
@@ -377,7 +403,7 @@ begin
         if St.Color = TAlphaColors.Black then St.Color := TC_INK;
         if St.BorderRadius < 0 then St.BorderRadius := TC_RADIUS;
       end;
-    ckButton:
+    ckButton, ckFile:
       begin
         if (St.BackgroundColor shr 24) = 0 then
         begin
@@ -387,7 +413,7 @@ begin
             St.Color := TC_ON_ACCENT;
           end
           else
-          begin // plain button → neutral surface + border
+          begin // plain button / file picker → neutral surface + border
             St.BackgroundColor := TC_SURFACE2;
             St.Color := TC_INK;
             if St.BorderWidths.Top <= 0 then
@@ -448,6 +474,14 @@ begin
         txt := Trim(Tag.GetAttribute('value'));
         if txt = '' then txt := InnerText(Tag);
         if txt = '' then txt := 'Submit';
+      end;
+    ckFile:
+      begin
+        // "📎 Choose File" or the selected filename; the value holds the path
+        txt := Trim(Tag.GetAttribute('value'));
+        if txt <> '' then txt := #$F0#$9F#$93#$8E' ' + ExtractFileName(txt)
+        else if SameText(Tag.TagName, 'camera') then txt := #$F0#$9F#$93#$B7' Take Photo'
+        else txt := #$F0#$9F#$93#$8E' Choose File';
       end;
     ckSelect:
       begin
@@ -687,7 +721,9 @@ begin
             CollectInlineText(itemTags[i], sb);
             m := FCanvas.MeasureText(Trim(CollapseWS(sb.ToString)), cs.FontSize, FontStylesOf(cs));
           finally sb.Free; end;
-          baseW[i] := m.Width + cs.Padding.Horz + cs.BorderWidths.Horz;
+          // reserve room for any explicitly-sized replaced graphic inside
+          baseW[i] := Max(m.Width, MaxReplacedW(itemTags[i])) +
+            cs.Padding.Horz + cs.BorderWidths.Horz;
         end;
         usedFixed := usedFixed + baseW[i];
         sumGrow := sumGrow + growF[i];
@@ -881,6 +917,20 @@ var
     end;
   end;
 
+  procedure AddQuoteWord(const Q: string; const St: TComputedStyle; SpaceBefore: Boolean);
+  var
+    qi: TInlineItem;
+    qm: TTina4TextMetrics;
+  begin
+    qm := FCanvas.MeasureText(Q, St.FontSize, FontStylesOf(St));
+    qi.Text := Q; qi.Box := nil; qi.W := qm.Width; qi.H := LineHeightOf(St);
+    qi.Ascent := (qi.H - (qm.Ascent + qm.Descent)) / 2 + qm.Ascent;
+    qi.FontSize := St.FontSize; qi.Styles := FontStylesOf(St); qi.Color := St.Color;
+    qi.LetterSpacing := St.LetterSpacing;
+    qi.SpaceBefore := SpaceBefore and (items.Count > 0); qi.LineBreak := False;
+    items.Add(qi);
+  end;
+
   procedure GatherInline(T: THTMLTag; const St: TComputedStyle);
   var
     c: THTMLTag;
@@ -889,7 +939,7 @@ var
     i: Integer;
     it: TInlineItem;
     m: TTina4TextMetrics;
-    disp, txt: string;
+    disp, txt, qrText: string;
     leadingSpace: Boolean;
     iw, ih: Single;
   begin
@@ -963,6 +1013,37 @@ var
       it.SpaceBefore := False;
       items.Add(it);
     end;
+    if SameText(T.TagName, 'qrcode') then
+    begin
+      it.Text := '';
+      it.Box := TLayoutBox.Create;
+      it.Box.Tag := T;
+      it.Box.Style := cs;
+      it.Box.IsQRCode := True;
+      qrText := T.GetAttribute('value');
+      if qrText = '' then qrText := T.GetAttribute('data');
+      if qrText = '' then qrText := Trim(CollapseWS(InnerText(T)));
+      if not QREncode(qrText, it.Box.QRMatrix) then
+        it.Box.QRMatrix.Size := 0;
+      // square, sized by width/height attr or a sensible default
+      if cs.ExplicitWidth >= 0 then it.Box.W := cs.ExplicitWidth
+      else if cs.ExplicitHeight >= 0 then it.Box.W := cs.ExplicitHeight
+      else it.Box.W := 120;
+      it.Box.H := it.Box.W;
+      // only shrink-to-fit when no explicit size was asked for; an author who
+      // wrote width=140 wants 140 even inside a narrow shrink-wrap container
+      if (cs.ExplicitWidth < 0) and (cs.ExplicitHeight < 0) and
+         (CW > 0) and (it.Box.W > CW) then
+      begin it.Box.W := CW; it.Box.H := CW; end;
+      it.W := it.Box.W; it.H := it.Box.H;
+      it.FontSize := cs.FontSize; it.Styles := [];
+      it.Ascent := it.Box.H;
+      it.SpaceBefore := (items.Count > 0) and pendingSpace;
+      pendingSpace := False;
+      Box.Children.Add(it.Box);
+      items.Add(it);
+      Exit;
+    end;
     if SameText(T.TagName, 'img') then
     begin
       it.Text := '';
@@ -1033,6 +1114,15 @@ var
       pendingSpace := False;
       Box.Children.Add(it.Box);
       items.Add(it);
+      Exit;
+    end;
+    // <q> gets automatic quotation marks around its content
+    if SameText(T.TagName, 'q') then
+    begin
+      AddQuoteWord(#$E2#$80#$9C, cs, pendingSpace);   // “
+      pendingSpace := False;
+      for c in T.Children do GatherInline(c, cs);
+      AddQuoteWord(#$E2#$80#$9D, cs, False);          // ”
       Exit;
     end;
     // plain inline (b, i, span, a, small...) — recurse with its style
@@ -1169,6 +1259,9 @@ begin
   try
     for c in Tag.Children do
     begin
+      // <details>: when closed, render only the <summary>
+      if SameText(Tag.TagName, 'details') and not Tag.HasAttribute('open')
+         and not (IsTextNode(c) or SameText(c.TagName, 'summary')) then Continue;
       if IsTextNode(c) then
       begin
         GatherInline(c, ParentStyle);
@@ -1203,6 +1296,7 @@ begin
       // form control keeps its computed display: inline/inline-block flow inline,
       // block (e.g. Bootstrap .form-control) stacks full-width.
       if (disp = 'inline') or (disp = 'inline-block') or SameText(c.TagName, 'img')
+        or SameText(c.TagName, 'qrcode')
         or (IsFormControlTag(c.TagName) and (disp <> 'block')) then
       begin
         GatherInline(c, ParentStyle);
@@ -1268,6 +1362,12 @@ begin
     end;
     box.MarkerText := MarkerFor(
       TComputedStyle.ForTag(Tag.Parent, ParentStyle, FSheet).ListStyleType, liIdx);
+  end;
+  // <summary> disclosure triangle, reflecting the parent <details> open state
+  if SameText(Tag.TagName, 'summary') and (Tag.Parent <> nil) then
+  begin
+    if Tag.Parent.HasAttribute('open') then box.MarkerText := #$E2#$96#$BE   // ▾
+    else box.MarkerText := #$E2#$96#$B8;                                     // ▸
   end;
 
   // margins: -1 is the 'auto' marker from ParseLength; real negatives pass through
@@ -1605,6 +1705,37 @@ begin
   PaintBoxEx(Canvas, Box, OffsetY, 1.0, False);
 end;
 
+{ Paint a <qrcode> box: white quiet-zone ground, dark modules as squares.
+  The module grid is snapped to whole pixels so scanners see crisp edges. }
+procedure PaintQR(Canvas: TTina4Canvas; Box: TLayoutBox; Y: Single);
+const
+  QUIET = 4;                       // spec-minimum quiet zone, in modules
+var
+  n, total, r, c: Integer;
+  scale, ox, oy, px, py: Single;
+begin
+  Canvas.FillRect(Box.X, Y, Box.W, Box.H, $FFFFFFFF);
+  n := Box.QRMatrix.Size;
+  if n <= 0 then
+  begin
+    Canvas.StrokeRect(Box.X, Y, Box.W, Box.H, 1, $FFCCCCCC);
+    Exit;
+  end;
+  total := n + 2 * QUIET;
+  scale := Box.W / total;          // one module edge in device pixels
+  ox := Box.X + QUIET * scale;
+  oy := Y + QUIET * scale;
+  for r := 0 to n - 1 do
+    for c := 0 to n - 1 do
+      if Box.QRMatrix.Modules[r][c] then
+      begin
+        px := ox + c * scale;
+        py := oy + r * scale;
+        // +1px overdraw closes seams from fractional module sizes
+        Canvas.FillRect(px, py, scale + 1, scale + 1, $FF000000);
+      end;
+end;
+
 procedure PaintBoxEx(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single;
   Opacity: Single; Hidden: Boolean);
 var
@@ -1644,6 +1775,11 @@ begin
   op := Opacity;
   if (st.Opacity >= 0) and (st.Opacity < 1) then op := op * st.Opacity;
   if SameText(st.Visibility, 'hidden') then Hidden := True;
+  if Box.IsQRCode then
+  begin
+    PaintQR(Canvas, Box, y);
+    Exit;
+  end;
   if Box.IsImagePlaceholder then
   begin
     if Box.ImageHandle >= 0 then

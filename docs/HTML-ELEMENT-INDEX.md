@@ -70,6 +70,8 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | Element | Status | Note |
 |---|---|---|
 | img | ✅ | HTTPS fetch + decode + cache + aspect |
+| qrcode | ✅ | **Tina4 custom** — pure-Pascal QR encoder (byte mode, v1–v10 ECC-L), painted as modules; `value`/`data` attr or text node |
+| camera | ✅ | **Tina4 custom** — "Take Photo" control → shell `CaptureCamera` (still image); sets `value` |
 | picture, source, srcset | ❌ | |
 | svg | ❌ | not rendered |
 | video, audio, track | ❌ | |
@@ -97,7 +99,8 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | input[checkbox] | ✅ | drawn + toggle |
 | input[radio] | ✅ | drawn + group exclusivity |
 | input[submit/button] | ✅ | drawn button |
-| input[file/date/color/range/…] | ❌ | fall back to text box |
+| input[file] | ✅ | "Choose File" button → shell `PickFile` (NSOpenPanel); shows filename, sets `value` |
+| input[date/color/range/…] | ❌ | fall back to text box |
 | textarea | 🟡 | value shown; caret end-only |
 | select, option, optgroup | ✅ | drawn + painted dropdown |
 | button | ✅ | drawn; submit |
@@ -109,7 +112,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 
 | Element | Status | Note |
 |---|---|---|
-| details, summary | ❌ | no toggle |
+| details, summary | ✅ | ▸/▾ marker; summary click toggles open |
 | dialog | ❌ | |
 | script, noscript, template | ⬜ | not executed/rendered |
 | slot | ⬜ | |

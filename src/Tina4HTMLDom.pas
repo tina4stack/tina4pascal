@@ -2306,6 +2306,14 @@ begin
   end
   else if TN = 'abbr' then
     Result.TextDecoration := 'underline'
+  else if TN = 'ins' then
+    Result.TextDecoration := 'underline'
+  else if TN = 'summary' then
+  begin
+    Result.Display := 'block';
+    Result.Padding.Left := 18;   // room for the disclosure triangle
+    Result.Bold := True;
+  end
   else if (TN = 'cite') or (TN = 'dfn') then
     Result.Italic := True
   else if (TN = 'var') then
@@ -2368,6 +2376,10 @@ begin
   // Inline style overrides (highest priority)
   if Tag.Style.Count > 0 then
     ApplyDeclarations(Tag.Style, Result, ParentStyle);
+
+  // the `hidden` attribute is equivalent to display:none
+  if Tag.HasAttribute('hidden') then
+    Result.Display := 'none';
 
   // Bootstrap button class fallback — for non-native elements (span, div, a)
   // that have btn classes. Always apply layout properties; only apply colors

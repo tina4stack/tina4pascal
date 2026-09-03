@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+<style>
+:root{
+  --blue:#4F46E5; --ink:#15162e; --muted:#5b5c78;
+  --paper:#fbfaf7; --surface:#ffffff; --border:#e6e5f0; --radius:16px;
+}
+body{font-family:"Hanken Grotesk",system-ui,sans-serif;background:var(--paper);
+  color:var(--ink);padding:32px;margin:0}
+h1{font-family:"Gabarito",sans-serif;font-size:30px;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 28px}
+h2{font-family:"Gabarito",sans-serif;font-size:19px;margin:28px 0 12px}
+.grid{display:flex;gap:20px;flex-wrap:wrap}
+.card{background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:18px}
+.cap{color:var(--muted);font-size:13px;margin-top:10px}
+.field{margin:10px 0}
+label{display:inline-block;width:120px;color:var(--muted)}
+</style>
+</head>
+<body>
+  <h1>QR · File · Camera</h1>
+  <p class="sub">Native Tina4Pascal tags — no widgets, driven entirely by HTML.</p>
+
+  <h2>&lt;qrcode&gt; — pure-Pascal encoder</h2>
+  <div class="grid">
+    <div class="card">
+      <qrcode value="https://tina4.com/pascal" width="150"></qrcode>
+      <div class="cap">value="…" — a URL</div>
+    </div>
+    <div class="card">
+      <qrcode width="150">TINA4-PASCAL-2026</qrcode>
+      <div class="cap">text node payload</div>
+    </div>
+    <div class="card">
+      <qrcode data="WIFI:S:Tina4;T:WPA;P:pascal2026;;" width="150"></qrcode>
+      <div class="cap">data="…" — Wi-Fi join</div>
+    </div>
+  </div>
+
+  <h2>&lt;input type="file"&gt;</h2>
+  <div class="card" style="max-width:520px">
+    <div class="field"><label>Attachment</label><input type="file" name="upload"></div>
+    <div class="field"><label>Report</label><input type="file" name="doc" value="/Users/you/report.pdf"></div>
+    <div class="cap">Click opens the native picker; the chosen filename is shown.</div>
+  </div>
+
+  <h2>&lt;camera&gt;</h2>
+  <div class="card" style="max-width:520px">
+    <div class="field"><label>Photo</label><camera name="selfie"></camera></div>
+    <div class="cap">Captures a still via the shell; the path becomes the value.</div>
+  </div>
+</body>
+</html>

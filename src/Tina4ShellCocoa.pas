@@ -87,6 +87,8 @@ type
     procedure Quit; override;
     procedure SetTitle(const Title: string); override;
     procedure StartTicker(IntervalMs: Integer); override;
+    function PickFile: string; override;
+    function CaptureCamera: string; override;
     function GetMeasuringCanvas: TTina4Canvas; override;
   end;
 
@@ -214,8 +216,8 @@ end;
 function TCocoaCanvas.AttrsFor(FontSize: Single; Styles: TTina4FontStyles;
   Color: TTina4Color): NSDictionary;
 var
-  keys: array[0..3] of Pointer;
-  vals: array[0..3] of Pointer;
+  keys: array[0..4] of Pointer;
+  vals: array[0..4] of Pointer;
   n: Integer;
 begin
   keys[0] := Pointer(NSFontAttributeName);
@@ -226,6 +228,12 @@ begin
   if tfsUnderline in Styles then
   begin
     keys[n] := Pointer(NSUnderlineStyleAttributeName);
+    vals[n] := Pointer(NSNumber.numberWithInt(NSUnderlineStyleSingle));
+    Inc(n);
+  end;
+  if tfsStrike in Styles then
+  begin
+    keys[n] := Pointer(NSStrikethroughStyleAttributeName);
     vals[n] := Pointer(NSNumber.numberWithInt(NSUnderlineStyleSingle));
     Inc(n);
   end;
@@ -525,6 +533,29 @@ end;
 procedure TCocoaShell.SetTitle(const Title: string);
 begin
   if FWindow <> nil then FWindow.setTitle(NSStr(Title));
+end;
+
+function TCocoaShell.PickFile: string;
+var
+  panel: NSOpenPanel;
+begin
+  Result := '';
+  panel := NSOpenPanel.openPanel;
+  panel.setCanChooseFiles(True);
+  panel.setCanChooseDirectories(False);
+  panel.setAllowsMultipleSelection(False);
+  if panel.runModal = NSModalResponseOK then
+    if panel.URLs.count > 0 then
+      Result := string(NSURL(panel.URLs.objectAtIndex(0)).path.UTF8String);
+end;
+
+function TCocoaShell.CaptureCamera: string;
+begin
+  { A live AVFoundation capture session belongs in a dedicated camera shell
+    unit (it needs an AVCaptureSession + preview layer + permission prompt).
+    Until that lands, fall back to letting the user pick an image file so the
+    <camera> element and its value pipeline work end to end. }
+  Result := PickFile;
 end;
 
 procedure TTina4Ticker.tick(t: NSTimer);

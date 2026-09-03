@@ -12,7 +12,7 @@ interface
 type
   TTina4Color = Cardinal; // $AARRGGBB
 
-  TTina4FontStyle = (tfsBold, tfsItalic, tfsUnderline);
+  TTina4FontStyle = (tfsBold, tfsItalic, tfsUnderline, tfsStrike);
   TTina4FontStyles = set of TTina4FontStyle;
 
   TTina4TextMetrics = record
@@ -93,6 +93,12 @@ type
     procedure Run; virtual; abstract;          // enter event loop
     procedure Quit; virtual; abstract;
     procedure SetTitle(const Title: string); virtual;
+    { Open the OS file picker; returns the chosen path or '' if cancelled.
+      Default '' (no picker); backends override with the native dialog. }
+    function PickFile: string; virtual;
+    { Capture one still image from the OS camera to a temp file; returns its
+      path or '' if unavailable/cancelled. Default ''. }
+    function CaptureCamera: string; virtual;
     { Text measurement outside a paint cycle (layout needs this). }
     function GetMeasuringCanvas: TTina4Canvas; virtual; abstract;
   end;
@@ -107,6 +113,16 @@ end;
 procedure TTina4Shell.StartTicker(IntervalMs: Integer);
 begin
   // optional per shell
+end;
+
+function TTina4Shell.PickFile: string;
+begin
+  Result := '';
+end;
+
+function TTina4Shell.CaptureCamera: string;
+begin
+  Result := '';
 end;
 
 procedure TTina4Canvas.FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color);
