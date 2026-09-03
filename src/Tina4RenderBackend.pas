@@ -24,6 +24,9 @@ type
 
   TTina4Canvas = class
   public
+    { Extra spacing between characters (CSS letter-spacing), applied by
+      DrawText/MeasureText. Set around a run, reset to 0 after. }
+    LetterSpacing: Single;
     procedure FillRect(X, Y, W, H: Single; Color: TTina4Color); virtual; abstract;
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); virtual; abstract;
     { Rounded variants; default falls back to square corners so simple

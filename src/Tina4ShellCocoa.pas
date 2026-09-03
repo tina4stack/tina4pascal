@@ -209,8 +209,8 @@ end;
 function TCocoaCanvas.AttrsFor(FontSize: Single; Styles: TTina4FontStyles;
   Color: TTina4Color): NSDictionary;
 var
-  keys: array[0..2] of Pointer;
-  vals: array[0..2] of Pointer;
+  keys: array[0..3] of Pointer;
+  vals: array[0..3] of Pointer;
   n: Integer;
 begin
   keys[0] := Pointer(NSFontAttributeName);
@@ -220,9 +220,15 @@ begin
   n := 2;
   if tfsUnderline in Styles then
   begin
-    keys[2] := Pointer(NSUnderlineStyleAttributeName);
-    vals[2] := Pointer(NSNumber.numberWithInt(NSUnderlineStyleSingle));
-    n := 3;
+    keys[n] := Pointer(NSUnderlineStyleAttributeName);
+    vals[n] := Pointer(NSNumber.numberWithInt(NSUnderlineStyleSingle));
+    Inc(n);
+  end;
+  if LetterSpacing <> 0 then
+  begin
+    keys[n] := Pointer(NSKernAttributeName);
+    vals[n] := Pointer(NSNumber.numberWithDouble(LetterSpacing));
+    Inc(n);
   end;
   Result := NSDictionary.dictionaryWithObjects_forKeys_count(@vals[0], @keys[0], n);
 end;

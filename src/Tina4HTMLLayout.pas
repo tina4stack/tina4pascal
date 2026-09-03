@@ -21,6 +21,7 @@ type
     FontSize: Single;
     Styles: TTina4FontStyles;
     Color: TTina4Color;
+    LetterSpacing: Single;
   end;
 
   { Form controls are DRAWN by the renderer (no native widgets); their state
@@ -327,7 +328,7 @@ begin
     run.Y := St.BorderWidths.Top + St.Padding.Top;
     run.FontSize := St.FontSize;
     run.Styles := FontStylesOf(St);
-    run.Color := St.Color;
+    run.Color := St.Color; run.LetterSpacing := 0;
     Result.Runs.Add(run);
   end;
 end;
@@ -504,7 +505,7 @@ begin
         run.Y := St.BorderWidths.Top + St.Padding.Top + i * lineH;
         run.FontSize := St.FontSize;
         run.Styles := FontStylesOf(St);
-        run.Color := St.Color;
+        run.Color := St.Color; run.LetterSpacing := 0; run.LetterSpacing := 0;
         Result.Runs.Add(run);
       end;
     finally
@@ -524,7 +525,7 @@ begin
     run.Y := St.BorderWidths.Top + St.Padding.Top;
     run.FontSize := St.FontSize;
     run.Styles := FontStylesOf(St);
-    if ph <> '' then run.Color := $FF9CA3AF else run.Color := St.Color;
+    if ph <> '' then run.Color := $FF9CA3AF else run.Color := St.Color; run.LetterSpacing := 0;
     if kind = ckButton then
     begin // center button captions
       m := FCanvas.MeasureText(run.Text, St.FontSize, run.Styles);
@@ -803,6 +804,7 @@ type
     FontSize: Single;
     Styles: TTina4FontStyles;
     Color: TTina4Color;
+    LetterSpacing: Single;
     SpaceBefore: Boolean;
     LineBreak: Boolean;    // <br>
   end;
@@ -875,6 +877,7 @@ var
         words.Delimiter := ' ';
         words.StrictDelimiter := True;
         words.DelimitedText := Trim(txt);
+        FCanvas.LetterSpacing := St.LetterSpacing;
         for i := 0 to words.Count - 1 do
         begin
           if words[i] = '' then Continue;
@@ -894,9 +897,11 @@ var
           it.FontSize := St.FontSize;
           it.Styles := FontStylesOf(St);
           it.Color := St.Color;
+          it.LetterSpacing := St.LetterSpacing;
           it.SpaceBefore := (items.Count > 0) and ((i > 0) or leadingSpace);
           items.Add(it);
         end;
+        FCanvas.LetterSpacing := 0;
       finally
         words.Free;
       end;
@@ -1048,6 +1053,7 @@ var
         run.FontSize := it.FontSize;
         run.Styles := it.Styles;
         run.Color := it.Color;
+        run.LetterSpacing := it.LetterSpacing;
         Box.Runs.Add(run);
       end;
       x := x + it.W;
@@ -1683,7 +1689,9 @@ begin
     begin
       r := Box.Runs[i];
       fg := ScaleAlpha(r.Color, op);
+      Canvas.LetterSpacing := r.LetterSpacing;
       Canvas.DrawText(r.X - sx, r.Y - innerOfs, r.Text, r.FontSize, r.Styles, fg);
+      Canvas.LetterSpacing := 0;
     end;
   for i := 0 to Box.Children.Count - 1 do
   begin
