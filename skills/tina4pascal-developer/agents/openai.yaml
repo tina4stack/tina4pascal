@@ -1,0 +1,14 @@
+interface:
+  display_name: "Tina4Pascal Developer"
+  short_description: "Build, port, and cross-compile the Tina4Pascal HTML-native UI stack with FPC"
+  brand_color: "#E91E63"
+  default_prompt: "Use $tina4pascal-developer to implement and verify this Tina4Pascal change."
+
+dependencies:
+  tools:
+    - type: "binary"
+      value: "fpc"
+      description: "Free Pascal 3.2.2 toolchain at ~/fpc (see references/build-formula.md); Homebrew fpc is not a substitute"
+
+policy:
+  allow_implicit_invocation: true

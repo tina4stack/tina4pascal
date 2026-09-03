@@ -82,6 +82,17 @@ cd tests && PPC_CONFIG_PATH=$HOME/fpc/etc $HOME/fpc/bin/fpc -Mdelphi -Fu../src t
 4. Agent skills so AI coders can drive this stack without rediscovering
    the pitfalls
 
+## AI coder skill
+
+The repo ships an agent skill (`skills/tina4pascal-developer/`) that teaches
+Claude Code, Codex, and Cursor the architecture rules, the toolchain formula,
+and the verification discipline for this stack:
+
+```sh
+./scripts/install-skills.sh          # all clients
+./scripts/install-skills.sh claude   # or: codex, cursor
+```
+
 ## Status
 
 Early proof of concept, moving fast. macOS renders; the other five targets
