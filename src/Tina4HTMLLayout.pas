@@ -737,6 +737,7 @@ type
     Text: string;          // '' for atomic boxes
     Box: TLayoutBox;       // nil for words
     W, H: Single;
+    Ascent: Single;        // distance from top of item to its baseline
     FontSize: Single;
     Styles: TTina4FontStyles;
     Color: TTina4Color;
@@ -787,6 +788,7 @@ var
     begin
       it.Text := ''; it.Box := nil; it.W := 0;
       it.H := LineHeightOf(St);
+      it.Ascent := it.H;
       it.FontSize := St.FontSize; it.Styles := []; it.Color := 0;
       it.SpaceBefore := False;
       it.LineBreak := True;
@@ -819,6 +821,9 @@ var
           it.Box := nil;
           it.W := m.Width;
           it.H := LineHeightOf(St);
+          // baseline sits (lineHeight-fontHeight)/2 below the run top, then
+          // ascent below that — so text of any size shares one baseline.
+          it.Ascent := (it.H - (m.Ascent + m.Descent)) / 2 + m.Ascent;
           it.FontSize := St.FontSize;
           it.Styles := FontStylesOf(St);
           it.Color := St.Color;
@@ -835,7 +840,7 @@ var
     if cs.Margin.Left > 0 then
     begin // inline margin-left becomes a spacer in the flow
       it.Text := ''; it.Box := nil;
-      it.W := cs.Margin.Left; it.H := 0;
+      it.W := cs.Margin.Left; it.H := 0; it.Ascent := 0;
       it.FontSize := cs.FontSize; it.Styles := []; it.Color := 0;
       it.SpaceBefore := False;
       items.Add(it);
@@ -870,6 +875,7 @@ var
       end;
       it.W := it.Box.W; it.H := it.Box.H;
       it.FontSize := cs.FontSize; it.Styles := [];
+      it.Ascent := it.Box.H;  // baseline at the box bottom (default vertical-align)
       it.SpaceBefore := (items.Count > 0) and pendingSpace;
       pendingSpace := False;
       Box.Children.Add(it.Box);
@@ -882,6 +888,7 @@ var
       it.Box := MakeControl(T, cs, CW);
       it.W := it.Box.W; it.H := it.Box.H;
       it.FontSize := cs.FontSize; it.Styles := [];
+      it.Ascent := it.Box.H;  // baseline at the box bottom (default vertical-align)
       it.SpaceBefore := (items.Count > 0) and pendingSpace;
       pendingSpace := False;
       Box.Children.Add(it.Box);
@@ -903,6 +910,7 @@ var
         it.Box := MakeInlineBlock(T, cs);
       it.W := it.Box.W; it.H := it.Box.H;
       it.FontSize := cs.FontSize; it.Styles := [];
+      it.Ascent := it.Box.H;  // baseline at the box bottom (default vertical-align)
       it.SpaceBefore := (items.Count > 0) and pendingSpace;
       pendingSpace := False;
       Box.Children.Add(it.Box);
@@ -918,7 +926,7 @@ var
     lineTop, lineH: Single);
   var
     idx, k: Integer;
-    lineW, xShift, x: Single;
+    lineW, xShift, x, maxAscent: Single;
     it: TInlineItem;
     run: TTextRun;
     r: TTextRun;
@@ -940,6 +948,16 @@ var
     else
       xShift := 0;
     end;
+    // shared baseline: the line's baseline sits maxAscent below its top;
+    // every baseline-aligned item (text of any size, inline-block) hangs
+    // its own ascent above it, so they line up on one baseline.
+    maxAscent := 0;
+    for k := 0 to lineItems.Count - 1 do
+    begin
+      it := items[lineItems[k]];
+      if (it.Box <> nil) and SameText(it.Box.Style.VerticalAlign, 'top') then Continue;
+      if it.Ascent > maxAscent then maxAscent := it.Ascent;
+    end;
     x := CX + xShift;
     for k := 0 to lineItems.Count - 1 do
     begin
@@ -950,14 +968,16 @@ var
       begin
         if SameText(it.Box.Style.VerticalAlign, 'top') then
           ShiftBoxTree(it.Box, x, lineTop)
-        else
-          ShiftBoxTree(it.Box, x, lineTop + (lineH - it.H)); // bottom-align
+        else if SameText(it.Box.Style.VerticalAlign, 'middle') then
+          ShiftBoxTree(it.Box, x, lineTop + maxAscent - it.H / 2)
+        else // baseline: box bottom on the baseline
+          ShiftBoxTree(it.Box, x, lineTop + maxAscent - it.Ascent);
       end
       else
       begin
         run.Text := it.Text;
         run.X := x;
-        run.Y := lineTop + (lineH - it.H) + (it.H - it.FontSize * 1.2) / 2;
+        run.Y := lineTop + maxAscent - it.Ascent;  // top so baseline aligns
         run.FontSize := it.FontSize;
         run.Styles := it.Styles;
         run.Color := it.Color;
