@@ -1504,10 +1504,15 @@ begin
     else
       Canvas.StrokeRect(Box.X, y, Box.W, Box.H, st.BorderWidths.Top, bd);
   end;
-  // list marker, drawn to the left of the li content box
+  // list marker: right-aligned so multi-char markers (III., 10.) share the
+  // same right edge, sitting just left of the content text.
   if (not Hidden) and (Box.MarkerText <> '') then
-    Canvas.DrawText(Box.X - 18, y + st.Padding.Top, Box.MarkerText,
+  begin
+    m := Canvas.MeasureText(Box.MarkerText, st.FontSize, []);
+    Canvas.DrawText(Box.X + st.BorderWidths.Left + st.Padding.Left - 8 - m.Width,
+      y + st.BorderWidths.Top + st.Padding.Top, Box.MarkerText,
       st.FontSize, [], ScaleAlpha(st.Color, op));
+  end;
 
   // scrollable / clipped inner box: clip, then draw content shifted by ScrollTop.
   // didClip MUST gate ClearClip (not "innerOfs<>OffsetY") — a scroller sitting
