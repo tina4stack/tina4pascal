@@ -12,7 +12,7 @@ interface
 
 uses
   SysUtils, Classes, Math, Generics.Collections,
-  Tina4HTMLDom, Tina4RenderBackend;
+  Tina4HTMLDom, Tina4RenderBackend, Tina4Theme;
 
 type
   TTextRun = record
@@ -269,6 +269,14 @@ begin
   end;
 end;
 
+function IsPrimaryButton(Tag: THTMLTag): Boolean;
+var t: string;
+begin
+  t := LowerCase(Tag.GetAttribute('type', 'submit'));
+  Result := SameText(Tag.TagName, 'button') and (t = 'submit');
+  Result := Result or (SameText(Tag.TagName, 'input') and (t = 'submit'));
+end;
+
 function ControlKindOf(Tag: THTMLTag): TControlKind;
 var
   typ: string;
@@ -285,31 +293,58 @@ end;
 
 { UA fallback chrome for controls the stylesheet didn't style; also the
   focus ring. Shared by MakeControl and RefreshStyles. }
-procedure ApplyControlChrome(var St: TComputedStyle; Kind: TControlKind; Focused: Boolean);
+procedure ApplyControlChrome(var St: TComputedStyle; Kind: TControlKind;
+  Focused: Boolean; Primary: Boolean = False);
 begin
   case Kind of
     ckTextInput, ckTextarea, ckSelect:
       begin
         if St.BorderWidths.Top <= 0 then
         begin
-          St.SetBorderWidth(1);
-          St.SetBorderColor($FFADB5BD);
+          St.SetBorderWidth(TC_BORDER_W);
+          St.SetBorderColor(TC_BORDER);
         end;
-        if not St.Padding.Any then begin St.Padding.SetAll(6); St.Padding.Left := 10; St.Padding.Right := 10; end;
-        if (St.BackgroundColor shr 24) = 0 then St.BackgroundColor := $FFFFFFFF;
-        if St.BorderRadius < 0 then St.BorderRadius := 4;
+        if not St.Padding.Any then
+        begin
+          St.Padding.SetAll(TC_PAD_V);
+          St.Padding.Left := TC_PAD_H; St.Padding.Right := TC_PAD_H;
+        end;
+        if (St.BackgroundColor shr 24) = 0 then St.BackgroundColor := TC_SURFACE;
+        if St.Color = TAlphaColors.Black then St.Color := TC_INK;
+        if St.BorderRadius < 0 then St.BorderRadius := TC_RADIUS;
       end;
     ckButton:
       begin
-        if (St.BackgroundColor shr 24) = 0 then St.BackgroundColor := $FFE9ECEF;
-        if not St.Padding.Any then begin St.Padding.SetAll(6); St.Padding.Left := 14; St.Padding.Right := 14; end;
-        if St.BorderRadius < 0 then St.BorderRadius := 4;
+        if (St.BackgroundColor shr 24) = 0 then
+        begin
+          if Primary then
+          begin // submit → indigo primary
+            St.BackgroundColor := TC_ACCENT;
+            St.Color := TC_ON_ACCENT;
+          end
+          else
+          begin // plain button → neutral surface + border
+            St.BackgroundColor := TC_SURFACE2;
+            St.Color := TC_INK;
+            if St.BorderWidths.Top <= 0 then
+            begin
+              St.SetBorderWidth(TC_BORDER_W);
+              St.SetBorderColor(TC_BORDER);
+            end;
+          end;
+        end;
+        if not St.Padding.Any then
+        begin
+          St.Padding.SetAll(TC_PAD_V);
+          St.Padding.Left := TC_BTN_PAD_H; St.Padding.Right := TC_BTN_PAD_H;
+        end;
+        if St.BorderRadius < 0 then St.BorderRadius := TC_RADIUS;
       end;
   end;
   if Focused and (Kind in [ckTextInput, ckTextarea, ckSelect]) then
   begin
-    St.SetBorderWidth(2);
-    St.SetBorderColor($FF0D6EFD); // focus ring
+    St.SetBorderWidth(TC_FOCUS_W);
+    St.SetBorderColor(TC_ACCENT); // indigo focus (ring not paintable yet)
   end;
 end;
 
@@ -330,7 +365,7 @@ begin
   Result := TLayoutBox.Create;
   Result.Tag := Tag;
   Result.ControlKind := kind;
-  ApplyControlChrome(St, kind, Tag.IsFocused);
+  ApplyControlChrome(St, kind, Tag.IsFocused, IsPrimaryButton(Tag));
   Result.Style := St;
 
   padH := St.Padding.Horz + St.BorderWidths.Horz;
@@ -1087,7 +1122,7 @@ begin
   begin
     st := TComputedStyle.ForTag(Box.Tag, ParentStyle, FSheet);
     if Box.ControlKind <> ckNone then
-      ApplyControlChrome(st, Box.ControlKind, Box.Tag.IsFocused);
+      ApplyControlChrome(st, Box.ControlKind, Box.Tag.IsFocused, IsPrimaryButton(Box.Tag));
     // keep layout-critical fields from the original pass; only visuals swap
     st.ExplicitWidth := Box.Style.ExplicitWidth;
     st.ExplicitHeight := Box.Style.ExplicitHeight;
@@ -1137,17 +1172,17 @@ begin
     if Box.ControlKind = ckRadio then
     begin
       Canvas.FillRoundRect(Box.X, y, 16, 16, 8, $FFFFFFFF);
-      Canvas.StrokeRoundRect(Box.X, y, 16, 16, 8, 1.5, $FF6C757D);
+      Canvas.StrokeRoundRect(Box.X, y, 16, 16, 8, 1.5, TC_BORDER);
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
-        Canvas.FillRoundRect(Box.X + 4, y + 4, 8, 8, 4, $FF0D6EFD);
+        Canvas.FillRoundRect(Box.X + 4, y + 4, 8, 8, 4, TC_ACCENT);
     end
     else
     begin
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
-        Canvas.FillRoundRect(Box.X, y, 16, 16, 3, $FF0D6EFD)
+        Canvas.FillRoundRect(Box.X, y, 16, 16, 3, TC_ACCENT)
       else
         Canvas.FillRoundRect(Box.X, y, 16, 16, 3, $FFFFFFFF);
-      Canvas.StrokeRoundRect(Box.X, y, 16, 16, 3, 1.5, $FF6C757D);
+      Canvas.StrokeRoundRect(Box.X, y, 16, 16, 3, 1.5, TC_BORDER);
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
         Canvas.DrawText(Box.X + 2.5, y - 0.5, '✓', 12, [tfsBold], $FFFFFFFF);
     end;
@@ -1233,7 +1268,7 @@ begin
     end;
     if Box.ControlKind = ckSelect then
       Canvas.DrawText(Box.X + Box.W - 18, y + st.BorderWidths.Top + st.Padding.Top,
-        '▾', st.FontSize, [], $FF6C757D);
+        '▾', st.FontSize, [], TC_MUTED);
   end;
 end;
 
