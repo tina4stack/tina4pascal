@@ -61,6 +61,7 @@ type
     procedure mouseDown(event: NSEvent); override;
     procedure mouseUp(event: NSEvent); override;
     procedure mouseMoved(event: NSEvent); override;
+    procedure mouseDragged(event: NSEvent); override;
     procedure scrollWheel(event: NSEvent); override;
     procedure keyDown(event: NSEvent); override;
   end;
@@ -363,6 +364,15 @@ begin
   p := convertPoint_fromView(event.locationInWindow, nil);
   if (shell <> nil) and Assigned(shell.OnMouseMove) then
     shell.OnMouseMove(p.x, p.y);
+end;
+
+procedure TTina4View.mouseDragged(event: NSEvent);
+var
+  p: NSPoint;
+begin
+  p := convertPoint_fromView(event.locationInWindow, nil);
+  if (shell <> nil) and Assigned(shell.OnMouseDrag) then
+    shell.OnMouseDrag(p.x, p.y);
 end;
 
 procedure TTina4View.keyDown(event: NSEvent);

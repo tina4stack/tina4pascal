@@ -70,6 +70,7 @@ type
     OnMouseDown: TTina4MouseButtonEvent;
     OnMouseUp: TTina4MouseButtonEvent;
     OnMouseMove: TTina4MouseMoveEvent;
+    OnMouseDrag: TTina4MouseMoveEvent;   // move with the primary button held
     OnScroll: TTina4ScrollEvent;
     OnResize: TTina4ResizeEvent;
     OnKeyDown: TTina4KeyEvent;

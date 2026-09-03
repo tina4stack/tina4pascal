@@ -26,6 +26,12 @@ type
     FocusTag: THTMLTag;
     ActiveTag: THTMLTag;
     OpenSelect: THTMLTag;         // dropdown currently expanded, nil = none
+    DragBox: TLayoutBox;          // scroller being drag-scrolled, nil = none
+    DragStartX, DragStartY: Single;
+    DragStartLeft, DragStartTop: Single;
+    LastDragX, LastDragY: Single;
+    MomentumBox: TLayoutBox;      // flick inertia target, nil = none
+    MomVX, MomVY: Single;         // velocity (px per tick)
     HoverOpt: Integer;            // hovered option row in the open dropdown, -1 none
     Script: TStringList;          // --script: one driver command per tick
     ScriptPos: Integer;
@@ -34,6 +40,8 @@ type
     procedure MouseDown(X, Y: Single);
     procedure MouseUp(X, Y: Single);
     procedure MouseMove(X, Y: Single);
+    procedure MouseDrag(X, Y: Single);
+    procedure MomentumTick;
     procedure KeyDown(const Chars: string; KeyCode: Integer);
     procedure Tick;
     procedure Rebuild;
@@ -119,6 +127,13 @@ begin
     begin
       MouseDown(StrToFloatDef(a, 0), StrToFloatDef(b, 0));
       MouseUp(StrToFloatDef(a, 0), StrToFloatDef(b, 0));
+    end
+    else if cmd = 'drag' then
+    begin // drag X0 Y0 X1 Y1 — press, drag across, release
+      MouseDown(StrToFloatDef(a, 0), StrToFloatDef(b, 0));
+      MouseDrag((StrToFloatDef(a, 0) + StrToFloatDef(c, 0)) / 2, StrToFloatDef(b, 0));
+      MouseDrag(StrToFloatDef(c, 0), StrToFloatDef(b, 0));
+      MouseUp(StrToFloatDef(c, 0), StrToFloatDef(b, 0));
     end
     else if cmd = 'key' then
       KeyDown(Copy(line, 5, MaxInt), TK_NONE)
@@ -368,11 +383,54 @@ begin
   end;
 end;
 
+procedure TViewer.MouseDrag(X, Y: Single);
+begin
+  if DragBox = nil then Exit;
+  // click-hold drag: content follows the cursor (opposite of a scrollbar)
+  if DragBox.ScrollableX and (DragBox.MaxScrollX > 0) then
+    DragBox.ScrollLeft := Max(0, Min(DragBox.MaxScrollX,
+      DragStartLeft - (X - DragStartX)));
+  if DragBox.Scrollable and (DragBox.MaxScroll > 0) then
+    DragBox.ScrollTop := Max(0, Min(DragBox.MaxScroll,
+      DragStartTop - (Y - DragStartY)));
+  // velocity = last frame's delta (drives flick momentum on release)
+  MomVX := X - LastDragX; MomVY := Y - LastDragY;
+  LastDragX := X; LastDragY := Y;
+  Shell.Invalidate;
+end;
+
+{ Inertial deceleration after a flick; runs on the 16ms interactive ticker. }
+procedure TViewer.MomentumTick;
+const
+  DECAY = 0.92;
+begin
+  if MomentumBox = nil then Exit;
+  if MomentumBox.ScrollableX and (MomentumBox.MaxScrollX > 0) then
+    MomentumBox.ScrollLeft := Max(0, Min(MomentumBox.MaxScrollX,
+      MomentumBox.ScrollLeft - MomVX));
+  if MomentumBox.Scrollable and (MomentumBox.MaxScroll > 0) then
+    MomentumBox.ScrollTop := Max(0, Min(MomentumBox.MaxScroll,
+      MomentumBox.ScrollTop - MomVY));
+  MomVX := MomVX * DECAY; MomVY := MomVY * DECAY;
+  if (Abs(MomVX) < 0.4) and (Abs(MomVY) < 0.4) then MomentumBox := nil;
+  Shell.Invalidate;
+end;
+
 procedure TViewer.MouseDown(X, Y: Single);
 var
   hit: THTMLTag;
 begin
   if RootBox = nil then Exit;
+  // start a drag-scroll if the press is over a scrollable box
+  MomentumBox := nil;  // a new press stops any inertial glide
+  DragBox := FindScrollBox(RootBox, X, Y + ScrollY);
+  if DragBox <> nil then
+  begin
+    DragStartX := X; DragStartY := Y;
+    DragStartLeft := DragBox.ScrollLeft; DragStartTop := DragBox.ScrollTop;
+    LastDragX := X; LastDragY := Y;
+    MomVX := 0; MomVY := 0;
+  end;
   hit := HitTest(RootBox, X, Y + ScrollY);
   SetChain(ActiveTag, False, True, False);
   ActiveTag := hit;
@@ -392,10 +450,18 @@ var
   cb: TLayoutBox;
   tx, mw: Single;
   ci, ni: Integer;
+  wasDragging: Boolean;
 begin
   if RootBox = nil then Exit;
+  wasDragging := (DragBox <> nil) and
+    ((Abs(X - DragStartX) > 3) or (Abs(Y - DragStartY) > 3));
+  // release with residual velocity → inertial glide
+  if wasDragging and ((Abs(MomVX) > 1.5) or (Abs(MomVY) > 1.5)) then
+    MomentumBox := DragBox;
+  DragBox := nil;
   SetChain(ActiveTag, False, True, False);
   ActiveTag := nil;
+  if wasDragging then Exit;  // a drag isn't a click
 
   // an open dropdown eats the click first
   if OpenSelect <> nil then
@@ -678,6 +744,7 @@ begin
   Viewer.Shell.OnMouseDown := Viewer.MouseDown;
   Viewer.Shell.OnMouseUp := Viewer.MouseUp;
   Viewer.Shell.OnMouseMove := Viewer.MouseMove;
+  Viewer.Shell.OnMouseDrag := Viewer.MouseDrag;
   Viewer.Shell.OnKeyDown := Viewer.KeyDown;
   Viewer.Shell.SnapshotPath := SnapPath;
 
@@ -702,9 +769,14 @@ begin
     Viewer.Script.LoadFromFile(ScriptPath);
     Viewer.ScriptPos := 0;
     Viewer.Shell.OnTick := Viewer.Tick;
-  end;
+  end
+  else
+    Viewer.Shell.OnTick := Viewer.MomentumTick;  // flick inertia
 
   Viewer.Shell.Initialize(1024, 800, 'Tina4 HTMLRender — Free Pascal');
-  if ScriptPath <> '' then Viewer.Shell.StartTicker(400);
+  if ScriptPath <> '' then
+    Viewer.Shell.StartTicker(400)   // script step cadence
+  else
+    Viewer.Shell.StartTicker(16);   // ~60fps momentum
   Viewer.Shell.Run;
 end.
