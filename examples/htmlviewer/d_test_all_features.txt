@@ -1,0 +1,2 @@
+snap /private/tmp/orig_test_all_features.png
+quit

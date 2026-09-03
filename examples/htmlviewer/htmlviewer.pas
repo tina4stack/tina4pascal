@@ -319,7 +319,14 @@ begin
   sb := FindScrollBox(RootBox, X, Y + ScrollY);
   if sb <> nil then
   begin
-    sb.ScrollTop := Max(0, Min(sb.MaxScroll, sb.ScrollTop - DY));
+    if sb.Scrollable and (sb.MaxScroll > 0) then
+      sb.ScrollTop := Max(0, Min(sb.MaxScroll, sb.ScrollTop - DY));
+    if sb.ScrollableX and (sb.MaxScrollX > 0) then
+      // horizontal wheel delta, or vertical delta when there's no vertical scroll
+      if DX <> 0 then
+        sb.ScrollLeft := Max(0, Min(sb.MaxScrollX, sb.ScrollLeft - DX))
+      else if not (sb.Scrollable and (sb.MaxScroll > 0)) then
+        sb.ScrollLeft := Max(0, Min(sb.MaxScrollX, sb.ScrollLeft - DY));
     Shell.Invalidate;
     Exit;
   end;

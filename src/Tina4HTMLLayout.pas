@@ -42,6 +42,11 @@ type
     Scrollable: Boolean;           // overflow-y auto/scroll with an explicit height
     ScrollTop: Single;
     MaxScroll: Single;
+    ScrollableX: Boolean;          // overflow-x auto/scroll
+    ScrollLeft: Single;
+    MaxScrollX: Single;
+    NaturalW: Single;              // widest line of content (for overflow-x)
+    MarkerText: string;            // list-item bullet/number, '' if none
     constructor Create;
     destructor Destroy; override;
   end;
@@ -719,6 +724,7 @@ var
   y: Single;
   items: TList<TInlineItem>;
   pendingSpace: Boolean;   // trailing whitespace carried across inline nodes
+  noWrapFlow: Boolean;     // white-space:nowrap → keep inline items on one line
 
   function HasBlockChild(T: THTMLTag; const St: TComputedStyle): Boolean;
   var
@@ -945,7 +951,7 @@ var
       for i := 0 to items.Count - 1 do
       begin
         it := items[i];
-        if it.LineBreak then
+        if it.LineBreak and not noWrapFlow then
         begin // <br>: hard break, even mid-line
           FlushLine(i, lineItems, y, Max(lineH, it.H));
           y := y + Max(lineH, it.H);
@@ -955,7 +961,7 @@ var
         spaceW := 0;
         if it.SpaceBefore and (lineItems.Count > 0) then
           spaceW := FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width;
-        if (lineItems.Count > 0) and (curW + spaceW + it.W > CW) then
+        if (not noWrapFlow) and (lineItems.Count > 0) and (curW + spaceW + it.W > CW) then
         begin
           FlushLine(i, lineItems, y, lineH);
           y := y + lineH;
@@ -964,6 +970,7 @@ var
         end;
         lineItems.Add(i);
         curW := curW + spaceW + it.W;
+        if curW > Box.NaturalW then Box.NaturalW := curW;
         lineH := Max(lineH, it.H);
       end;
       FlushLine(items.Count, lineItems, y, lineH);
@@ -985,6 +992,8 @@ begin
   prevMB := 0;
   hadInline := False;
   pendingSpace := False;
+  noWrapFlow := SameText(ParentStyle.WhiteSpace, 'nowrap') or
+                SameText(ParentStyle.WhiteSpace, 'pre');
   items := TList<TInlineItem>.Create;
   try
     for c in Tag.Children do
@@ -1043,6 +1052,8 @@ var
   mL, mR, mT, mB, ew, eh, availInner, naturalH, mnw, mxw: Single;
   autoL, autoR: Boolean;
   ov: string;
+  liIdx: Integer;
+  liSib: THTMLTag;
 begin
   st := TComputedStyle.ForTag(Tag, ParentStyle, FSheet);
   if LowerCase(st.Display) = 'none' then Exit(0);
@@ -1051,6 +1062,23 @@ begin
   box.Tag := Tag;
   box.Style := st;
   Parent.Children.Add(box);
+
+  // list-item marker: bullet for ul, running number for ol
+  if SameText(Tag.TagName, 'li') and (Tag.Parent <> nil) then
+  begin
+    if SameText(Tag.Parent.TagName, 'ol') then
+    begin
+      liIdx := 0;
+      for liSib in Tag.Parent.Children do
+      begin
+        if SameText(liSib.TagName, 'li') then Inc(liIdx);
+        if liSib = Tag then Break;
+      end;
+      box.MarkerText := IntToStr(liIdx) + '.';
+    end
+    else if SameText(Tag.Parent.TagName, 'ul') then
+      box.MarkerText := #$E2#$80#$A2;  // • (UTF-8 bullet)
+  end;
 
   // margins: -1 is the 'auto' marker from ParseLength; real negatives pass through
   mL := st.Margin.Left;  autoL := mL = -1; if autoL then mL := 0;
@@ -1103,6 +1131,14 @@ begin
       box.Scrollable := (ov <> 'hidden');
       box.MaxScroll := naturalH - usedH;
     end;
+  end;
+  // overflow-x: auto/scroll/hidden → horizontal scroller / clip
+  ov := LowerCase(st.OverflowX);
+  if ov = '' then ov := LowerCase(st.Overflow);
+  if ((ov = 'auto') or (ov = 'scroll') or (ov = 'hidden')) and (box.NaturalW > contentW + 0.5) then
+  begin
+    box.ScrollableX := (ov <> 'hidden');
+    box.MaxScrollX := box.NaturalW - contentW;
   end;
   box.H := usedH + edgeT + edgeB;
 
@@ -1352,7 +1388,7 @@ var
   sizeTxt, val: string;
   m: TTina4TextMetrics;
   didClip: Boolean;
-  op, tx, ty: Single;
+  op, tx, ty, sx: Single;
   shifted: Boolean;
   bg, bd, fg: TTina4Color;
 begin
@@ -1440,6 +1476,10 @@ begin
     else
       Canvas.StrokeRect(Box.X, y, Box.W, Box.H, st.BorderWidths.Top, bd);
   end;
+  // list marker, drawn to the left of the li content box
+  if (not Hidden) and (Box.MarkerText <> '') then
+    Canvas.DrawText(Box.X - 18, y + st.Padding.Top, Box.MarkerText,
+      st.FontSize, [], ScaleAlpha(st.Color, op));
 
   // scrollable / clipped inner box: clip, then draw content shifted by ScrollTop.
   // didClip MUST gate ClearClip (not "innerOfs<>OffsetY") — a scroller sitting
@@ -1447,7 +1487,10 @@ begin
   // graphics state leaks and swallows everything drawn afterwards (e.g. the
   // dropdown overlay).
   innerOfs := OffsetY;
-  didClip := Box.Scrollable or ((Box.MaxScroll > 0) and not Box.Scrollable);
+  sx := Box.ScrollLeft;
+  didClip := Box.Scrollable or Box.ScrollableX
+             or ((Box.MaxScroll > 0) and not Box.Scrollable)
+             or ((Box.MaxScrollX > 0) and not Box.ScrollableX);
   if didClip then
   begin
     Canvas.SetClip(Box.X + st.BorderWidths.Left, y + st.BorderWidths.Top,
@@ -1460,10 +1503,14 @@ begin
     begin
       r := Box.Runs[i];
       fg := ScaleAlpha(r.Color, op);
-      Canvas.DrawText(r.X, r.Y - innerOfs, r.Text, r.FontSize, r.Styles, fg);
+      Canvas.DrawText(r.X - sx, r.Y - innerOfs, r.Text, r.FontSize, r.Styles, fg);
     end;
   for i := 0 to Box.Children.Count - 1 do
+  begin
+    if sx <> 0 then ShiftBoxTree(Box.Children[i], -sx, 0);
     PaintBoxEx(Canvas, Box.Children[i], innerOfs, op, Hidden);
+    if sx <> 0 then ShiftBoxTree(Box.Children[i], sx, 0);
+  end;
 
   if didClip then
   begin
@@ -1552,7 +1599,8 @@ begin
     Result := FindScrollBox(Box.Children[i], X, childY);
     if Result <> nil then Exit;
   end;
-  if inside and Box.Scrollable and (Box.MaxScroll > 0) then Result := Box;
+  if inside and ((Box.Scrollable and (Box.MaxScroll > 0)) or
+                 (Box.ScrollableX and (Box.MaxScrollX > 0))) then Result := Box;
 end;
 
 function FindBoxForTag(Box: TLayoutBox; T: THTMLTag): TLayoutBox;
