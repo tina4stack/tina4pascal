@@ -869,6 +869,7 @@ var
         it.Box.W := CW;
       end;
       it.W := it.Box.W; it.H := it.Box.H;
+      it.FontSize := cs.FontSize; it.Styles := [];
       it.SpaceBefore := (items.Count > 0) and pendingSpace;
       pendingSpace := False;
       Box.Children.Add(it.Box);
@@ -880,6 +881,7 @@ var
       it.Text := '';
       it.Box := MakeControl(T, cs, CW);
       it.W := it.Box.W; it.H := it.Box.H;
+      it.FontSize := cs.FontSize; it.Styles := [];
       it.SpaceBefore := (items.Count > 0) and pendingSpace;
       pendingSpace := False;
       Box.Children.Add(it.Box);
@@ -900,6 +902,7 @@ var
       else
         it.Box := MakeInlineBlock(T, cs);
       it.W := it.Box.W; it.H := it.Box.H;
+      it.FontSize := cs.FontSize; it.Styles := [];
       it.SpaceBefore := (items.Count > 0) and pendingSpace;
       pendingSpace := False;
       Box.Children.Add(it.Box);

@@ -2682,7 +2682,7 @@ begin
   if Decls.TryGetValue('height', Temp) and not ShouldSkip(Temp) then
     Style.ExplicitHeight := ParseLength(Temp, Style.FontSize);
   if Decls.TryGetValue('display', Temp) and not ShouldSkip(Temp) then
-    Style.Display := Temp.ToLower;
+    Style.Display := Temp.Trim.ToLower;  // Trim: 'display: inline-block' → no leading space
   if Decls.TryGetValue('vertical-align', Temp) and not ShouldSkip(Temp) then
     Style.VerticalAlign := Temp.ToLower;
   if Decls.TryGetValue('white-space', Temp) and not ShouldSkip(Temp) then
