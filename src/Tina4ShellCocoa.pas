@@ -42,6 +42,11 @@ type
       Styles: TTina4FontStyles): TTina4TextMetrics; override;
     procedure SetClip(X, Y, W, H: Single); override;
     procedure ClearClip; override;
+    procedure SaveState; override;
+    procedure RestoreState; override;
+    procedure Translate(DX, DY: Single); override;
+    procedure Rotate(Degrees: Single); override;
+    procedure Scale(SX, SY: Single); override;
   end;
 
   { NSTimer target bridging into the shell's OnTick }
@@ -312,6 +317,40 @@ end;
 procedure TCocoaCanvas.ClearClip;
 begin
   NSGraphicsContext.currentContext.restoreGraphicsState;
+end;
+
+procedure TCocoaCanvas.SaveState;
+begin
+  NSGraphicsContext.currentContext.saveGraphicsState;
+end;
+
+procedure TCocoaCanvas.RestoreState;
+begin
+  NSGraphicsContext.currentContext.restoreGraphicsState;
+end;
+
+procedure TCocoaCanvas.Translate(DX, DY: Single);
+var t: NSAffineTransform;
+begin
+  t := NSAffineTransform.transform;
+  t.translateXBy_yBy(DX, DY);
+  t.concat;
+end;
+
+procedure TCocoaCanvas.Rotate(Degrees: Single);
+var t: NSAffineTransform;
+begin
+  t := NSAffineTransform.transform;
+  t.rotateByDegrees(Degrees);
+  t.concat;
+end;
+
+procedure TCocoaCanvas.Scale(SX, SY: Single);
+var t: NSAffineTransform;
+begin
+  t := NSAffineTransform.transform;
+  t.scaleXBy_yBy(SX, SY);
+  t.concat;
 end;
 
 { TTina4View }

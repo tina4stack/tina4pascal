@@ -1615,8 +1615,8 @@ var
   sizeTxt, val: string;
   m: TTina4TextMetrics;
   didClip: Boolean;
-  op, tx, ty, sx: Single;
-  shifted: Boolean;
+  op, tx, ty, sx, rcx, rcy: Single;
+  shifted, hasRS: Boolean;
   bg, bd, fg: TTina4Color;
 begin
   st := Box.Style;
@@ -1627,6 +1627,19 @@ begin
   if shifted then ShiftBoxTree(Box, tx, ty);
   try
   y := Box.Y - OffsetY;
+  // transform: rotate/scale — wrap the subtree paint in a canvas transform
+  // about the box centre (default transform-origin)
+  hasRS := (st.TransformRotate <> 0) or (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1);
+  if hasRS then
+  begin
+    rcx := Box.X + Box.W / 2; rcy := y + Box.H / 2;
+    Canvas.SaveState;
+    Canvas.Translate(rcx, rcy);
+    if st.TransformRotate <> 0 then Canvas.Rotate(-st.TransformRotate); // CSS is clockwise
+    if (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1) then
+      Canvas.Scale(st.TransformScaleX, st.TransformScaleY);
+    Canvas.Translate(-rcx, -rcy);
+  end;
   // CSS opacity multiplies down the subtree; visibility:hidden hides self+subtree
   op := Opacity;
   if (st.Opacity >= 0) and (st.Opacity < 1) then op := op * st.Opacity;
@@ -1796,6 +1809,7 @@ begin
         '▾', st.FontSize, [], TC_MUTED);
   end;
   finally
+    if hasRS then Canvas.RestoreState;
     if shifted then ShiftBoxTree(Box, -tx, -ty);
   end;
 end;

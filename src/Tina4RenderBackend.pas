@@ -41,6 +41,13 @@ type
       Styles: TTina4FontStyles): TTina4TextMetrics; virtual; abstract;
     procedure SetClip(X, Y, W, H: Single); virtual; abstract;
     procedure ClearClip; virtual; abstract;
+    { Transform stack for CSS transforms (rotate/scale). Default no-ops so
+      simple/headless backends ignore them. Always balance Save/Restore. }
+    procedure SaveState; virtual;
+    procedure RestoreState; virtual;
+    procedure Translate(DX, DY: Single); virtual;
+    procedure Rotate(Degrees: Single); virtual;
+    procedure Scale(SX, SY: Single); virtual;
     { Images: LoadImage fetches (http/https or local path) and decodes,
       returning a handle (-1 on failure) that stays valid for the canvas
       lifetime; repeated calls with the same Src are cached. Default
@@ -127,5 +134,11 @@ procedure TTina4Canvas.DrawImage(Handle: Integer; X, Y, W, H: Single);
 begin
   // no-op in the base class
 end;
+
+procedure TTina4Canvas.SaveState; begin end;
+procedure TTina4Canvas.RestoreState; begin end;
+procedure TTina4Canvas.Translate(DX, DY: Single); begin end;
+procedure TTina4Canvas.Rotate(Degrees: Single); begin end;
+procedure TTina4Canvas.Scale(SX, SY: Single); begin end;
 
 end.
