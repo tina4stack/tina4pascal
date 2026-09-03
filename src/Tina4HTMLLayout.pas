@@ -143,6 +143,34 @@ begin
     SameText(Name, 'select') or SameText(Name, 'button');
 end;
 
+function ToRoman(N: Integer): string;
+const
+  V: array[0..12] of Integer = (1000,900,500,400,100,90,50,40,10,9,5,4,1);
+  S: array[0..12] of string = ('m','cm','d','cd','c','xc','l','xl','x','ix','v','iv','i');
+var i: Integer;
+begin
+  Result := '';
+  if (N < 1) or (N > 3999) then Exit(IntToStr(N));
+  for i := 0 to 12 do
+    while N >= V[i] do begin Result := Result + S[i]; N := N - V[i]; end;
+end;
+
+{ List-item marker text for a given list-style-type and 1-based index. }
+function MarkerFor(const ListStyleType: string; Idx: Integer): string;
+var t: string;
+begin
+  t := LowerCase(ListStyleType);
+  if t = 'none' then Exit('');
+  if t = 'circle' then Exit(#$E2#$97#$A6)         // ◦
+  else if t = 'square' then Exit(#$E2#$96#$AA)    // ▪
+  else if t = 'decimal' then Exit(IntToStr(Idx) + '.')
+  else if t = 'lower-alpha' then Exit(Chr(Ord('a') + (Idx - 1) mod 26) + '.')
+  else if t = 'upper-alpha' then Exit(Chr(Ord('A') + (Idx - 1) mod 26) + '.')
+  else if t = 'lower-roman' then Exit(ToRoman(Idx) + '.')
+  else if t = 'upper-roman' then Exit(UpperCase(ToRoman(Idx)) + '.')
+  else Exit(#$E2#$80#$A2);                        // • disc (default)
+end;
+
 procedure CollectText(Tag: THTMLTag; SB: TStringBuilder);
 var
   c: THTMLTag;
@@ -1063,21 +1091,18 @@ begin
   box.Style := st;
   Parent.Children.Add(box);
 
-  // list-item marker: bullet for ul, running number for ol
-  if SameText(Tag.TagName, 'li') and (Tag.Parent <> nil) then
+  // list-item marker, honouring the list's list-style-type
+  if SameText(Tag.TagName, 'li') and (Tag.Parent <> nil) and
+     (SameText(Tag.Parent.TagName, 'ul') or SameText(Tag.Parent.TagName, 'ol')) then
   begin
-    if SameText(Tag.Parent.TagName, 'ol') then
+    liIdx := 0;
+    for liSib in Tag.Parent.Children do
     begin
-      liIdx := 0;
-      for liSib in Tag.Parent.Children do
-      begin
-        if SameText(liSib.TagName, 'li') then Inc(liIdx);
-        if liSib = Tag then Break;
-      end;
-      box.MarkerText := IntToStr(liIdx) + '.';
-    end
-    else if SameText(Tag.Parent.TagName, 'ul') then
-      box.MarkerText := #$E2#$80#$A2;  // • (UTF-8 bullet)
+      if SameText(liSib.TagName, 'li') then Inc(liIdx);
+      if liSib = Tag then Break;
+    end;
+    box.MarkerText := MarkerFor(
+      TComputedStyle.ForTag(Tag.Parent, ParentStyle, FSheet).ListStyleType, liIdx);
   end;
 
   // margins: -1 is the 'auto' marker from ParseLength; real negatives pass through
