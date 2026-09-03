@@ -26,6 +26,7 @@ type
     FocusTag: THTMLTag;
     ActiveTag: THTMLTag;
     OpenSelect: THTMLTag;         // dropdown currently expanded, nil = none
+    HoverOpt: Integer;            // hovered option row in the open dropdown, -1 none
     Script: TStringList;          // --script: one driver command per tick
     ScriptPos: Integer;
     procedure Paint(Canvas: TTina4Canvas; W, H: Single);
@@ -240,12 +241,20 @@ begin
   end;
 end;
 
+function CountOptions(T: THTMLTag): Integer;
+var opt: THTMLTag;
+begin
+  Result := 0;
+  for opt in T.Children do
+    if SameText(opt.TagName, 'option') then Inc(Result);
+end;
+
 procedure TViewer.Paint(Canvas: TTina4Canvas; W, H: Single);
 var
-  maxScroll, thumbH, thumbY, oy, oh: Single;
+  maxScroll, thumbH, thumbY, oy, oh, ow: Single;
   sb: TLayoutBox;
   opt: THTMLTag;
-  txt: string;
+  txt, cur: string;
 begin
   ViewH := H;
   if (RootBox = nil) or (Abs(W - LastW) > 0.5) then
@@ -266,14 +275,26 @@ begin
     if sb <> nil then
     begin
       oh := 28;
+      ow := Max(sb.W, 160);
       oy := sb.Y + sb.H - ScrollY;
+      cur := OpenSelect.GetAttribute('value');
+      // drop shadow + panel
+      Canvas.FillRect(sb.X + 2, oy + 2, ow, CountOptions(OpenSelect) * oh, $22000000);
       for opt in OpenSelect.Children do
       begin
         if not SameText(opt.TagName, 'option') then Continue;
-        Canvas.FillRect(sb.X, oy, Max(sb.W, 160), oh, $FFFFFFFF);
-        Canvas.StrokeRect(sb.X, oy, Max(sb.W, 160), oh, 1, $FFD1D5DB);
         txt := InnerText(opt);
-        Canvas.DrawText(sb.X + 10, oy + 5, txt, 15, [], $FF1F2937);
+        if (opt.GetAttribute('value', txt) = cur) or (txt = cur) then
+          Canvas.FillRect(sb.X, oy, ow, oh, $FF0D6EFD)   // selected row
+        else if (HoverOpt >= 0) and (HoverOpt = Round((oy - (sb.Y + sb.H - ScrollY)) / oh)) then
+          Canvas.FillRect(sb.X, oy, ow, oh, $FFEFF3FF)    // hovered row
+        else
+          Canvas.FillRect(sb.X, oy, ow, oh, $FFFFFFFF);
+        Canvas.StrokeRect(sb.X, oy, ow, oh, 1, $FFD1D5DB);
+        if (opt.GetAttribute('value', txt) = cur) or (txt = cur) then
+          Canvas.DrawText(sb.X + 10, oy + 5, txt, 15, [], $FFFFFFFF)
+        else
+          Canvas.DrawText(sb.X + 10, oy + 5, txt, 15, [], $FF1F2937);
         oy := oy + oh;
       end;
     end;
@@ -310,8 +331,24 @@ end;
 procedure TViewer.MouseMove(X, Y: Single);
 var
   hit: THTMLTag;
+  sb: TLayoutBox;
+  ho: Integer;
 begin
   if RootBox = nil then Exit;
+  // hovered option while a dropdown is open
+  if OpenSelect <> nil then
+  begin
+    sb := FindBoxForTag(RootBox, OpenSelect);
+    if sb <> nil then
+    begin
+      ho := -1;
+      if (X >= sb.X) and (X <= sb.X + Max(sb.W, 160)) then
+        ho := Trunc((Y - (sb.Y + sb.H - ScrollY)) / 28);
+      if (ho < 0) or (ho >= CountOptions(OpenSelect)) then ho := -1;
+      if ho <> HoverOpt then begin HoverOpt := ho; Shell.Invalidate; end;
+    end;
+    Exit;
+  end;
   hit := HitTest(RootBox, X, Y + ScrollY);
   if hit = HoverTag then Exit;
   SetChain(HoverTag, True, False, False);
