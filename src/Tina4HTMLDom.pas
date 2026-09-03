@@ -2229,9 +2229,15 @@ begin
   else if TN = 'small' then
     Result.FontSize := ParentStyle.FontSize * 0.85
   else if TN = 'sub' then
-    Result.FontSize := ParentStyle.FontSize * 0.75
+  begin
+    Result.FontSize := ParentStyle.FontSize * 0.75;
+    Result.VerticalAlign := 'sub';
+  end
   else if TN = 'sup' then
-    Result.FontSize := ParentStyle.FontSize * 0.75
+  begin
+    Result.FontSize := ParentStyle.FontSize * 0.75;
+    Result.VerticalAlign := 'super';
+  end
   else if TN = 'ul' then
   begin
     Result.Margin.Top := ParentStyle.FontSize * 0.5;

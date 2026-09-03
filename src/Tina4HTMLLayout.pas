@@ -46,6 +46,7 @@ type
     ScrollLeft: Single;
     MaxScrollX: Single;
     NaturalW: Single;              // widest line of content (for overflow-x)
+    NaturalH: Single;              // natural content height (for cell v-align)
     MarkerText: string;            // list-item bullet/number, '' if none
     constructor Create;
     destructor Destroy; override;
@@ -824,6 +825,11 @@ var
           // baseline sits (lineHeight-fontHeight)/2 below the run top, then
           // ascent below that — so text of any size shares one baseline.
           it.Ascent := (it.H - (m.Ascent + m.Descent)) / 2 + m.Ascent;
+          // sub/super shift the item's baseline off the line baseline
+          if SameText(St.VerticalAlign, 'sub') then
+            it.Ascent := it.Ascent - St.FontSize * 0.28
+          else if SameText(St.VerticalAlign, 'super') then
+            it.Ascent := it.Ascent + St.FontSize * 0.42;
           it.FontSize := St.FontSize;
           it.Styles := FontStylesOf(St);
           it.Color := St.Color;
@@ -1204,8 +1210,9 @@ var
   cs, rs: TComputedStyle;
   sb: TStringBuilder;
   m: TTina4TextMetrics;
-  total, scale, cx, rowY, rowH, usedH, cw, tableW, tblAvail, explW, ch: Single;
+  total, scale, cx, rowY, rowH, usedH, cw, tableW, tblAvail, explW, ch, vaShift: Single;
   hasBorder: Boolean;
+  va: string;
 
   procedure CollectRows(T: THTMLTag);
   var c: THTMLTag;
@@ -1313,6 +1320,7 @@ begin
           cx + cs.BorderWidths.Left + cs.Padding.Left,
           rowY + cs.BorderWidths.Top + cs.Padding.Top,
           prefW[ci] - cs.Padding.Horz - cs.BorderWidths.Horz, usedH);
+        cbox.NaturalH := usedH + cs.Padding.Vert + cs.BorderWidths.Vert;  // before height honoring
         // honour an explicit cell height (content-box)
         ch := ResolveSize(cs.ExplicitHeight, 0);
         if ch >= 0 then usedH := Max(usedH, ch);
@@ -1323,8 +1331,20 @@ begin
         cx := cx + prefW[ci];
         Inc(ci);
       end;
+      // uniform row height + vertical-align of cell content (middle/bottom)
       for i := 0 to rbox.Children.Count - 1 do
-        rbox.Children[i].H := rowH; // uniform row height
+      begin
+        cbox := rbox.Children[i];
+        va := LowerCase(cbox.Style.VerticalAlign);
+        if ((va = 'middle') or (va = 'bottom')) and (rowH > cbox.NaturalH) then
+        begin
+          if va = 'middle' then vaShift := (rowH - cbox.NaturalH) / 2
+          else vaShift := rowH - cbox.NaturalH;
+          ShiftBoxTree(cbox, 0, vaShift);   // move content down
+          cbox.Y := cbox.Y - vaShift;       // but keep the cell box at row top
+        end;
+        cbox.H := rowH;
+      end;
       rbox.H := rowH;
       rowY := rowY + rowH;
     end;
@@ -1432,7 +1452,7 @@ var
   i: Integer;
   r: TTextRun;
   st: TComputedStyle;
-  y, innerOfs, thumbH, thumbY, cx, cy: Single;
+  y, innerOfs, thumbH, thumbY, thumbW, thumbX, cx, cy: Single;
   sizeTxt, val: string;
   m: TTina4TextMetrics;
   didClip: Boolean;
@@ -1569,10 +1589,16 @@ begin
   begin
     Canvas.ClearClip;
     if Box.Scrollable and (Box.MaxScroll > 0) then
-    begin // slim scrollbar thumb inside the box
+    begin // vertical scrollbar thumb, right edge
       thumbH := Box.H * (Box.H / (Box.H + Box.MaxScroll));
       thumbY := y + (Box.ScrollTop / Box.MaxScroll) * (Box.H - thumbH);
       Canvas.FillRoundRect(Box.X + Box.W - 7, thumbY, 4, thumbH, 2, $50000000);
+    end;
+    if Box.ScrollableX and (Box.MaxScrollX > 0) then
+    begin // horizontal scrollbar thumb, bottom edge
+      thumbW := Box.W * (Box.W / (Box.W + Box.MaxScrollX));
+      thumbX := Box.X + (Box.ScrollLeft / Box.MaxScrollX) * (Box.W - thumbW);
+      Canvas.FillRoundRect(thumbX, y + Box.H - 7, thumbW, 4, 2, $50000000);
     end;
   end;
 
