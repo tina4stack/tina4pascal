@@ -34,8 +34,8 @@ Status legend:
 | div, p, section, article, header, footer, main, nav | ✅ | block |
 | span, a, b, strong, i, em, small, u, mark | ✅ | inline; `a` emits link events |
 | h1–h6 | ✅ | UA sizes + bold + margins |
-| ul, ol, li | 🟡 | block + indent; markers/numbers not drawn yet |
-| table, tr, td, th, thead, tbody, tfoot | 🟡 | column autosizing, `border`; no colspan/rowspan |
+| ul, ol, li | ✅ | markers + all list-style-type variants (bullet/number/alpha/roman) |
+| table, tr, td, th, thead, tbody, tfoot | 🟡 | autosize, `border`, colspan, cell vertical-align; no rowspan |
 | img | ✅ | HTTPS fetch + decode + cache; intrinsic size; aspect scale |
 | br | ✅ | hard line break |
 | hr | 🟡 | renders as a bordered block; thin rule styling approximate |
@@ -58,54 +58,59 @@ Status legend:
 |---|---|---|
 | color | ✅ | named, #hex, rgb/rgba |
 | background-color | ✅ | incl. alpha |
-| background (gradient) | 📦 | linear-gradient parsed, not painted |
+| background (gradient) | 🟡 | linear-gradient painted as midpoint (not a real ramp) |
 | font-size | ✅ | px, pt, em, rem, % |
-| font-weight | 🟡 | bold/normal only (no numeric weights → SF weight) |
+| font-weight | 🟡 | bold/normal (no numeric weights) |
 | font-style | ✅ | italic |
 | font-family | 🟡 | stored; canvas maps to system/monospace bucket |
 | text-decoration | ✅ | underline |
 | text-align | ✅ | left/center/right |
 | line-height | ✅ | unitless + px |
-| vertical-align | 🟡 | top/baseline for inline atoms |
-| letter-spacing, text-indent | 🟡 | parsed; letter-spacing not applied in measure |
-| text-transform | 📦 | parsed, not applied |
+| vertical-align | ✅ | baseline/top/middle inline; sub/super; table-cell top/middle/bottom |
+| letter-spacing | ✅ | applied in measure + paint (kerning) |
+| text-transform | ✅ | uppercase/lowercase/capitalize |
 | margin (+ `auto`, collapsing) | ✅ | shorthand, per-side, `0 auto` centering, sibling collapse |
 | padding | ✅ | shorthand + per-side |
 | border (width/style/color) | 🟡 | width+color painted; style always solid |
 | border-radius (+ per-corner) | ✅ | painted via rounded rect |
 | width / height | ✅ | px, %, auto, calc(), min/max |
 | box-sizing | ✅ | content-box / border-box |
-| display | 🟡 | block, inline, inline-block, none, list-item, table\*; no flex/grid layout |
+| position | 🟡 | relative + absolute/fixed (top/left/right/bottom); no z-index/sticky |
+| display | ✅ | block, inline, inline-block, none, list-item, table, **flex**; no grid |
 | overflow / overflow-x/y | ✅ | auto/scroll/hidden → renderer-owned inner scroll + clip |
-| white-space | 🟡 | normal + pre; nowrap partial |
-| visibility | 📦 | parsed, not applied (use display:none) |
-| opacity | 📦 | parsed, not applied |
-| box-shadow | 📦 | parsed, not painted |
+| white-space | ✅ | normal, pre, nowrap (nowrap keeps one line) |
+| visibility | ✅ | hidden hides self+subtree, keeps space |
+| opacity | ✅ | multiplied down the subtree |
+| box-shadow | ✅ | offset+spread painted (blur hard-edged) |
 | text-shadow | 📦 | parsed, not painted |
-| transform (translate/rotate/scale) | 📦 | parsed, not applied |
+| transform (translate/rotate/scale) | ✅ | real canvas transform incl. subtree |
 | outline | 📦 | parsed, not painted (focus ring is bespoke) |
-| flex / flex-direction / justify / align | 📦 | parsed; no flex layout — children stack as block |
+| flex (direction/justify/align/grow/basis/wrap) | ✅ | row/column, single- and multi-line |
 | cursor | 🟡 | parsed; no OS cursor change yet |
-| list-style-type | 📦 | parsed; markers not drawn |
+| list-style-type | ✅ | disc/circle/square/decimal/alpha/roman/none |
 | CSS custom properties `var()` | ✅ | two-pass resolution |
 | :hover / :active / :focus | ✅ | matched against live tag state; style-only repaint |
 | @media | 🟡 | rules skipped (not applied) |
 
-## Compliance suite: 65 / 65 green
+## Compliance suite: 71 / 71 green
 
 The W3C-style reftest suite (`tools/run-compliance.sh`,
-[COMPLIANCE-REPORT.md](COMPLIANCE-REPORT.md)) passes fully. Landed since the
-first baseline: sRGB colour, rgba alpha, opacity, visibility:hidden,
-min/max-width, font-size:%, text-transform, box-shadow, linear-gradient,
-transform:translate, table sizing/height, and **flexbox** (row/column,
-justify-content, align-items).
+[COMPLIANCE-REPORT.md](COMPLIANCE-REPORT.md)) passes fully. Landed across the
+push: sRGB colour, rgba alpha, opacity, visibility:hidden, min/max-width,
+font-size:%, text-transform, box-shadow, linear-gradient, table
+sizing/height/**colspan**/**cell vertical-align**, **flexbox**
+(row/column, justify-content, align-items, **flex-grow/basis**, **flex-wrap**),
+**list markers + all list-style-type variants**, **white-space:nowrap +
+overflow-x** (with drag/momentum scroll), **true baseline alignment**,
+**sub/sup**, **letter-spacing**, **position relative/absolute**, and real
+**transform translate/rotate/scale**.
 
-## Remaining gaps (next, beyond the suite)
+## Remaining gaps (next)
 
-1. **List markers** (`<ul>`/`<ol>` bullets & numbers).
-2. **Flex wrap + grow/shrink** (current flex is single-line, item-sized).
-3. **position: relative/absolute** + top/left + z-index.
-4. **Table colspan/rowspan**, border-collapse borders.
-5. **transform: rotate/scale** application; **real gradient** paint (vs midpoint).
-6. **`font-weight` numeric** and **`letter-spacing`** in text measurement.
-7. `s`/`del` line-through, `sub`/`sup`, `mark` background; the `hidden` attribute.
+1. **Table rowspan** (colspan done); border-collapse collapsed borders.
+2. **Real gradient paint** (currently midpoint fill — a real gradient can't be
+   reftested against primitives, so it's a visual-only change).
+3. **`font-weight` numeric** (canvas is bold/normal only).
+4. **Flex shrink**, `align-self`, `align-content`, gaps.
+5. **z-index** (paint order is currently tree order); `position: sticky`.
+6. `@media` application; CSS `transition`/`animation`.
