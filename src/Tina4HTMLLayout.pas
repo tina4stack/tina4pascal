@@ -62,7 +62,9 @@ type
     function MakeInlineBlock(Tag: THTMLTag; const St: TComputedStyle): TLayoutBox;
     function MakeInlineContainer(Tag: THTMLTag; const St: TComputedStyle;
       AvailW: Single): TLayoutBox;
-    function MakeControl(Tag: THTMLTag; St: TComputedStyle): TLayoutBox;
+    function MakeControl(Tag: THTMLTag; St: TComputedStyle; AvailW: Single): TLayoutBox;
+    function LayoutControlBlock(Parent: TLayoutBox; Tag: THTMLTag;
+      const St: TComputedStyle; X, Y, AvailW: Single): Single;
     procedure CollectInlineText(Tag: THTMLTag; SB: TStringBuilder);
   public
     constructor Create(Canvas: TTina4Canvas; Sheet: TCSSStyleSheet);
@@ -313,13 +315,13 @@ end;
 
 { Build a layout box for a form control. Runs are stored relative to the
   box origin (FlushLine shifts them to absolute, same as inline-blocks). }
-function TLayoutEngine.MakeControl(Tag: THTMLTag; St: TComputedStyle): TLayoutBox;
+function TLayoutEngine.MakeControl(Tag: THTMLTag; St: TComputedStyle; AvailW: Single): TLayoutBox;
 var
   kind: TControlKind;
   txt, ph: string;
   m: TTina4TextMetrics;
   run: TTextRun;
-  padH, padV, lineH, wChars: Single;
+  padH, padV, lineH, wChars, ew: Single;
   rows, i: Integer;
   lines: TStringList;
   opt: THTMLTag;
@@ -371,18 +373,23 @@ begin
     txt := Tag.GetAttribute('value');
   end;
 
-  // width: explicit → size attr (chars) → sensible default
+  // width: explicit/% (resolved against AvailW) → size attr (chars) → default
   wChars := 0;
   if Tag.HasAttribute('size') then
     wChars := StrToFloatDef(Tag.GetAttribute('size'), 0) * St.FontSize * 0.55;
-  if ResolveSize(St.ExplicitWidth, 0) >= 0 then
-    Result.W := St.ExplicitWidth + padH
+  ew := ResolveSize(St.ExplicitWidth, AvailW);
+  if ew >= 0 then
+  begin
+    if SameText(St.BoxSizing, 'border-box') then Result.W := ew
+    else Result.W := ew + padH;
+    if Result.W > AvailW then Result.W := AvailW;
+  end
   else if wChars > 0 then
     Result.W := wChars + padH
   else if kind = ckButton then
     Result.W := FCanvas.MeasureText(txt, St.FontSize, FontStylesOf(St)).Width + padH
   else
-    Result.W := 220 + padH;
+    Result.W := Min(240 + padH, AvailW);
 
   if kind = ckTextarea then
   begin
@@ -475,6 +482,29 @@ begin
     else usedH := eh;
   end;
   Result.H := usedH + edgeT + edgeB;
+end;
+
+{ A block-level form control (Bootstrap .form-control): full-width by
+  default, honours margins, stacks vertically. }
+function TLayoutEngine.LayoutControlBlock(Parent: TLayoutBox; Tag: THTMLTag;
+  const St: TComputedStyle; X, Y, AvailW: Single): Single;
+var
+  box: TLayoutBox;
+  mL, mR, mT, mB, availInner: Single;
+begin
+  mL := St.Margin.Left;  if mL = -1 then mL := 0;
+  mR := St.Margin.Right; if mR = -1 then mR := 0;
+  mT := St.Margin.Top;   if mT = -1 then mT := 0;
+  mB := St.Margin.Bottom; if mB = -1 then mB := 0;
+  availInner := AvailW - mL - mR;
+  box := MakeControl(Tag, St, availInner);
+  // text-like block control with no explicit width fills the line
+  if (ResolveSize(St.ExplicitWidth, availInner) < 0) and
+     (box.ControlKind in [ckTextInput, ckTextarea, ckSelect]) then
+    box.W := availInner;
+  ShiftBoxTree(box, X + mL, Y + mT);
+  Parent.Children.Add(box);
+  Result := box.H + mT + mB;
 end;
 
 type
@@ -612,7 +642,7 @@ var
     if IsFormControlTag(T.TagName) then
     begin
       it.Text := '';
-      it.Box := MakeControl(T, cs);
+      it.Box := MakeControl(T, cs, CW);
       it.W := it.Box.W; it.H := it.Box.H;
       it.SpaceBefore := items.Count > 0;
       Box.Children.Add(it.Box);
@@ -763,8 +793,10 @@ begin
       cs := TComputedStyle.ForTag(c, ParentStyle, FSheet);
       disp := DisplayOf(c, cs);
       if disp = 'none' then Continue;
+      // form control keeps its computed display: inline/inline-block flow inline,
+      // block (e.g. Bootstrap .form-control) stacks full-width.
       if (disp = 'inline') or (disp = 'inline-block') or SameText(c.TagName, 'img')
-        or IsFormControlTag(c.TagName) then
+        or (IsFormControlTag(c.TagName) and (disp <> 'block')) then
       begin
         GatherInline(c, ParentStyle);
         hadInline := True;
@@ -777,7 +809,9 @@ begin
         mTc := cs.Margin.Top; if mTc = -1 then mTc := 0;
         if (prevMB > 0) and (mTc > 0) then
           y := y - Min(prevMB, mTc);
-        if SameText(c.TagName, 'table') then
+        if IsFormControlTag(c.TagName) then
+          y := y + LayoutControlBlock(Box, c, cs, CX, y, CW)
+        else if SameText(c.TagName, 'table') then
           y := y + LayoutTable(Box, c, cs, CX, y, CW)
         else
           y := y + LayoutBlock(Box, c, ParentStyle, CX, y, CW);

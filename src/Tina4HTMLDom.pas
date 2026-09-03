@@ -2284,7 +2284,7 @@ begin
   else if TN = 'img' then
     Result.Display := 'inline'
   else if (TN = 'input') or (TN = 'button') or (TN = 'textarea') or (TN = 'select') then
-    Result.Display := 'inline'
+    Result.Display := 'inline-block'  // UA default; .form-control etc. may set 'block'
   else if TN = 'dt' then
     Result.Bold := True
   else if TN = 'dd' then
