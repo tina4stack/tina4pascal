@@ -948,6 +948,8 @@ begin
       begin
         cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
         cb := MakeReplacedBox(itemTags[i], cs, contentW);
+        if (cb = nil) and IsFormControlTag(itemTags[i].TagName) then
+          cb := MakeControl(itemTags[i], cs, contentW);
         if cb = nil then cb := MakeInlineContainer(itemTags[i], cs, contentW);
         box.Children.Add(cb); items.Add(cb);
       end;
@@ -963,7 +965,13 @@ begin
         cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
         growF[i] := cs.FlexGrow;
         ew := ResolveSize(cs.ExplicitWidth, contentW);
-        if ew >= 0 then
+        // checkbox/radio have a fixed intrinsic size — CSS width doesn't grow
+        // them, so don't let it reserve flex space either
+        if ControlKindOf(itemTags[i]) in [ckCheckbox, ckRadio] then
+        begin
+          baseW[i] := 16; growF[i] := 0;
+        end
+        else if ew >= 0 then
         begin
           if not SameText(cs.BoxSizing, 'border-box') then
             ew := ew + cs.Padding.Horz + cs.BorderWidths.Horz;
@@ -998,7 +1006,9 @@ begin
         cs.ExplicitWidth := targetW;    // force the resolved main size
         cs.BoxSizing := 'border-box';
         cb := MakeReplacedBox(itemTags[i], cs, contentW);
-        if cb = nil then
+        if (cb = nil) and IsFormControlTag(itemTags[i].TagName) then
+          cb := MakeControl(itemTags[i], cs, contentW)   // control, not a box
+        else if cb = nil then
         begin
           cb := MakeInlineContainer(itemTags[i], cs, contentW);
           cb.W := targetW;

@@ -1,0 +1,52 @@
+<!doctype html>
+<html><head><style>
+body{font-family:sans-serif;background:#fbfaf7;color:#15162e;margin:0;padding:16px}
+h1{font-size:22px;margin:0 0 14px}
+.card{background:#fff;border:1px solid #e6e5f0;border-radius:14px;padding:14px;margin-bottom:12px}
+label{display:block;color:#5b5c78;font-size:13px;margin-bottom:6px}
+input,textarea,select{font-size:16px;padding:11px;border:1px solid #c9c8dd;border-radius:10px;width:100%;box-sizing:border-box}
+textarea{height:76px}
+.rowc{display:flex;gap:10px;align-items:center;margin:8px 0}
+.rowc label{margin:0}
+.btn{background:#4F46E5;color:#fff;border:none;border-radius:11px;padding:12px 20px;font-weight:bold;font-size:16px}
+.btn2{background:#f3f2fb;color:#15162e;border:1px solid #e6e5f0;border-radius:11px;padding:12px 18px;font-size:16px}
+</style></head><body>
+  <h1>Form controls</h1>
+
+  <div class="card">
+    <label>Text input</label>
+    <input type="text" placeholder="Type your name" value="">
+  </div>
+
+  <div class="card">
+    <label>Textarea</label>
+    <textarea placeholder="Multiple lines of text…"></textarea>
+  </div>
+
+  <div class="card">
+    <label>Select (dropdown)</label>
+    <select><option>Apple</option><option>Banana</option><option>Cherry</option></select>
+  </div>
+
+  <div class="card">
+    <label>Checkboxes</label>
+    <div class="rowc"><input type="checkbox" checked><label>Subscribe</label></div>
+    <div class="rowc"><input type="checkbox"><label>Remember me</label></div>
+  </div>
+
+  <div class="card">
+    <label>Radios</label>
+    <div class="rowc"><input type="radio" name="plan" checked><label>Free</label></div>
+    <div class="rowc"><input type="radio" name="plan"><label>Pro</label></div>
+  </div>
+
+  <div class="card">
+    <label>File</label>
+    <input type="file">
+  </div>
+
+  <div class="card">
+    <label>Buttons</label>
+    <div class="rowc"><button class="btn">Submit</button><button class="btn2">Cancel</button></div>
+  </div>
+</body></html>
