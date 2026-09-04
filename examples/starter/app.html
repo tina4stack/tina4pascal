@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><style>
+  body{font-family:sans-serif;background:#fbfaf7;color:#15162e;
+       padding:36px;text-align:center;margin:0}
+  h1{font-size:64px;margin:0;color:#4f46e5}
+  p{color:#5b5c78;margin:4px 0 20px}
+  .btn,.btn2{display:inline-block;border-radius:12px;padding:12px 24px;
+             font-size:24px;margin:4px;font-weight:bold}
+  .btn{background:#4f46e5;color:#fff}
+  .btn2{background:#f3f2fb;color:#15162e;border:1px solid #e6e5f0}
+</style></head><body>
+
+  <h1>{{count}}</h1>
+  <p>taps so far — persisted across restarts</p>
+
+  <span class="btn2" onclick="App:Down()">–</span>
+  <span class="btn"  onclick="App:Up()">+</span>
+
+</body></html>

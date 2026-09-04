@@ -1,0 +1,7 @@
+main
+main.o
+*.o
+*.ppu
+link*.res
+ppas*.sh
+tina4store.dat

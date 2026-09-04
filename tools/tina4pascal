@@ -199,6 +199,28 @@ cmd_run() {
   ( cd "$ROOT/examples/htmlviewer" && exec "$BUILD/macos/htmlviewer" "$page" )
 }
 
+# scaffold a new starter app (HTML + a Pascal host with actions + localStore)
+cmd_new() {
+  name="${1:-}"; [ -n "$name" ] || die "usage: tina4pascal new <name>"
+  [ -e "$name" ] && die "'$name' already exists"
+  mkdir -p "$name"
+  cp "$ROOT/examples/starter/app.html" "$name/app.html"
+  sed "s/My Tina4 App/$name/" "$ROOT/examples/starter/main.pas" > "$name/main.pas"
+  ok "created ${B}$name/${Z}  (app.html + main.pas)"
+  say "  run it:  ${B}cd $name && tina4pascal dev${Z}"
+}
+
+# build + run an app folder's main.pas on macOS (edit app.html, re-run to see)
+cmd_dev() {
+  d="${1:-.}"; [ -f "$d/main.pas" ] || die "no main.pas in '$d' (scaffold one: tina4pascal new <name>)"
+  need_fpc
+  o="$BUILD/dev"; mkdir -p "$o"
+  say "${D}fpc $(basename "$d")/main.pas${Z}"
+  "$FPC" -Mdelphi -O2 -Xs -Fu"$SRC" -FE"$o" -FU"$o" -o"$o/app" "$d/main.pas" 2>&1 \
+    | grep -Ei "error|fatal" && die "build failed" || true
+  ( cd "$d" && exec "$o/app" )   # runs from the app folder (app.html + localStore)
+}
+
 cmd_snapshot() {
   [ $# -ge 2 ] || die "usage: tina4pascal snapshot <page.html> <out.png>"
   cmd_build macos
@@ -316,6 +338,10 @@ ${B}build & test${Z}
   test                   build + run all unit suites
   compliance [glob]      run the W3C reftest suite
 
+${B}start an app${Z}
+  new <name>             scaffold a starter app (app.html + main.pas)
+  dev [dir]              build + run an app folder on macOS (default: .)
+
 ${B}macOS run${Z}
   run [page.html]        build + open the viewer on a page
   snapshot <html> <png>  headless off-screen render to PNG
@@ -343,6 +369,8 @@ case "$cmd" in
   setup)      cmd_setup "$@" ;;
   build)      cmd_build "$@" ;;
   test)       cmd_test "$@" ;;
+  new)        cmd_new "$@" ;;
+  dev)        cmd_dev "$@" ;;
   run)        cmd_run "$@" ;;
   snapshot)   cmd_snapshot "$@" ;;
   compliance) cmd_compliance "$@" ;;
