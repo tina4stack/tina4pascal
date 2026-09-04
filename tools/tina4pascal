@@ -22,6 +22,12 @@ ANDROID_SDK="${ANDROID_SDK:-${ANDROID_HOME:-/opt/homebrew/share/android-commandl
 ANDROID_NDK="${ANDROID_NDK:-/opt/homebrew/share/android-ndk}"
 BT_VER="34.0.0"; PLATFORM_VER="android-34"
 
+# iOS (physical device via Xcode + libimobiledevice/pymobiledevice3)
+IOS_DIR="$ROOT/ios"
+IOS_BUNDLE="com.tina4.pascal"
+# pipx installs pymobiledevice3 here; fall back to PATH
+PMD3="$(command -v pymobiledevice3 2>/dev/null || echo "$HOME/.local/bin/pymobiledevice3")"
+
 # ---- pretty ------------------------------------------------------------------
 if [ -t 1 ]; then B="$(printf '\033[1m')"; D="$(printf '\033[2m')"; G="$(printf '\033[32m')"; Y="$(printf '\033[33m')"; R="$(printf '\033[31m')"; Z="$(printf '\033[0m')"; else B=; D=; G=; Y=; R=; Z=; fi
 say()  { printf '%s\n' "$*"; }
@@ -71,6 +77,15 @@ cmd_doctor() {
     [ "${n:-0}" -gt 0 ] && ok "adb — $n device(s) attached" || warn "adb — no devices attached"
   else warn "adb not on PATH"; fi
   say ""
+  say "${B}iOS${Z}"
+  command -v xcodebuild >/dev/null 2>&1 && ok "$(xcodebuild -version 2>/dev/null | head -1)" || warn "Xcode missing → install from the App Store"
+  command -v xcodegen >/dev/null 2>&1 && ok "xcodegen" || warn "xcodegen missing → tina4pascal setup ios"
+  if command -v idevice_id >/dev/null 2>&1; then
+    u="$(idevice_id -l 2>/dev/null | head -1)"
+    [ -n "$u" ] && ok "device ${D}$u${Z}" || warn "no iOS device attached"
+  else warn "libimobiledevice missing → tina4pascal setup ios"; fi
+  { [ -x "$PMD3" ] || command -v pymobiledevice3 >/dev/null 2>&1; } && ok "pymobiledevice3 (device screenshots)" || warn "pymobiledevice3 missing → tina4pascal setup ios"
+  say ""
   say "${B}Java${Z}"
   command -v java >/dev/null 2>&1 && ok "$(java -version 2>&1 | head -1)" || warn "java missing (needed to package APKs)"
 }
@@ -81,9 +96,28 @@ cmd_setup() {
   case "$what" in
     fpc)     setup_fpc ;;
     android) setup_android ;;
-    all)     setup_fpc; setup_android ;;
-    *) die "setup: unknown component '$what' (fpc | android | all)" ;;
+    ios)     setup_ios ;;
+    all)     setup_fpc; setup_android; setup_ios ;;
+    *) die "setup: unknown component '$what' (fpc | android | ios | all)" ;;
   esac
+}
+
+# iOS build + on-device debug tooling. Xcode itself is a manual install; this
+# grabs the pieces the CLI drives: xcodegen (project generation) and
+# libimobiledevice + pymobiledevice3 (device list, install, and the iOS 17+
+# screenshot over the native tunnel).
+setup_ios() {
+  command -v brew >/dev/null 2>&1 || die "Homebrew required to fetch the iOS tooling"
+  command -v xcodebuild >/dev/null 2>&1 || warn "Xcode not found — install it from the App Store (needed to build/sign the app)"
+  command -v xcodegen >/dev/null 2>&1 || { say "→ installing xcodegen…"; brew install xcodegen; }
+  command -v idevice_id >/dev/null 2>&1 || { say "→ installing libimobiledevice…"; brew install libimobiledevice; }
+  if [ ! -x "$PMD3" ] && ! command -v pymobiledevice3 >/dev/null 2>&1; then
+    command -v pipx >/dev/null 2>&1 || { say "→ installing pipx…"; brew install pipx; }
+    say "→ installing pymobiledevice3 (iOS 17+ device screenshots)…"
+    pipx install pymobiledevice3
+  fi
+  PMD3="$(command -v pymobiledevice3 2>/dev/null || echo "$HOME/.local/bin/pymobiledevice3")"
+  ok "iOS tooling ready"
 }
 
 setup_fpc() {
@@ -190,20 +224,56 @@ cmd_deploy() {
   ok "launched on device"
 }
 
-cmd_clean() { rm -rf "$BUILD" "$ROOT/android/out" "$ROOT/android/tina4pascal-debug.apk"; ok "cleaned"; }
+# ---- iOS build / deploy ------------------------------------------------------
+ios_udid() { echo "${IOS_UDID:-$(idevice_id -l 2>/dev/null | head -1)}"; }
+
+# static lib (Pascal engine) → xcodegen project → xcodebuild → install + launch
+cmd_ios() {
+  command -v xcodebuild >/dev/null 2>&1 || die "Xcode not found — run: tina4pascal setup ios"
+  udid="$(ios_udid)"; [ -n "$udid" ] || die "no iOS device attached (idevice_id -l)"
+  say "→ building the Pascal engine (libtina4ios.a)…"
+  sh "$IOS_DIR/build.sh" >/dev/null 2>&1 || die "engine build failed (run ios/build.sh to see errors)"
+  if [ ! -d "$IOS_DIR/Tina4Pascal.xcodeproj" ]; then
+    command -v xcodegen >/dev/null 2>&1 || die "xcodegen not found — run: tina4pascal setup ios"
+    ( cd "$IOS_DIR" && xcodegen >/dev/null )
+  fi
+  say "→ xcodebuild (sign for device)…"
+  xcodebuild -project "$IOS_DIR/Tina4Pascal.xcodeproj" -scheme Tina4Pascal \
+    -destination "generic/platform=iOS" -allowProvisioningUpdates build 2>&1 \
+    | grep -qE "BUILD SUCCEEDED" || die "xcodebuild failed (open the project in Xcode to set your team)"
+  app="$(xcodebuild -project "$IOS_DIR/Tina4Pascal.xcodeproj" -scheme Tina4Pascal \
+    -destination "generic/platform=iOS" -showBuildSettings 2>/dev/null \
+    | awk -F' = ' '/ TARGET_BUILD_DIR /{d=$2} / FULL_PRODUCT_NAME /{n=$2} END{print d"/"n}')"
+  say "→ installing on $udid…"
+  xcrun devicectl device install app --device "$udid" "$app" >/dev/null 2>&1 \
+    || die "install failed (is the iPhone unlocked?)"
+  xcrun devicectl device process launch --device "$udid" "$IOS_BUNDLE" >/dev/null 2>&1 || true
+  ok "launched on device"
+}
+
+cmd_clean() { rm -rf "$BUILD" "$ROOT/android/out" "$ROOT/android/tina4pascal-debug.apk" "$IOS_DIR/build" "$IOS_DIR/app/libtina4ios.a"; ok "cleaned"; }
 
 # ---- device screenshot / logs / debug loop ----------------------------------
 adb_have_device() { [ "$(adb devices | grep -cw device)" -gt 0 ]; }
 
+# screenshot [out.png] [android|ios]  (default android)
 cmd_screenshot() {
-  adb_have_device || die "no device attached (adb devices)"
-  out="${1:-$ROOT/build/device.png}"; mkdir -p "$(dirname "$out")"
-  # wake + focus first, or a slept screen captures pure black
-  adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
-  adb shell am start -n com.tina4.pascal/.MainActivity >/dev/null 2>&1 || true
-  sleep 1
-  adb exec-out screencap -p > "$out"
-  ok "screenshot → $out"
+  out="${1:-$ROOT/build/device.png}"; plat="${2:-android}"; mkdir -p "$(dirname "$out")"
+  case "$plat" in
+    ios)
+      [ -x "$PMD3" ] || command -v pymobiledevice3 >/dev/null 2>&1 || die "pymobiledevice3 missing — run: tina4pascal setup ios"
+      # pymobiledevice3 opens the iOS 17+ native tunnel itself; the phone must
+      # be unlocked. No app focus needed — it grabs the whole screen.
+      "$PMD3" developer dvt screenshot "$out" >/dev/null 2>&1 || die "iOS screenshot failed (unlock the iPhone?)"
+      ok "iOS screenshot → $out" ;;
+    android|*)
+      adb_have_device || die "no device attached (adb devices)"
+      adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true   # slept screen = black
+      adb shell am start -n com.tina4.pascal/.MainActivity >/dev/null 2>&1 || true
+      sleep 1
+      adb exec-out screencap -p > "$out"
+      ok "screenshot → $out" ;;
+  esac
 }
 
 cmd_logcat() {
@@ -238,8 +308,8 @@ ${B}tina4pascal${Z} — dev CLI for the Tina4Pascal native HTML renderer
 ${B}usage${Z}  tina4pascal <command> [args]
 
 ${B}toolchain${Z}
-  doctor                 report FPC targets, Android SDK/NDK, adb, java
-  setup [fpc|android|all] download + install missing toolchains
+  doctor                 report FPC targets, Android SDK/NDK, adb, iOS, java
+  setup [fpc|android|ios|all]  download + install missing toolchains
 
 ${B}build & test${Z}
   build <target|all>     compile ($ALL_TARGETS)
@@ -254,8 +324,13 @@ ${B}Android${Z}
   apk                    build native .so (all ABIs) + package a signed debug APK
   deploy                 apk + adb install + launch on a connected device
   debug                  deploy + screenshot + dump the on-device log (dev loop)
-  screenshot [out.png]   wake the device and grab the screen
   logcat [-f|N]          show the app's native log (tag tina4)
+
+${B}iOS${Z}
+  ios                    build the engine + xcodebuild (sign) + install + launch on iPhone
+
+${B}device${Z}
+  screenshot [out.png] [android|ios]   grab the screen (default android)
 
   clean                  remove build outputs
 EOF
@@ -273,6 +348,7 @@ case "$cmd" in
   compliance) cmd_compliance "$@" ;;
   apk)        cmd_apk "$@" ;;
   deploy)     cmd_deploy "$@" ;;
+  ios)        cmd_ios "$@" ;;
   debug)      cmd_debug "$@" ;;
   screenshot) cmd_screenshot "$@" ;;
   logcat)     cmd_logcat "$@" ;;

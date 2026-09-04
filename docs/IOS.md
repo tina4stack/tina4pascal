@@ -89,6 +89,29 @@ the generated `linkfiles*.res` (ours + the FPC RTL + univint) into one archive.
    need an explicit cast to their non‑mutable base for some calls;
    `CFURLCreateFromFileSystemRepresentation` takes a `PChar`, not `PByte`.
 
+## The CLI does the heavy lifting
+
+`tools/tina4pascal` wraps the whole loop so you don't retype the commands:
+
+```sh
+tina4pascal setup ios            # xcodegen + libimobiledevice + pymobiledevice3
+                                 # (Xcode itself is a manual App Store install)
+tina4pascal doctor               # reports Xcode / xcodegen / device / screenshots
+tina4pascal ios                  # engine → xcodegen → xcodebuild (sign) → install → launch
+tina4pascal screenshot shot.png ios   # live screen grab from the iPhone
+```
+
+**Screenshotting a physical iPhone (iOS 17+).** The classic libimobiledevice
+`screenshotr` service can't see the CoreDevice-mounted developer image, so use
+`pymobiledevice3`, which opens the iOS 17+ native tunnel itself:
+
+```sh
+pymobiledevice3 developer dvt screenshot out.png   # phone must be UNLOCKED
+```
+
+That is exactly what `tina4pascal screenshot out.png ios` runs. `setup ios`
+installs it (via pipx) alongside `idevice_id` (device listing) and `xcodegen`.
+
 ## Permissions (both platforms)
 
 Interaction that touches hardware or private data needs a declared permission —
