@@ -110,6 +110,8 @@ function FindBoxForTag(Box: TLayoutBox; T: THTMLTag): TLayoutBox;
 { Concatenated descendant text of a tag (entities already decoded). }
 function InnerText(Tag: THTMLTag): string;
 function IsFormControlTag(const Name: string): Boolean;
+{ Classify a tag as a form control kind (ckNone if not a control). }
+function ControlKindOf(Tag: THTMLTag): TControlKind;
 
 { Responsive-image selection (exposed for testing). PickFromSrcset chooses the
   best URL from a srcset for a target width; EvalMediaQuery evaluates a source's
@@ -575,7 +577,7 @@ end;
 { UA fallback chrome for controls the stylesheet didn't style; also the
   focus ring. Shared by MakeControl and RefreshStyles. }
 procedure ApplyControlChrome(var St: TComputedStyle; Kind: TControlKind;
-  Focused: Boolean; Primary: Boolean = False);
+  Focused: Boolean; Primary: Boolean = False; Disabled: Boolean = False);
 begin
   case Kind of
     ckTextInput, ckTextarea, ckSelect:
@@ -627,6 +629,11 @@ begin
     St.SetBorderWidth(TC_FOCUS_W);
     St.SetBorderColor(TC_ACCENT); // indigo focus (ring not paintable yet)
   end;
+  if Disabled then
+  begin // greyed background + muted text, like a native disabled control
+    St.BackgroundColor := $FFF1F1F4;
+    St.Color := $FF9CA3AF;
+  end;
 end;
 
 { Build a layout box for a form control. Runs are stored relative to the
@@ -638,15 +645,16 @@ var
   m: TTina4TextMetrics;
   run: TTextRun;
   padH, padV, lineH, wChars, ew: Single;
-  rows, i: Integer;
+  rows, i, ci: Integer;
   lines: TStringList;
   opt: THTMLTag;
+  seg: string;
 begin
   kind := ControlKindOf(Tag);
   Result := TLayoutBox.Create;
   Result.Tag := Tag;
   Result.ControlKind := kind;
-  ApplyControlChrome(St, kind, Tag.IsFocused, IsPrimaryButton(Tag));
+  ApplyControlChrome(St, kind, Tag.IsFocused, IsPrimaryButton(Tag), Tag.HasAttribute('disabled'));
   Result.Style := St;
 
   padH := St.Padding.Horz + St.BorderWidths.Horz;
@@ -719,10 +727,26 @@ begin
   begin
     rows := StrToIntDef(Tag.GetAttribute('rows'), 4);
     Result.H := rows * lineH + padV;
-    // naive wrap of the value into lines
+    if (txt = '') and (Tag.GetAttribute('placeholder') <> '') then
+    begin // empty → muted placeholder on the first line
+      run.Text := Tag.GetAttribute('placeholder');
+      run.X := St.BorderWidths.Left + St.Padding.Left;
+      run.Y := St.BorderWidths.Top + St.Padding.Top;
+      run.FontSize := St.FontSize; run.Styles := FontStylesOf(St);
+      run.Color := $FF9CA3AF; run.LetterSpacing := 0;
+      Result.Runs.Add(run);
+      Exit;
+    end;
+    // split on newlines, KEEPING a trailing empty line so the caret can sit on
+    // a freshly-opened line (TStringList.Text would drop it). CR stripped first.
     lines := TStringList.Create;
     try
-      lines.Text := txt;
+      txt := StringReplace(txt, #13, '', [rfReplaceAll]);
+      seg := '';
+      for ci := 1 to Length(txt) do
+        if txt[ci] = #10 then begin lines.Add(seg); seg := ''; end
+        else seg := seg + txt[ci];
+      lines.Add(seg);   // final segment (empty if txt ended with a newline)
       for i := 0 to Min(lines.Count - 1, rows * 4) do
       begin
         run.Text := lines[i];
@@ -730,7 +754,7 @@ begin
         run.Y := St.BorderWidths.Top + St.Padding.Top + i * lineH;
         run.FontSize := St.FontSize;
         run.Styles := FontStylesOf(St);
-        run.Color := St.Color; run.LetterSpacing := 0; run.LetterSpacing := 0;
+        run.Color := St.Color; run.LetterSpacing := 0;
         Result.Runs.Add(run);
       end;
     finally
@@ -1985,7 +2009,7 @@ begin
   begin
     st := TComputedStyle.ForTag(Box.Tag, ParentStyle, FSheet);
     if Box.ControlKind <> ckNone then
-      ApplyControlChrome(st, Box.ControlKind, Box.Tag.IsFocused, IsPrimaryButton(Box.Tag));
+      ApplyControlChrome(st, Box.ControlKind, Box.Tag.IsFocused, IsPrimaryButton(Box.Tag), Box.Tag.HasAttribute('disabled'));
     // keep layout-critical fields from the original pass; only visuals swap
     st.ExplicitWidth := Box.Style.ExplicitWidth;
     st.ExplicitHeight := Box.Style.ExplicitHeight;

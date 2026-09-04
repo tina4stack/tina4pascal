@@ -17,7 +17,7 @@ unit Tina4ShellAndroid;
 interface
 
 uses
-  jni, Tina4RenderBackend;
+  Classes, jni, Tina4RenderBackend;
 
 { Write a line to Android logcat (tag "tina4"). Handy for the on-device
   debug loop; cheap enough to leave in. }
@@ -42,6 +42,14 @@ type
     mSetSkewX, mSetUnderline, mSetStrike, mSetFillType: jmethodID;
     // Path methods
     mPathInit, mMoveTo, mLineTo, mClose: jmethodID;
+    // image decode/draw
+    clsBmpFactory, clsBitmap, clsRectF: jclass;
+    mDecodeFile: jmethodID;                 // BitmapFactory.decodeFile (static)
+    mBmpWidth, mBmpHeight: jmethodID;       // Bitmap.getWidth/getHeight
+    mRectFInit, mDrawBitmap: jmethodID;
+    FImgSrcs: TStringList;                   // src → index into FImgs
+    FImgs: array of record Bmp: jobject; W, H: Single; end;
+    procedure EnsureImageMethods;
     function MID(cls: jclass; const name, sig: string): jmethodID;
     function EnumVal(const clsName, field, sig: string): jobject;
     function JStr(const S: string): jstring;
@@ -66,6 +74,10 @@ type
     procedure SaveState; override;
     procedure RestoreState; override;
     procedure Scale(SX, SY: Single); override;
+    function LoadImage(const Src: string): Integer; override;
+    function ImageSize(Handle: Integer; out W, H: Single): Boolean; override;
+    procedure DrawImage(Handle: Integer; X, Y, W, H: Single); override;
+    destructor Destroy; override;
   end;
 
   { Minimal shell: the Java View owns the window/run loop, so most of the
@@ -360,6 +372,87 @@ var a: array[0..1] of jvalue;
 begin
   a[0].f := SX; a[1].f := SY;
   FEnv^.CallVoidMethodA(FEnv, FCanvas, mScale, @a[0]);
+end;
+
+{ ---- images ------------------------------------------------------------ }
+
+{ Resolve the JNI handles for BitmapFactory/Bitmap/RectF the first time an
+  image is actually used (keeps the constructor lean and avoids the cost when
+  a document has no images). }
+procedure TAndroidCanvas.EnsureImageMethods;
+var lc: jclass;
+begin
+  if clsBmpFactory <> nil then Exit;
+  lc := FEnv^.FindClass(FEnv, 'android/graphics/BitmapFactory');
+  clsBmpFactory := FEnv^.NewGlobalRef(FEnv, lc);
+  lc := FEnv^.FindClass(FEnv, 'android/graphics/Bitmap');
+  clsBitmap := FEnv^.NewGlobalRef(FEnv, lc);
+  lc := FEnv^.FindClass(FEnv, 'android/graphics/RectF');
+  clsRectF := FEnv^.NewGlobalRef(FEnv, lc);
+  mDecodeFile := FEnv^.GetStaticMethodID(FEnv, clsBmpFactory, 'decodeFile',
+    '(Ljava/lang/String;)Landroid/graphics/Bitmap;');
+  mBmpWidth  := MID(clsBitmap, 'getWidth',  '()I');
+  mBmpHeight := MID(clsBitmap, 'getHeight', '()I');
+  mRectFInit := MID(clsRectF, '<init>', '(FFFF)V');
+  mDrawBitmap := MID(clsCanvas, 'drawBitmap',
+    '(Landroid/graphics/Bitmap;Landroid/graphics/Rect;Landroid/graphics/RectF;Landroid/graphics/Paint;)V');
+  FImgSrcs := TStringList.Create;
+end;
+
+function TAndroidCanvas.LoadImage(const Src: string): Integer;
+var
+  a: array[0..0] of jvalue;
+  s, bmp, gbmp: jobject;
+  n: Integer;
+begin
+  Result := -1;
+  if Src = '' then Exit;
+  EnsureImageMethods;
+  n := FImgSrcs.IndexOf(Src);
+  if n >= 0 then Exit(PtrInt(FImgSrcs.Objects[n]));   // cached
+  // only local files are decodable here (the camera writes one); http would
+  // need a fetch on a worker thread, which the shell doesn't own.
+  s := JStr(Src);
+  a[0].l := s;
+  bmp := FEnv^.CallStaticObjectMethodA(FEnv, clsBmpFactory, mDecodeFile, @a[0]);
+  FEnv^.DeleteLocalRef(FEnv, s);
+  if bmp = nil then Exit;
+  gbmp := FEnv^.NewGlobalRef(FEnv, bmp);
+  FEnv^.DeleteLocalRef(FEnv, bmp);
+  n := Length(FImgs);
+  SetLength(FImgs, n + 1);
+  FImgs[n].Bmp := gbmp;
+  FImgs[n].W := FEnv^.CallIntMethodA(FEnv, gbmp, mBmpWidth, nil);
+  FImgs[n].H := FEnv^.CallIntMethodA(FEnv, gbmp, mBmpHeight, nil);
+  FImgSrcs.AddObject(Src, TObject(PtrInt(n)));
+  Result := n;
+end;
+
+function TAndroidCanvas.ImageSize(Handle: Integer; out W, H: Single): Boolean;
+begin
+  Result := (Handle >= 0) and (Handle < Length(FImgs));
+  if Result then begin W := FImgs[Handle].W; H := FImgs[Handle].H; end
+  else begin W := 0; H := 0; end;
+end;
+
+procedure TAndroidCanvas.DrawImage(Handle: Integer; X, Y, W, H: Single);
+var a: array[0..3] of jvalue; dst: jobject;
+begin
+  if (Handle < 0) or (Handle >= Length(FImgs)) then Exit;
+  a[0].f := X; a[1].f := Y; a[2].f := X + W; a[3].f := Y + H;
+  dst := FEnv^.NewObjectA(FEnv, clsRectF, mRectFInit, @a[0]);
+  a[0].l := FImgs[Handle].Bmp; a[1].l := nil; a[2].l := dst; a[3].l := FPaint;
+  FEnv^.CallVoidMethodA(FEnv, FCanvas, mDrawBitmap, @a[0]);
+  FEnv^.DeleteLocalRef(FEnv, dst);
+end;
+
+destructor TAndroidCanvas.Destroy;
+var i: Integer;
+begin
+  for i := 0 to High(FImgs) do
+    if FImgs[i].Bmp <> nil then FEnv^.DeleteGlobalRef(FEnv, FImgs[i].Bmp);
+  FImgSrcs.Free;
+  inherited Destroy;
 end;
 
 { ---- shell ------------------------------------------------------------- }
