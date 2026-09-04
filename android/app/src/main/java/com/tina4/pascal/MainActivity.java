@@ -5,7 +5,9 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.view.View;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import java.text.SimpleDateFormat;
@@ -27,6 +29,14 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // No ActionBar (theme) — the engine draws edge-to-edge like iOS. Paint
+        // the status bar in the page background with dark icons so it blends in;
+        // the window still lays the view out below the status bar (no overlap).
+        getWindow().setStatusBarColor(0xFFFBFAF7);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        }
         view = new Tina4View(this);
         setContentView(view);
         // "@demo" = built-in interactive demo; an asset name renders that page.
