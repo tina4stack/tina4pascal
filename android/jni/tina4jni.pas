@@ -14,7 +14,8 @@ library tina4jni;
 uses
   SysUtils,
   jni,
-  Tina4RenderBackend, Tina4ShellAndroid, Tina4Interact;
+  Tina4RenderBackend, Tina4ShellAndroid, Tina4Interact,
+  Tina4Http, Tina4HttpAndroid;
 
 var
   GCanvas: TAndroidCanvas = nil;
@@ -28,6 +29,20 @@ begin
   p := Env^.GetStringUTFChars(Env, S, nil);
   try Result := string(p);
   finally Env^.ReleaseStringUTFChars(Env, S, p); end;
+end;
+
+{ cache the JavaVM and install the native (HttpURLConnection) HTTP backend }
+function JNI_OnLoad(VM: PJavaVM; Reserved: Pointer): jint; cdecl;
+begin
+  InstallAndroidHttp(VM);
+  Result := JNI_VERSION_1_6;
+end;
+
+{ Java Http worker → native: hand a completed response to the pump queue }
+procedure Java_com_tina4_pascal_Http_nativeHttpResult(Env: PJNIEnv; This: jobject;
+  Id, Status: jint; Body, Error: jstring); cdecl;
+begin
+  AndroidHttpResult(Id, Status, JToStr(Env, Body), JToStr(Env, Error));
 end;
 
 procedure Java_com_tina4_pascal_Tina4View_nativeSetHtml(Env: PJNIEnv; This: jobject;
@@ -51,6 +66,7 @@ begin
     GShell := TAndroidShell.Create(GCanvas);
     TinaInit(GCanvas);
   end;
+  HttpPump;                    // deliver any completed HTTP responses (main thread)
   GCanvas.BeginFrame(Env, Canvas);
   TinaFrame(W, H, Density);
 end;
@@ -116,7 +132,9 @@ exports
   Java_com_tina4_pascal_Tina4View_nativeFocusKind,
   Java_com_tina4_pascal_Tina4View_nativeFocusNext,
   Java_com_tina4_pascal_Tina4View_nativeSetFile,
-  Java_com_tina4_pascal_Tina4View_nativeSetPhoto;
+  Java_com_tina4_pascal_Tina4View_nativeSetPhoto,
+  Java_com_tina4_pascal_Http_nativeHttpResult,
+  JNI_OnLoad;
 
 begin
 end.

@@ -16,7 +16,7 @@ library tina4ios;
 uses
   ctypes,
   CGContext,
-  Tina4RenderBackend, Tina4ShellIOS, Tina4Interact;
+  Tina4RenderBackend, Tina4ShellIOS, Tina4Interact, Tina4Http, Tina4HttpIOS;
 
 var
   GCanvas: TIOSCanvas = nil;
@@ -27,6 +27,7 @@ begin
   begin
     GCanvas := TIOSCanvas.Create;
     TinaInit(GCanvas);
+    InstallIOSHttp;          // native NSURLSession HTTP backend
   end;
 end;
 
@@ -39,6 +40,7 @@ end;
 procedure tina4_frame(Ctx: Pointer; W, H: cint; Density: single); cdecl;
 begin
   EnsureCanvas;
+  HttpPump;                  // deliver completed HTTP responses on the main thread
   GCanvas.BeginFrame(CGContextRef(Ctx));
   TinaFrame(W, H, Density);
 end;
