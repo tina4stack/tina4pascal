@@ -82,7 +82,13 @@ type
     { When non-empty, the next completed paint is written to this PNG path
       (then cleared). Seed of the headless render-to-image mode. }
     SnapshotPath: string;
+    { Automation mode: no visible window, no Dock icon, no focus steal. Set
+      before Initialize by headless callers (--snapshot / --script). }
+    Headless: Boolean;
     destructor Destroy; override;
+    { Render the current document straight to a PNG off-screen (no window
+      shown, no run loop needed). Used by --snapshot and the reftest driver. }
+    procedure Snapshot(const Path: string);
     procedure Initialize(Width, Height: Integer; const Title: string); override;
     procedure Invalidate; override;
     procedure Run; override;
@@ -397,21 +403,17 @@ begin
 end;
 
 procedure TTina4View.drawRect(dirtyRect: NSRect);
-var
-  rep: NSBitmapImageRep;
-  png: NSData;
-  path: string;
+var path: string;
 begin
   if (shell <> nil) and Assigned(shell.OnPaint) then
     shell.OnPaint(shell.FCanvas, bounds.size.width, bounds.size.height);
+  { A scripted/interactive snapshot request piggybacks on the normal paint.
+    Clear the path first so the cacheDisplay re-entry into drawRect is a no-op. }
   if (shell <> nil) and (shell.SnapshotPath <> '') then
   begin
     path := shell.SnapshotPath;
-    shell.SnapshotPath := ''; // clear first: cacheDisplay re-enters drawRect
-    rep := bitmapImageRepForCachingDisplayInRect(bounds);
-    cacheDisplayInRect_toBitmapImageRep(bounds, rep);
-    png := rep.representationUsingType_properties(NSPNGFileType, nil);
-    png.writeToFile_atomically(NSSTR(PAnsiChar(UTF8Encode(path))), True);
+    shell.SnapshotPath := '';
+    shell.Snapshot(path);
   end;
 end;
 
@@ -533,8 +535,31 @@ begin
 
   FCanvas := TCocoaCanvas.Create;
 
-  FWindow.makeKeyAndOrderFront(nil);
-  NSApp.activateIgnoringOtherApps(True);
+  if Headless then
+    // no Dock icon, no focus steal, window never ordered on screen
+    NSApp.setActivationPolicy(NSApplicationActivationPolicyProhibited)
+  else
+  begin
+    FWindow.makeKeyAndOrderFront(nil);
+    NSApp.activateIgnoringOtherApps(True);
+  end;
+  pool.drain;
+end;
+
+procedure TCocoaShell.Snapshot(const Path: string);
+var
+  rep: NSBitmapImageRep;
+  png: NSData;
+  pool: NSAutoreleasePool;
+begin
+  if FView = nil then Exit;
+  pool := NSAutoreleasePool.alloc.init;
+  // render the (flipped) view straight into an off-screen bitmap — no window
+  // needs to be visible, so this works headless and never steals focus
+  rep := FView.bitmapImageRepForCachingDisplayInRect(FView.bounds);
+  FView.cacheDisplayInRect_toBitmapImageRep(FView.bounds, rep);
+  png := rep.representationUsingType_properties(NSPNGFileType, nil);
+  png.writeToFile_atomically(NSSTR(PAnsiChar(UTF8Encode(Path))), True);
   pool.drain;
 end;
 

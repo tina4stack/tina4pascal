@@ -778,7 +778,8 @@ begin
   Viewer.Shell.OnMouseMove := Viewer.MouseMove;
   Viewer.Shell.OnMouseDrag := Viewer.MouseDrag;
   Viewer.Shell.OnKeyDown := Viewer.KeyDown;
-  Viewer.Shell.SnapshotPath := SnapPath;
+  // --snapshot / --script run headless: off-screen render, no window, no focus steal
+  Viewer.Shell.Headless := (SnapPath <> '') or (ScriptPath <> '');
 
   // autofocus: first control asking for it
   autof := TList<THTMLTag>.Create;
@@ -806,6 +807,14 @@ begin
     Viewer.Shell.OnTick := Viewer.MomentumTick;  // flick inertia
 
   Viewer.Shell.Initialize(1024, 800, 'Tina4 HTMLRender — Free Pascal');
+
+  // one-shot --snapshot: render off-screen and exit, no run loop / no window
+  if (SnapPath <> '') and (ScriptPath = '') then
+  begin
+    Viewer.Shell.Snapshot(SnapPath);
+    Exit;
+  end;
+
   if ScriptPath <> '' then
     Viewer.Shell.StartTicker(400)   // script step cadence
   else

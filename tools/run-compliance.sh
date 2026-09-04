@@ -24,11 +24,8 @@ export PPC_CONFIG_PATH="$HOME/fpc/etc"
   || { echo "viewer build failed"; exit 1; }
 
 snap() { # <html-file> <out-png>
-  f="$1"; out="$2"
-  cp "$f" "$VIEW/_reftest.html"
-  printf 'snap %s\nquit\n' "$out" > "$VIEW/_reftest.drive"
-  ( cd "$VIEW" && ./htmlviewer _reftest.html --script _reftest.drive >/dev/null 2>&1 )
-  rm -f "$VIEW/_reftest.html" "$VIEW/_reftest.drive"
+  # headless off-screen render: no window, no focus steal, exits on its own
+  ( cd "$VIEW" && ./htmlviewer "$1" --snapshot "$2" >/dev/null 2>&1 )
 }
 
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
