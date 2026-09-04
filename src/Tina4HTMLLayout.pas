@@ -2233,23 +2233,31 @@ begin
       else
         val := Box.Tag.GetAttribute('value');
       cx := Box.X + st.BorderWidths.Left + st.Padding.Left + 1;
-      cy := y + st.BorderWidths.Top + st.Padding.Top;
-      if (Box.Runs.Count > 0) and (val <> '') then
+      // vertical position matches the (centred) text run, so the caret does
+      // not jump when the first character is typed; fall back to the same
+      // centring formula when there is no run yet
+      if Box.Runs.Count > 0 then
       begin
         r := Box.Runs[Box.Runs.Count - 1];
-        if Box.ControlKind = ckTextInput then
-        begin
-          // caret at the byte offset carried in '_caret' (default: end)
-          i := StrToIntDef(Box.Tag.GetAttribute('_caret'), Length(val));
-          i := Max(0, Min(i, Length(val)));
-          m := Canvas.MeasureText(Copy(val, 1, i), r.FontSize, r.Styles);
-        end
-        else
-          m := Canvas.MeasureText(r.Text, r.FontSize, r.Styles);
-        cx := r.X + m.Width + 1;
         cy := r.Y - innerOfs;
-      end;
-      Canvas.FillRect(cx, cy, 1.5, st.FontSize + 4, $FF1F2937);
+        if val <> '' then
+        begin
+          if Box.ControlKind = ckTextInput then
+          begin
+            // caret at the byte offset carried in '_caret' (default: end)
+            i := StrToIntDef(Box.Tag.GetAttribute('_caret'), Length(val));
+            i := Max(0, Min(i, Length(val)));
+            m := Canvas.MeasureText(Copy(val, 1, i), r.FontSize, r.Styles);
+          end
+          else
+            m := Canvas.MeasureText(r.Text, r.FontSize, r.Styles);
+          cx := r.X + m.Width + 1;   // caret after the text
+        end;
+        // (empty + placeholder run: caret stays at the start, cx unchanged)
+      end
+      else
+        cy := y + (Box.H - st.FontSize) / 2;
+      Canvas.FillRect(cx, cy, 1.5, st.FontSize + 2, $FF1F2937);
     end;
     if Box.ControlKind = ckSelect then
       Canvas.DrawText(Box.X + Box.W - 18, y + st.BorderWidths.Top + st.Padding.Top,
