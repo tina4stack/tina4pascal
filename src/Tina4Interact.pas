@@ -43,6 +43,13 @@ const
 procedure TinaInit(Canvas: TTina4Canvas);
 { Load a document ("@demo" = the built-in interactive demo). }
 procedure TinaSetHtml(const Html: string);
+{ ---- Frond templates ---------------------------------------------------
+  Render a page from a Frond template + a JSON context (app state) and load it.
+  The template is remembered, so on a state change you re-render with just the
+  new context via TinaRenderContext — the template-driven app model. }
+procedure TinaSetTemplateDir(const Dir: string);   // for {% include %}/{% extends %}
+procedure TinaRenderTemplate(const Template, JsonContext: string);
+procedure TinaRenderContext(const JsonContext: string);   // reuse last template
 { Lay out (if needed) and paint one frame. The shell must have already called
   Canvas.BeginFrame for this frame; WPx/HPx are the surface size in physical
   pixels and Density is points-per-pixel (1 on a non-scaled desktop). }
@@ -75,10 +82,12 @@ procedure TinaSetPhoto(const Path: string);
 implementation
 
 uses
-  SysUtils, Classes, Math,
-  Tina4HTMLDom, Tina4HTMLLayout, Tina4Events;
+  SysUtils, Classes, Math, fpjson, jsonparser,
+  Tina4HTMLDom, Tina4HTMLLayout, Tina4Events, Tina4Frond;
 
 var
+  GFrond: TFrond = nil;         // the template engine (created on first use)
+  GTemplate: string = '';       // last template, for TinaRenderContext
   GCanvas: TTina4Canvas = nil;
   GParser: THTMLParser = nil;
   GSheet: TCSSStyleSheet = nil;
@@ -497,6 +506,36 @@ begin
   GFocusedTag := nil; GOpenSelect := nil; GDocDirty := True;
 end;
 
+procedure TinaSetTemplateDir(const Dir: string);
+begin
+  FreeAndNil(GFrond);
+  GFrond := TFrond.Create(Dir);
+end;
+
+procedure TinaRenderTemplate(const Template, JsonContext: string);
+var ctx: TJSONData; html: string;
+begin
+  if GFrond = nil then GFrond := TFrond.Create;
+  GTemplate := Template;
+  ctx := nil;
+  if JsonContext <> '' then
+    try ctx := GetJSON(JsonContext); except ctx := nil; end;
+  try
+    if (ctx <> nil) and (ctx is TJSONObject) then
+      html := GFrond.RenderString(Template, TJSONObject(ctx))
+    else
+      html := GFrond.RenderString(Template, nil);
+  finally
+    ctx.Free;
+  end;
+  TinaSetHtml(html);
+end;
+
+procedure TinaRenderContext(const JsonContext: string);
+begin
+  TinaRenderTemplate(GTemplate, JsonContext);
+end;
+
 procedure TinaFrame(WPx, HPx: Integer; Density: Single);
 var cssW, cssH: Single;
 begin
@@ -782,5 +821,8 @@ begin
   if GFileTag <> nil then begin SetAttr(GFileTag, 'value', ExtractFileName(Path)); GFileTag := nil; end;
   GLayoutDirty := True;
 end;
+
+finalization
+  GFrond.Free;
 
 end.

@@ -1,0 +1,22 @@
+<!doctype html><html><head><style>
+body{font-family:sans-serif;background:#fbfaf7;color:#15162e;padding:24px;margin:0}
+h1{font-size:26px;color:#4f46e5;margin:0 0 2px}
+.sub{color:#5b5c78;margin:0 0 18px;font-size:14px}
+.card{background:#fff;border:1px solid #e6e5f0;border-radius:14px;padding:14px 16px;
+      margin-bottom:10px;display:flex;gap:12px;align-items:center}
+.box{width:22px;height:22px;border-radius:6px;border:1.5px solid #c9c8dd}
+.done .box{background:#4f46e5;border-color:#4f46e5}
+.t{font-size:17px}
+.done .t{color:#9698b4}
+.pri{margin-left:auto;font-size:12px;font-weight:bold;color:#ff5aa0}
+</style></head><body>
+  <h1>{{ title }}</h1>
+  <p class="sub">{{ tasks | length }} tasks · {{ done }} done</p>
+  {% for t in tasks %}
+  <div class="card {% if t.done %}done{% endif %}">
+    <div class="box"></div>
+    <div class="t">{{ t.text }}</div>
+    {% if t.priority %}<div class="pri">{{ t.priority | upper }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</body></html>
