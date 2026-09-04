@@ -664,10 +664,10 @@ begin
   case kind of
     ckCheckbox, ckRadio:
       begin
-        // 16px glyph, but the control box is as tall as the text line box so it
-        // centres against the label the same way (and gives a bigger tap target).
-        Result.W := 16;
-        Result.H := Max(16, lineH);
+        // 18px glyph (comfortable tap target); the control box is at least as
+        // tall as the text line box so it centres against the label.
+        Result.W := 18;
+        Result.H := Max(18, lineH);
         Exit;
       end;
     ckButton:
@@ -999,7 +999,7 @@ begin
         // them, so don't let it reserve flex space either
         if ControlKindOf(itemTags[i]) in [ckCheckbox, ckRadio] then
         begin
-          baseW[i] := 16; growF[i] := 0;
+          baseW[i] := 18; growF[i] := 0;
         end
         else if ew >= 0 then
         begin
@@ -1187,7 +1187,8 @@ type
     Text: string;          // '' for atomic boxes
     Box: TLayoutBox;       // nil for words
     W, H: Single;
-    Ascent: Single;        // distance from top of item to its baseline
+    Ascent: Single;        // distance from top of item to its baseline (line sizing)
+    FontAscent: Single;    // the font's own ascent (baseline placement for text)
     FontSize: Single;
     Styles: TTina4FontStyles;
     Color: TTina4Color;
@@ -1290,11 +1291,17 @@ var
           // baseline sits (lineHeight-fontHeight)/2 below the run top, then
           // ascent below that — so text of any size shares one baseline.
           it.Ascent := (it.H - (m.Ascent + m.Descent)) / 2 + m.Ascent;
+          // FontAscent is the FONT's own ascent (what the backend adds to a run
+          // top to reach the baseline). Placing the run by FontAscent — not by
+          // it.Ascent, which also carries the half-leading — makes the glyph
+          // baseline land exactly on the line baseline instead of half-leading
+          // too high (visible as a label riding high next to a checkbox).
+          it.FontAscent := m.Ascent;
           // sub/super shift the item's baseline off the line baseline
           if SameText(St.VerticalAlign, 'sub') then
-            it.Ascent := it.Ascent - St.FontSize * 0.28
+          begin it.Ascent := it.Ascent - St.FontSize * 0.28; it.FontAscent := it.FontAscent - St.FontSize * 0.28; end
           else if SameText(St.VerticalAlign, 'super') then
-            it.Ascent := it.Ascent + St.FontSize * 0.42;
+          begin it.Ascent := it.Ascent + St.FontSize * 0.42; it.FontAscent := it.FontAscent + St.FontSize * 0.42; end;
           it.FontSize := St.FontSize;
           it.Styles := FontStylesOf(St);
           it.Color := St.Color;
@@ -1531,7 +1538,9 @@ var
       begin
         run.Text := it.Text;
         run.X := x;
-        run.Y := lineTop + maxAscent - it.Ascent;  // top so baseline aligns
+        // place by the font's ascent so the backend's baseline (run.Y + its own
+        // ascent) lands on the line baseline — not half-leading above it
+        run.Y := lineTop + maxAscent - it.FontAscent;
         run.FontSize := it.FontSize;
         run.Styles := it.Styles;
         run.Color := it.Color;
@@ -2160,23 +2169,23 @@ begin
   // lines up with the label text beside it.
   if Box.ControlKind in [ckCheckbox, ckRadio] then
   begin
-    gy := y + (Box.H - 16) / 2;
+    gy := y + (Box.H - 18) / 2;
     if Box.ControlKind = ckRadio then
     begin
-      Canvas.FillRoundRect(Box.X, gy, 16, 16, 8, $FFFFFFFF);
-      Canvas.StrokeRoundRect(Box.X, gy, 16, 16, 8, 1.5, TC_BORDER);
+      Canvas.FillRoundRect(Box.X, gy, 18, 18, 9, $FFFFFFFF);
+      Canvas.StrokeRoundRect(Box.X, gy, 18, 18, 9, 1.5, TC_BORDER);
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
-        Canvas.FillRoundRect(Box.X + 4, gy + 4, 8, 8, 4, TC_ACCENT);
+        Canvas.FillRoundRect(Box.X + 5, gy + 5, 8, 8, 4, TC_ACCENT);
     end
     else
     begin
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
-        Canvas.FillRoundRect(Box.X, gy, 16, 16, 3, TC_ACCENT)
+        Canvas.FillRoundRect(Box.X, gy, 18, 18, 4, TC_ACCENT)
       else
-        Canvas.FillRoundRect(Box.X, gy, 16, 16, 3, $FFFFFFFF);
-      Canvas.StrokeRoundRect(Box.X, gy, 16, 16, 3, 1.5, TC_BORDER);
+        Canvas.FillRoundRect(Box.X, gy, 18, 18, 4, $FFFFFFFF);
+      Canvas.StrokeRoundRect(Box.X, gy, 18, 18, 4, 1.5, TC_BORDER);
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
-        Canvas.DrawText(Box.X + 2.5, gy - 0.5, '✓', 12, [tfsBold], $FFFFFFFF);
+        Canvas.DrawText(Box.X + 3, gy + 0.5, '✓', 13, [tfsBold], $FFFFFFFF);
     end;
     Exit;
   end;
