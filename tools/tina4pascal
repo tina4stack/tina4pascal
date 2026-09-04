@@ -182,7 +182,7 @@ cmd_build() {
 cmd_test() {
   need_fpc
   fail=0
-  for t in dom qr svg picture; do
+  for t in dom qr svg picture services; do
     [ -f "$ROOT/tests/test_$t.pas" ] || continue
     o="$BUILD/test/$t"; mkdir -p "$o"
     "$FPC" -Mdelphi -Fu"$SRC" -FE"$o" -FU"$o" "$ROOT/tests/test_$t.pas" >/dev/null 2>&1 \
