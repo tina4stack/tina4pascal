@@ -1,0 +1,30 @@
+<!doctype html>
+<html><head><style>
+body{font-family:sans-serif;padding:24px;background:#fff;color:#15162e;margin:0}
+h2{margin:18px 0 8px;font-size:15px}
+.cap{font-size:12px;color:#5b5c78;margin:4px 0 16px}
+img{border-radius:8px;display:block}
+</style></head><body>
+
+<h2>&lt;picture&gt; media selection (viewport 1024 → wide source)</h2>
+<picture>
+  <source media="(max-width: 600px)" srcset="imgassets/small.png">
+  <source media="(min-width: 601px)" srcset="imgassets/big.png">
+  <img src="imgassets/mid.png" width="300" height="120">
+</picture>
+<div class="cap">expect BIG (pink) — viewport &gt; 600</div>
+
+<h2>&lt;picture&gt; type filtering (svg skipped → png)</h2>
+<picture>
+  <source type="image/svg+xml" srcset="imgassets/small.png">
+  <source type="image/png" srcset="imgassets/mid.png">
+  <img src="imgassets/big.png" width="300" height="120">
+</picture>
+<div class="cap">expect MID (green) — first source is svg, skipped</div>
+
+<h2>&lt;img srcset&gt; width descriptors (300px slot)</h2>
+<img srcset="imgassets/small.png 400w, imgassets/mid.png 800w, imgassets/big.png 1200w"
+     sizes="300px" src="imgassets/mid.png" width="300" height="120">
+<div class="cap">expect SMALL (indigo) — smallest ≥ 300w is 400w</div>
+
+</body></html>

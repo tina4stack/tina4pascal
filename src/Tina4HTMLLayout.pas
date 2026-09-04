@@ -62,6 +62,7 @@ type
     FCanvas: TTina4Canvas;
     FSheet: TCSSStyleSheet;
     FBaseStyle: TComputedStyle;
+    FViewportW: Single;            // for <picture>/srcset media + sizes eval
     function FontStylesOf(const St: TComputedStyle): TTina4FontStyles;
     function LineHeightOf(const St: TComputedStyle): Single;
     procedure LayoutChildren(Box: TLayoutBox; Tag: THTMLTag;
@@ -97,6 +98,14 @@ function FindBoxForTag(Box: TLayoutBox; T: THTMLTag): TLayoutBox;
 { Concatenated descendant text of a tag (entities already decoded). }
 function InnerText(Tag: THTMLTag): string;
 function IsFormControlTag(const Name: string): Boolean;
+
+{ Responsive-image selection (exposed for testing). PickFromSrcset chooses the
+  best URL from a srcset for a target width; EvalMediaQuery evaluates a source's
+  media against the viewport; ResolveImgSrc resolves an <img>'s effective src
+  honouring an enclosing <picture>. }
+function PickFromSrcset(const Srcset: string; TargetW: Single): string;
+function EvalMediaQuery(const MQ: string; ViewportW: Single): Boolean;
+function ResolveImgSrc(T: THTMLTag; ViewportW, ElemW: Single): string;
 
 implementation
 
@@ -381,6 +390,171 @@ begin
     w := MaxReplacedW(c);
     if w > Result then Result := w;
   end;
+end;
+
+{ ---- <picture>/srcset responsive image selection ---------------------- }
+
+{ true if NSImage-decodable raster type; external SVG isn't rasterised }
+function ImageTypeSupported(const MimeType: string): Boolean;
+var t: string;
+begin
+  t := LowerCase(Trim(MimeType));
+  Result := (t = '') or (t = 'image/jpeg') or (t = 'image/jpg') or
+    (t = 'image/png') or (t = 'image/gif') or (t = 'image/webp') or
+    (t = 'image/bmp') or (t = 'image/tiff') or (t = 'image/x-icon') or
+    (t = 'image/heic') or (t = 'image/heif');
+end;
+
+{ evaluate a media-query list against the viewport width. Handles the common
+  responsive features (min-/max-width); unknown features are permissive so a
+  source is only excluded when a width feature actually fails. }
+function EvalMediaQuery(const MQ: string; ViewportW: Single): Boolean;
+var
+  parts: TArray<string>;
+  i, colon: Integer;
+  clause, feat, valStr: string;
+  n: Single;
+begin
+  Result := True;
+  if Trim(MQ) = '' then Exit;
+  parts := LowerCase(MQ).Split([' and ']);
+  for i := 0 to High(parts) do
+  begin
+    clause := Trim(parts[i]);
+    clause := StringReplace(clause, '(', '', [rfReplaceAll]);
+    clause := StringReplace(clause, ')', '', [rfReplaceAll]);
+    colon := Pos(':', clause);
+    if colon = 0 then Continue;               // e.g. bare "screen" — permissive
+    feat := Trim(Copy(clause, 1, colon - 1));
+    valStr := Trim(Copy(clause, colon + 1, MaxInt));
+    valStr := StringReplace(LowerCase(valStr), 'px', '', [rfReplaceAll]);
+    n := StrToFloatDef(Trim(valStr), -1);
+    if n < 0 then Continue;
+    if feat = 'max-width' then
+      begin if ViewportW > n then Exit(False); end
+    else if feat = 'min-width' then
+      begin if ViewportW < n then Exit(False); end;
+    // other features: ignore (permissive)
+  end;
+end;
+
+{ resolve `sizes` to a target render width in px (first matching clause),
+  falling back to the element width or the viewport }
+function ResolveSizes(const Sizes: string; ViewportW, ElemW: Single): Single;
+var
+  parts: TArray<string>;
+  i, sp: Integer;
+  clause, cond, lenStr: string;
+begin
+  if Trim(Sizes) <> '' then
+  begin
+    parts := Sizes.Split([',']);
+    for i := 0 to High(parts) do
+    begin
+      clause := Trim(parts[i]);
+      if clause = '' then Continue;
+      // "(max-width: 600px) 480px"  or a bare "800px" default
+      if (clause[1] = '(') then
+      begin
+        sp := Pos(')', clause);
+        cond := Copy(clause, 1, sp);
+        lenStr := Trim(Copy(clause, sp + 1, MaxInt));
+        if not EvalMediaQuery(cond, ViewportW) then Continue;
+      end
+      else
+        lenStr := clause;
+      lenStr := StringReplace(LowerCase(lenStr), 'px', '', [rfReplaceAll]);
+      Result := StrToFloatDef(Trim(lenStr), -1);
+      if Result > 0 then Exit;
+    end;
+  end;
+  if ElemW > 0 then Result := ElemW else Result := ViewportW;
+end;
+
+{ pick the best URL from a srcset string for the given target width }
+function PickFromSrcset(const Srcset: string; TargetW: Single): string;
+var
+  cands: TArray<string>;
+  i, sp: Integer;
+  entry, url, descr: string;
+  hasW, isW: Boolean;
+  num, dens, bestW, bestDens: Single;
+  bestWUrl, bestDensUrl: string;
+begin
+  Result := '';
+  cands := Srcset.Split([',']);
+  hasW := False;
+  bestW := 1e30; bestWUrl := '';
+  bestDens := 1e30; bestDensUrl := '';
+  for i := 0 to High(cands) do
+  begin
+    entry := Trim(cands[i]);
+    if entry = '' then Continue;
+    sp := Pos(' ', entry);
+    if sp = 0 then begin url := entry; descr := ''; end
+    else begin url := Trim(Copy(entry, 1, sp - 1)); descr := Trim(Copy(entry, sp + 1, MaxInt)); end;
+    if url = '' then Continue;
+    descr := LowerCase(Trim(descr));
+    isW := (descr <> '') and (descr[Length(descr)] = 'w');
+    if isW then
+    begin
+      hasW := True;
+      num := StrToFloatDef(Copy(descr, 1, Length(descr) - 1), 0);
+      // smallest candidate width >= target wins; track the largest as fallback
+      if (num >= TargetW) and (num < bestW) then begin bestW := num; bestWUrl := url; end;
+      if (bestWUrl = '') then
+      begin
+        // no candidate >= target yet: keep the largest seen
+        if (num > 0) and ((bestDensUrl = '') or (num > bestDens)) then
+        begin bestDens := num; bestDensUrl := url; end;
+      end;
+    end
+    else
+    begin
+      // density descriptor (Nx) or none (=1x); prefer the one closest to 1x
+      if descr = '' then dens := 1
+      else dens := StrToFloatDef(Copy(descr, 1, Length(descr) - 1), 1);
+      if Abs(dens - 1) < Abs(bestDens - 1) then
+      begin bestDens := dens; bestDensUrl := url; end;
+    end;
+  end;
+  if hasW then
+  begin
+    if bestWUrl <> '' then Result := bestWUrl
+    else Result := bestDensUrl;   // largest fallback
+  end
+  else
+    Result := bestDensUrl;
+end;
+
+{ effective src for an <img>, honouring an enclosing <picture>'s <source>s
+  and the element's own srcset/sizes, else its plain src }
+function ResolveImgSrc(T: THTMLTag; ViewportW, ElemW: Single): string;
+var
+  s: THTMLTag;
+  targetW: Single;
+begin
+  if (T.Parent <> nil) and SameText(T.Parent.TagName, 'picture') then
+    for s in T.Parent.Children do
+    begin
+      if s = T then Break;   // <source>s precede the <img>
+      if not SameText(s.TagName, 'source') then Continue;
+      if s.HasAttribute('media') and
+         not EvalMediaQuery(s.GetAttribute('media'), ViewportW) then Continue;
+      if s.HasAttribute('type') and
+         not ImageTypeSupported(s.GetAttribute('type')) then Continue;
+      if not s.HasAttribute('srcset') then Continue;
+      targetW := ResolveSizes(s.GetAttribute('sizes'), ViewportW, ElemW);
+      Result := PickFromSrcset(s.GetAttribute('srcset'), targetW);
+      if Result <> '' then Exit;
+    end;
+  if T.HasAttribute('srcset') then
+  begin
+    targetW := ResolveSizes(T.GetAttribute('sizes'), ViewportW, ElemW);
+    Result := PickFromSrcset(T.GetAttribute('srcset'), targetW);
+    if Result <> '' then Exit;
+  end;
+  Result := T.GetAttribute('src');
 end;
 
 { UA fallback chrome for controls the stylesheet didn't style; also the
@@ -1090,7 +1264,9 @@ var
       it.Box.Tag := T;
       it.Box.Style := cs;
       it.Box.IsImagePlaceholder := True;
-      it.Box.ImageHandle := FCanvas.LoadImage(T.GetAttribute('src'));
+      // <picture>/srcset: choose the best source for this viewport + slot
+      it.Box.ImageHandle := FCanvas.LoadImage(
+        ResolveImgSrc(T, FViewportW, cs.ExplicitWidth));
       if cs.ExplicitWidth >= 0 then it.Box.W := cs.ExplicitWidth else it.Box.W := 120;
       if cs.ExplicitHeight >= 0 then it.Box.H := cs.ExplicitHeight else it.Box.H := 80;
       // no width/height attributes: fall back to the image's intrinsic size
@@ -1680,6 +1856,7 @@ begin
   base.FontSize := 16;       // web default; Delphi default is 14
   base.LineHeight := 1.5;    // bootstrap body line-height
   FBaseStyle := base;
+  FViewportW := ViewportW;
   body := FindBody(Root);
   if body = nil then body := Root;
   Result := TLayoutBox.Create;

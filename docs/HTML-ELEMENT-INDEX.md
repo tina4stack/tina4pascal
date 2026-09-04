@@ -73,7 +73,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | svg | ✅ | pure-Pascal vector painter (`Tina4SVG`): g, rect(rx), circle, ellipse, line, polyline, polygon, path (M L H V C S Q T A Z), text; fill/stroke/opacity/transform/viewBox. No gradients/clip/filters/`<use>` yet |
 | qrcode | ✅ | **Tina4 custom** — pure-Pascal QR encoder (byte mode, v1–v10 ECC-L), painted as modules; `value`/`data` attr or text node |
 | camera | ✅ | **Tina4 custom** — "Take Photo" control → shell `CaptureCamera` (still image); sets `value` |
-| picture, source, srcset | ❌ | cheap follow-on: responsive `<img>` selection over the existing image path |
+| picture, source, srcset | ✅ | responsive selection: `<source>` media + type filtering, srcset density (1x) + width descriptors, `sizes`; falls back to `<img src>` |
 | video, audio, track | ❌ | per-OS media, belongs in the shells |
 | canvas | ❌ | inert without a script/draw hook |
 | iframe, embed, object | ❌ | |
@@ -127,10 +127,11 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 
 ## Priority element gaps
 
-1. **picture/source/srcset** — responsive `<img>` selection reusing the image path (cheap).
-2. **table rowspan** (colspan done); `<caption>`, `<col>/<colgroup>`.
-3. **Forms**: `input[date/color/range]`, `datalist`, `output`, `progress`, `meter`;
+1. **table rowspan** (colspan done); `<caption>`, `<col>/<colgroup>`.
+2. **Forms**: `input[date/color/range]`, `datalist`, `output`, `progress`, `meter`;
    `label[for=]` → focus; textarea multi-line caret.
-4. **SVG** advanced: gradients, clip/mask, `<use>`, `<tspan>` positioning, dash arrays.
-5. **dialog**; inline `wbr`, `bdi/bdo`, `ruby`.
-6. Media (`video`, `audio`) — per-OS, lives in the shells; `canvas` needs a draw hook.
+3. **SVG** advanced: gradients, clip/mask, `<use>`, `<tspan>` positioning, dash arrays.
+4. **dialog**; inline `wbr`, `bdi/bdo`, `ruby`.
+5. Media (`video`, `audio`) — per-OS, lives in the shells; `canvas` needs a draw hook.
+6. On-device shells (iOS UIKit / Android) — the core cross-compiles today; a
+   device shell (like `Tina4ShellCocoa`) is what's missing to render on a phone.
