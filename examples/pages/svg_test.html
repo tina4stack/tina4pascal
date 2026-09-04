@@ -1,0 +1,88 @@
+<!doctype html>
+<html><head><style>
+body{font-family:sans-serif;padding:24px;background:#fff;color:#15162e;margin:0}
+h2{margin:20px 0 8px;font-size:16px}
+.row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+.card{border:1px solid #e6e5f0;border-radius:12px;padding:12px}
+.cap{font-size:12px;color:#5b5c78;margin-top:6px}
+</style></head><body>
+
+<h2>Basic shapes</h2>
+<div class="row">
+  <div class="card">
+    <svg width="140" height="140" viewBox="0 0 100 100">
+      <rect x="10" y="10" width="80" height="55" rx="10" fill="#4F46E5"/>
+      <circle cx="30" cy="75" r="18" fill="#ff5aa0"/>
+      <ellipse cx="72" cy="75" rx="22" ry="14" fill="#ffd23c"/>
+    </svg>
+    <div class="cap">rect · circle · ellipse</div>
+  </div>
+  <div class="card">
+    <svg width="140" height="140" viewBox="0 0 100 100">
+      <polygon points="50,5 61,38 96,38 68,59 79,92 50,72 21,92 32,59 4,38 39,38"
+               fill="#4F46E5"/>
+      <polyline points="10,90 30,70 50,85 70,55 90,80" fill="none"
+                stroke="#ff5aa0" stroke-width="3"/>
+    </svg>
+    <div class="cap">polygon (star) · polyline</div>
+  </div>
+  <div class="card">
+    <svg width="140" height="140" viewBox="0 0 100 100">
+      <rect x="8" y="8" width="84" height="84" fill="none"
+            stroke="#4F46E5" stroke-width="3"/>
+      <line x1="8" y1="8" x2="92" y2="92" stroke="#ff5aa0" stroke-width="2"/>
+      <line x1="92" y1="8" x2="8" y2="92" stroke="#ff5aa0" stroke-width="2"/>
+    </svg>
+    <div class="cap">stroke rect · lines</div>
+  </div>
+</div>
+
+<h2>Paths &amp; curves</h2>
+<div class="row">
+  <div class="card">
+    <svg width="140" height="140" viewBox="0 0 24 24">
+      <path d="M12 2 L15 9 L22 9 L16 14 L18 21 L12 17 L6 21 L8 14 L2 9 L9 9 Z"
+            fill="#ffd23c" stroke="#15162e" stroke-width="0.6"/>
+    </svg>
+    <div class="cap">path Z (filled star)</div>
+  </div>
+  <div class="card">
+    <svg width="140" height="140" viewBox="0 0 24 24">
+      <path d="M12 21s-6.7-4.35-9.33-8.5C.9 9.6 2.2 6 5.5 6c1.9 0 3.4 1 4.5 2.4C11.1 7 12.6 6 14.5 6c3.3 0 4.6 3.6 2.83 6.5C18.7 16.65 12 21 12 21z"
+            fill="#ff5aa0"/>
+    </svg>
+    <div class="cap">path curves (heart)</div>
+  </div>
+  <div class="card">
+    <svg width="140" height="140" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" fill="none" stroke="#e6e5f0" stroke-width="2.5"/>
+      <path d="M12 2 a10 10 0 0 1 10 10" fill="none" stroke="#4F46E5" stroke-width="2.5"/>
+    </svg>
+    <div class="cap">arc (A command)</div>
+  </div>
+</div>
+
+<h2>Transforms &amp; text</h2>
+<div class="row">
+  <div class="card">
+    <svg width="160" height="140" viewBox="0 0 120 100">
+      <g transform="translate(60 50)">
+        <rect x="-30" y="-20" width="60" height="40" rx="6" fill="#4F46E5"
+              transform="rotate(-15)"/>
+        <rect x="-24" y="-14" width="48" height="28" rx="4" fill="#ffd23c"
+              transform="rotate(12)"/>
+      </g>
+    </svg>
+    <div class="cap">nested g + rotate</div>
+  </div>
+  <div class="card">
+    <svg width="200" height="80" viewBox="0 0 200 80">
+      <rect x="0" y="0" width="200" height="80" rx="12" fill="#4F46E5"/>
+      <text x="100" y="48" text-anchor="middle" font-size="26" font-weight="bold"
+            fill="#ffffff">Tina4 SVG</text>
+    </svg>
+    <div class="cap">text (anchor middle)</div>
+  </div>
+</div>
+
+</body></html>

@@ -36,6 +36,8 @@ type
     procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); override;
     procedure StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color); override;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); override;
+    procedure FillPolygon(const Contours: array of TTina4PointArray;
+      Color: TTina4Color; EvenOdd: Boolean = False); override;
     procedure DrawText(X, Y: Single; const Text: string; FontSize: Single;
       Styles: TTina4FontStyles; Color: TTina4Color); override;
     function MeasureText(const Text: string; FontSize: Single;
@@ -292,6 +294,27 @@ begin
   p.lineToPoint(NSMakePoint(X2, Y2));
   p.setLineWidth(Thickness);
   p.stroke;
+end;
+
+procedure TCocoaCanvas.FillPolygon(const Contours: array of TTina4PointArray;
+  Color: TTina4Color; EvenOdd: Boolean);
+var
+  p: NSBezierPath;
+  i, j: Integer;
+begin
+  p := NSBezierPath.bezierPath;
+  for i := 0 to High(Contours) do
+  begin
+    if Length(Contours[i]) < 2 then Continue;
+    p.moveToPoint(NSMakePoint(Contours[i][0].X, Contours[i][0].Y));
+    for j := 1 to High(Contours[i]) do
+      p.lineToPoint(NSMakePoint(Contours[i][j].X, Contours[i][j].Y));
+    p.closePath;
+  end;
+  if EvenOdd then p.setWindingRule(NSEvenOddWindingRule)
+  else p.setWindingRule(NSNonZeroWindingRule);
+  NSColorOf(Color).setFill;
+  p.fill;
 end;
 
 procedure TCocoaCanvas.DrawText(X, Y: Single; const Text: string; FontSize: Single;

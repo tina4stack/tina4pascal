@@ -35,8 +35,8 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 |---|---|---|
 | div | ✅ | block |
 | p | ✅ | block + margins |
-| ul, ol, menu | 🟡 | block + indent; **no markers** |
-| li | 🟡 | block; **no bullet/number** |
+| ul, ol, menu | ✅ | block + indent + markers (disc/decimal/roman via list-style-type) |
+| li | ✅ | block + bullet/number marker |
 | dl, dt, dd | ✅ | bold term, indented def |
 | blockquote | ✅ | indent + left border |
 | pre | ✅ | monospace, whitespace preserved |
@@ -51,14 +51,14 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | span | ✅ | inline |
 | b, strong | ✅ | bold |
 | i, em | ✅ | italic |
-| u, ins | 🟡 | underline via text-decoration |
-| s, del, strike | ❌ | line-through not painted |
+| u, ins | ✅ | underline via text-decoration |
+| s, del, strike | ✅ | line-through painted (tfsStrike) |
 | small | ✅ | smaller |
-| mark | 🟡 | needs yellow bg UA default |
+| mark | ✅ | yellow bg UA default |
 | code, kbd, samp, var | ✅ | monospace |
-| sub, sup | ❌ | no baseline shift |
+| sub, sup | ✅ | baseline shift + smaller |
 | abbr, cite, dfn | ✅ | underline/italic UA |
-| q | ❌ | no auto quotes |
+| q | ✅ | auto “ ” quotes |
 | br | ✅ | hard break |
 | wbr | ❌ | |
 | bdi, bdo | ❌ | no bidi |
@@ -70,12 +70,12 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | Element | Status | Note |
 |---|---|---|
 | img | ✅ | HTTPS fetch + decode + cache + aspect |
+| svg | ✅ | pure-Pascal vector painter (`Tina4SVG`): g, rect(rx), circle, ellipse, line, polyline, polygon, path (M L H V C S Q T A Z), text; fill/stroke/opacity/transform/viewBox. No gradients/clip/filters/`<use>` yet |
 | qrcode | ✅ | **Tina4 custom** — pure-Pascal QR encoder (byte mode, v1–v10 ECC-L), painted as modules; `value`/`data` attr or text node |
 | camera | ✅ | **Tina4 custom** — "Take Photo" control → shell `CaptureCamera` (still image); sets `value` |
-| picture, source, srcset | ❌ | |
-| svg | ❌ | not rendered |
-| video, audio, track | ❌ | |
-| canvas | ❌ | |
+| picture, source, srcset | ❌ | cheap follow-on: responsive `<img>` selection over the existing image path |
+| video, audio, track | ❌ | per-OS media, belongs in the shells |
+| canvas | ❌ | inert without a script/draw hook |
 | iframe, embed, object | ❌ | |
 | map, area | ❌ | |
 
@@ -86,7 +86,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | table | 🟡 | autosize columns; `border` attr |
 | thead, tbody, tfoot | ✅ | row grouping |
 | tr | ✅ | |
-| td, th | 🟡 | **no colspan/rowspan** |
+| td, th | 🟡 | colspan ✅; **rowspan** not yet |
 | caption | ❌ | |
 | col, colgroup | ❌ | |
 
@@ -123,13 +123,14 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 |---|---|---|
 | onclick (attribute, any element) | ✅ | semantic event `obj:method(args)` |
 | id / class / style attributes | ✅ | selectors + inline styles |
-| hidden attribute | ❌ | should imply display:none — **easy win** |
+| hidden attribute | ✅ | implies display:none |
 
 ## Priority element gaps
 
-1. **List markers** (`ul`/`ol`/`li` bullets & numbers) — very common.
-2. **`hidden` attribute** → display:none (trivial; answers the "HIDDEN DIV" Q).
-3. **s/del/strike line-through**, **sub/sup**, **mark** bg — small paint/UA wins.
-4. **colspan/rowspan** for real tables.
-5. **details/summary** toggle (needs the click→state→relayout we already have).
-6. Media (`svg`, `video`, `canvas`) — large, later.
+1. **picture/source/srcset** — responsive `<img>` selection reusing the image path (cheap).
+2. **table rowspan** (colspan done); `<caption>`, `<col>/<colgroup>`.
+3. **Forms**: `input[date/color/range]`, `datalist`, `output`, `progress`, `meter`;
+   `label[for=]` → focus; textarea multi-line caret.
+4. **SVG** advanced: gradients, clip/mask, `<use>`, `<tspan>` positioning, dash arrays.
+5. **dialog**; inline `wbr`, `bdi/bdo`, `ruby`.
+6. Media (`video`, `audio`) — per-OS, lives in the shells; `canvas` needs a draw hook.

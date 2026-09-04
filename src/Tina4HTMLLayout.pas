@@ -12,7 +12,7 @@ interface
 
 uses
   SysUtils, Classes, Math, Generics.Collections,
-  Tina4HTMLDom, Tina4RenderBackend, Tina4Theme, Tina4QR;
+  Tina4HTMLDom, Tina4RenderBackend, Tina4Theme, Tina4QR, Tina4SVG;
 
 type
   TTextRun = record
@@ -41,6 +41,8 @@ type
     ImageHandle: Integer;          // canvas image handle, -1 = none/failed
     IsQRCode: Boolean;             // <qrcode> replaced element
     QRMatrix: TQRMatrix;           // pre-encoded module grid, painted as cells
+    IsSVG: Boolean;                // <svg> replaced element
+    SVGRoot: THTMLTag;             // the <svg> node, painted vector at paint time
     ControlKind: TControlKind;
     Scrollable: Boolean;           // overflow-y auto/scroll with an explicit height
     ScrollTop: Single;
@@ -371,8 +373,8 @@ var
   w: Single;
 begin
   Result := 0;
-  if (SameText(Tag.TagName, 'qrcode') or SameText(Tag.TagName, 'img')) and
-     Tag.HasAttribute('width') then
+  if (SameText(Tag.TagName, 'qrcode') or SameText(Tag.TagName, 'img') or
+      SameText(Tag.TagName, 'svg')) and Tag.HasAttribute('width') then
     Result := TComputedStyle.ParseLength(Tag.GetAttribute('width'), 16);
   for c in Tag.Children do
   begin
@@ -1013,6 +1015,43 @@ var
       it.SpaceBefore := False;
       items.Add(it);
     end;
+    if SameText(T.TagName, 'svg') then
+    begin
+      it.Text := '';
+      it.Box := TLayoutBox.Create;
+      it.Box.Tag := T;
+      it.Box.Style := cs;
+      it.Box.IsSVG := True;
+      it.Box.SVGRoot := T;
+      // size: width/height attrs win, else viewBox aspect, else a default box
+      if cs.ExplicitWidth >= 0 then it.Box.W := cs.ExplicitWidth else it.Box.W := -1;
+      if cs.ExplicitHeight >= 0 then it.Box.H := cs.ExplicitHeight else it.Box.H := -1;
+      if (it.Box.W < 0) or (it.Box.H < 0) then
+      begin
+        if SVGIntrinsicSize(T, iw, ih) and (iw > 0) and (ih > 0) then
+        begin
+          if (it.Box.W < 0) and (it.Box.H < 0) then
+          begin it.Box.W := iw; it.Box.H := ih; end
+          else if it.Box.W < 0 then it.Box.W := iw * (it.Box.H / ih)
+          else it.Box.H := ih * (it.Box.W / iw);
+        end
+        else
+        begin
+          if it.Box.W < 0 then it.Box.W := 150;
+          if it.Box.H < 0 then it.Box.H := 150;
+        end;
+      end;
+      if it.Box.W > CW then
+      begin it.Box.H := it.Box.H * (CW / it.Box.W); it.Box.W := CW; end;
+      it.W := it.Box.W; it.H := it.Box.H;
+      it.FontSize := cs.FontSize; it.Styles := [];
+      it.Ascent := it.Box.H;
+      it.SpaceBefore := (items.Count > 0) and pendingSpace;
+      pendingSpace := False;
+      Box.Children.Add(it.Box);
+      items.Add(it);
+      Exit;
+    end;
     if SameText(T.TagName, 'qrcode') then
     begin
       it.Text := '';
@@ -1295,8 +1334,11 @@ begin
       end;
       // form control keeps its computed display: inline/inline-block flow inline,
       // block (e.g. Bootstrap .form-control) stacks full-width.
-      if (disp = 'inline') or (disp = 'inline-block') or SameText(c.TagName, 'img')
+      // img/svg/qrcode are replaced elements: always inline-atomic, never
+      // laid out as HTML children, whatever their display value
+      if SameText(c.TagName, 'img') or SameText(c.TagName, 'svg')
         or SameText(c.TagName, 'qrcode')
+        or (disp = 'inline') or (disp = 'inline-block')
         or (IsFormControlTag(c.TagName) and (disp <> 'block')) then
       begin
         GatherInline(c, ParentStyle);
@@ -1778,6 +1820,11 @@ begin
   if Box.IsQRCode then
   begin
     PaintQR(Canvas, Box, y);
+    Exit;
+  end;
+  if Box.IsSVG then
+  begin
+    if Box.SVGRoot <> nil then PaintSVG(Canvas, Box.SVGRoot, Box.X, y, Box.W, Box.H);
     Exit;
   end;
   if Box.IsImagePlaceholder then

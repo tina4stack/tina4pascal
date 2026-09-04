@@ -22,6 +22,9 @@ type
     LineHeight: Single;
   end;
 
+  TTina4Point = record X, Y: Single; end;
+  TTina4PointArray = array of TTina4Point;
+
   TTina4Canvas = class
   public
     { Extra spacing between characters (CSS letter-spacing), applied by
@@ -34,6 +37,13 @@ type
     procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); virtual;
     procedure StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color); virtual;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); virtual; abstract;
+    { Fills the area covered by one or more closed contours (device coords),
+      used by the SVG painter for circles, polygons and path shapes. EvenOdd
+      selects the even-odd rule; otherwise nonzero winding. The base class
+      does a portable software scanline fill emitting 1px FillRect spans, so
+      every backend works; shells may override for anti-aliasing. }
+    procedure FillPolygon(const Contours: array of TTina4PointArray;
+      Color: TTina4Color; EvenOdd: Boolean = False); virtual;
     { Draws text with (X,Y) as the TOP-LEFT of the text box. }
     procedure DrawText(X, Y: Single; const Text: string; FontSize: Single;
       Styles: TTina4FontStyles; Color: TTina4Color); virtual; abstract;
@@ -123,6 +133,87 @@ end;
 function TTina4Shell.CaptureCamera: string;
 begin
   Result := '';
+end;
+
+procedure TTina4Canvas.FillPolygon(const Contours: array of TTina4PointArray;
+  Color: TTina4Color; EvenOdd: Boolean);
+var
+  fMinY, fMaxY, yc, xI, tmpX: Single;
+  minY, maxY, y, i, j, n, cnt, wind, tmpW: Integer;
+  xs: array of Single;
+  ws: array of Integer;   // edge winding: +1 down, -1 up
+  a, b: TTina4Point;
+begin
+  fMinY := 1e30; fMaxY := -1e30;
+  for i := 0 to High(Contours) do
+    for j := 0 to High(Contours[i]) do
+    begin
+      if Contours[i][j].Y < fMinY then fMinY := Contours[i][j].Y;
+      if Contours[i][j].Y > fMaxY then fMaxY := Contours[i][j].Y;
+    end;
+  if fMaxY <= fMinY then Exit;
+  minY := Trunc(fMinY); maxY := Trunc(fMaxY) + 1;
+
+  for y := minY to maxY do
+  begin
+    yc := y + 0.5;
+    cnt := 0; SetLength(xs, 0); SetLength(ws, 0);
+    for i := 0 to High(Contours) do
+    begin
+      n := Length(Contours[i]);
+      if n < 2 then Continue;
+      for j := 0 to n - 1 do
+      begin
+        a := Contours[i][j];
+        b := Contours[i][(j + 1) mod n];
+        if a.Y = b.Y then Continue;               // horizontal: no crossing
+        if (a.Y <= yc) and (b.Y > yc) then
+        begin
+          xI := a.X + (yc - a.Y) / (b.Y - a.Y) * (b.X - a.X);
+          SetLength(xs, cnt + 1); SetLength(ws, cnt + 1);
+          xs[cnt] := xI; ws[cnt] := 1; Inc(cnt);
+        end
+        else if (b.Y <= yc) and (a.Y > yc) then
+        begin
+          xI := a.X + (yc - a.Y) / (b.Y - a.Y) * (b.X - a.X);
+          SetLength(xs, cnt + 1); SetLength(ws, cnt + 1);
+          xs[cnt] := xI; ws[cnt] := -1; Inc(cnt);
+        end;
+      end;
+    end;
+    if cnt < 2 then Continue;
+    // insertion sort intersections (and winding) by x
+    for i := 1 to cnt - 1 do
+    begin
+      tmpX := xs[i]; tmpW := ws[i]; j := i - 1;
+      while (j >= 0) and (xs[j] > tmpX) do
+      begin
+        xs[j + 1] := xs[j]; ws[j + 1] := ws[j]; Dec(j);
+      end;
+      xs[j + 1] := tmpX; ws[j + 1] := tmpW;
+    end;
+
+    if EvenOdd then
+    begin
+      i := 0;
+      while i + 1 < cnt do
+      begin
+        if xs[i + 1] > xs[i] then
+          FillRect(xs[i], y, xs[i + 1] - xs[i], 1, Color);
+        Inc(i, 2);
+      end;
+    end
+    else
+    begin
+      wind := 0;
+      for i := 0 to cnt - 2 do
+      begin
+        wind := wind + ws[i];
+        if (wind <> 0) and (xs[i + 1] > xs[i]) then
+          FillRect(xs[i], y, xs[i + 1] - xs[i], 1, Color);
+      end;
+    end;
+  end;
 end;
 
 procedure TTina4Canvas.FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color);
