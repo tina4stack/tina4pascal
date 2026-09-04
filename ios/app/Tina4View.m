@@ -15,6 +15,9 @@
     if ((self = [super initWithFrame:frame])) {
         self.contentMode = UIViewContentModeRedraw;   // redraw on resize/rotate
         self.multipleTouchEnabled = NO;
+        // the engine paints the safe area; the status-bar / home-indicator strips
+        // outside it show this colour — match the page background (--paper)
+        self.backgroundColor = [UIColor colorWithRed:0.984 green:0.980 blue:0.969 alpha:1.0];
     }
     return self;
 }
@@ -28,10 +31,17 @@
 
 - (void)drawRect:(CGRect)rect {
     CGContextRef ctx = UIGraphicsGetCurrentContext();
+    // Keep content out from under the status bar / notch / home indicator:
+    // shift the engine's origin into the safe area and hand it the inset size.
+    // (Touches are un-inset by the same amount in -send:touches:.)
+    UIEdgeInsets s = self.safeAreaInsets;
+    CGContextSaveGState(ctx);
+    CGContextTranslateCTM(ctx, s.left, s.top);
     // A drawRect context is top-left / y-down and in POINTS, matching the
     // engine's CSS-px space — so hand it points and density 1.
-    tina4_frame(ctx, (int)self.bounds.size.width,
-                     (int)self.bounds.size.height, 1.0f);
+    tina4_frame(ctx, (int)(self.bounds.size.width  - s.left - s.right),
+                     (int)(self.bounds.size.height - s.top  - s.bottom), 1.0f);
+    CGContextRestoreGState(ctx);
     // autofocus: the engine parses on the first frame, so poll here
     if (tina4_wants_keyboard()) [self showKeyboard];
 }
@@ -40,7 +50,8 @@
 
 - (void)send:(int)action touches:(NSSet<UITouch *> *)touches {
     CGPoint p = [[touches anyObject] locationInView:self];
-    int r = tina4_touch(action, p.x, p.y);
+    UIEdgeInsets s = self.safeAreaInsets;   // match the drawRect inset
+    int r = tina4_touch(action, p.x - s.left, p.y - s.top);
     if (r == TINA_SHOW_KBD)      [self showKeyboard];
     else if (r == TINA_FLING)    [self startFling];
     else if (r == TINA_PICK_FILE)[self pickFile];
