@@ -1,0 +1,32 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.tina4.pascal'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.tina4.pascal'
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+        ndk {
+            // the Pascal renderer is built for arm64 only (see build.sh)
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    // libtina4.so is prebuilt by the FPC cross-compiler into src/main/jniLibs
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

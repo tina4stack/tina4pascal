@@ -133,5 +133,5 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 3. **SVG** advanced: gradients, clip/mask, `<use>`, `<tspan>` positioning, dash arrays.
 4. **dialog**; inline `wbr`, `bdi/bdo`, `ruby`.
 5. Media (`video`, `audio`) — per-OS, lives in the shells; `canvas` needs a draw hook.
-6. On-device shells (iOS UIKit / Android) — the core cross-compiles today; a
-   device shell (like `Tina4ShellCocoa`) is what's missing to render on a phone.
+6. On-device shells: **Android** shell shipped (`Tina4ShellAndroid` →
+   `libtina4.so`, see `android/`); **iOS** (UIKit) still to do.
