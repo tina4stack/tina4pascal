@@ -888,7 +888,7 @@ var
   isCol: Boolean;
   dir, jc, ai: string;
   sumMain, freeMain, curr, gap, crossOff, usedFixed, sumGrow, targetW: Single;
-  lineW, lineH, lineFree, lx, lgap, lineY, totalH: Single;
+  lineW, lineH, lineFree, lx, lgap, lineY, totalH, flexGap: Single;
   baseW, growF: array of Single;
   sb: TStringBuilder;
   m: TTina4TextMetrics;
@@ -924,6 +924,7 @@ begin
 
   dir := LowerCase(st.FlexDirection); if dir = '' then dir := 'row';
   isCol := (dir = 'column') or (dir = 'column-reverse');
+  flexGap := st.FlexGap; if flexGap < 0 then flexGap := 0;   // CSS gap between items
   jc := LowerCase(st.JustifyContent); if jc = '' then jc := 'flex-start';
   ai := LowerCase(st.AlignItems); if ai = '' then ai := 'stretch';
 
@@ -984,7 +985,8 @@ begin
         usedFixed := usedFixed + baseW[i];
         sumGrow := sumGrow + growF[i];
       end;
-      freeMain := contentW - usedFixed; if freeMain < 0 then freeMain := 0;
+      freeMain := contentW - usedFixed - flexGap * Max(0, itemTags.Count - 1);
+      if freeMain < 0 then freeMain := 0;
       for i := 0 to itemTags.Count - 1 do
       begin
         cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
@@ -1032,8 +1034,10 @@ begin
       begin
         lineW := 0; lineEnd := i;
         while (lineEnd < items.Count) and
-              ((lineEnd = i) or (lineW + items[lineEnd].W <= contentW + 0.5)) do
+              ((lineEnd = i) or
+               (lineW + flexGap + items[lineEnd].W <= contentW + 0.5)) do
         begin
+          if lineEnd > i then lineW := lineW + flexGap;
           lineW := lineW + items[lineEnd].W;
           Inc(lineEnd);
         end;
@@ -1053,10 +1057,10 @@ begin
           else if (ai = 'flex-end') or (ai = 'end') then crossOff := lineH - cb.H
           else crossOff := 0;
           ShiftBoxTree(cb, contentX + lx, lineY + crossOff);
-          lx := lx + cb.W + lgap;
+          lx := lx + cb.W + lgap + flexGap;
         end;
-        lineY := lineY + lineH;
-        totalH := totalH + lineH;
+        lineY := lineY + lineH + flexGap;
+        totalH := totalH + lineH + flexGap;
         i := lineEnd;
       end;
       if totalH > contentH then contentH := totalH;
@@ -1072,6 +1076,7 @@ begin
       else sumMain := sumMain + items[i].W;
     if isCol then freeMain := contentH - sumMain
     else freeMain := contentW - sumMain;
+    freeMain := freeMain - flexGap * Max(0, items.Count - 1);   // reserve gaps
     if freeMain < 0 then freeMain := 0;
 
     curr := 0; gap := 0;
@@ -1093,7 +1098,7 @@ begin
         else if (ai = 'flex-end') or (ai = 'end') then crossOff := contentW - cb.W
         else crossOff := 0;
         ShiftBoxTree(cb, contentX + crossOff, contentY + curr);
-        curr := curr + cb.H + gap;
+        curr := curr + cb.H + gap + flexGap;
       end
       else
       begin
@@ -1102,7 +1107,7 @@ begin
         else if (ai = 'flex-end') or (ai = 'end') then crossOff := contentH - cb.H
         else crossOff := 0;
         ShiftBoxTree(cb, contentX + curr, contentY + crossOff);
-        curr := curr + cb.W + gap;
+        curr := curr + cb.W + gap + flexGap;
       end;
     end;
 
