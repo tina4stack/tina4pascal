@@ -74,6 +74,26 @@ RegisterAction('Counter:Inc', @Inc_);   // name = "Object:Method"
 
 ---
 
+## Templates (Frond)
+
+Tina4's Twig-compatible engine, rendering against a JSON context (`fpjson`) —
+which lines up with the doc store and API responses.
+
+```pascal
+uses Tina4Frond, fpjson, jsonparser;
+f := TFrond.Create('templates');                 // dir for include/extends
+ctx := TJSONObject(GetJSON('{"title":"Hi","items":[...]}'));
+html := f.RenderString('<h1>{{ title | upper }}</h1>' +
+  '{% for it in items %}<li>{{ it.name }} {{ it.price | number_format(2) }}</li>{% endfor %}', ctx);
+```
+
+`{{ var }}` (dotted paths, `arr.0`, auto-escaped; `| raw` to opt out) · filters
+`upper lower trim length default(x) join(s) number_format(n) truncate(n) replace
+first last nl2br` · `{% if/elseif/else/endif %}` (`== != < > <= >= and or not in`)
+· `{% for x in list %}` with `loop.index/index0/first/last/length` · `{% set %}` ·
+`{% include "f.twig" %}` · `{% extends %}`+`{% block %}` inheritance · comments
+`{# #}` · whitespace control `{%- -%}` · `AddFilter` / `AddGlobal`.
+
 ## HTML / CSS you can use
 
 Blocks & inline, flexbox (`display:flex`, `gap`, `align-items`, `flex-wrap`),
