@@ -17,20 +17,32 @@ import android.view.inputmethod.InputMethodManager;
  * the Pascal core lays out the HTML and paints straight onto it. Touches drive
  * scrolling / onclick natively; typed characters are forwarded to nativeKey.
  */
-public class Tina4View extends View {
+public class Tina4View extends View implements Runnable {
 
     static { System.loadLibrary("tina4"); }
 
     private native void nativeSetHtml(String html);
-    private native void nativePaint(Canvas canvas, int w, int h);
+    private native void nativePaint(Canvas canvas, int w, int h, float density);
     private native int  nativeTouch(int action, float x, float y);
+    private native int  nativeTick();
     native void nativeKey(int codepoint);   // package-visible for KeyInput
+
+    private final float density;
 
     public Tina4View(Context context) {
         super(context);
+        density = getResources().getDisplayMetrics().density;
         setFocusable(true);
         setFocusableInTouchMode(true);
     }
+
+    // fling: the native side decays the velocity; we re-post each frame
+    @Override
+    public void run() {
+        if (nativeTick() != 0) { invalidate(); postOnAnimation(this); }
+    }
+    private void startFling() { removeCallbacks(this); postOnAnimation(this); }
+    private void stopFling()  { removeCallbacks(this); }
 
     public void setHtml(String html) {
         nativeSetHtml(html);
@@ -39,14 +51,14 @@ public class Tina4View extends View {
 
     @Override
     protected void onDraw(Canvas canvas) {
-        nativePaint(canvas, getWidth(), getHeight());
+        nativePaint(canvas, getWidth(), getHeight(), density);
     }
 
     @Override
     public boolean onTouchEvent(MotionEvent e) {
         int action;
         switch (e.getActionMasked()) {
-            case MotionEvent.ACTION_DOWN: action = 0; requestFocus(); break;
+            case MotionEvent.ACTION_DOWN: action = 0; requestFocus(); stopFling(); break;
             case MotionEvent.ACTION_UP:   action = 1; break;
             case MotionEvent.ACTION_MOVE: action = 2; break;
             default: return true;
@@ -54,6 +66,7 @@ public class Tina4View extends View {
         int r = nativeTouch(action, e.getX(), e.getY());
         if (r == 1) showKeyboard();
         else if (r == 2) hideKeyboard();
+        else if (r == 3) startFling();
         invalidate();
         return true;
     }

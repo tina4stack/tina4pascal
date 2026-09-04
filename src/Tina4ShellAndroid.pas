@@ -35,7 +35,7 @@ type
     styleFill, styleStroke, fillWinding, fillEvenOdd: jobject;
     // Canvas methods
     mDrawRect, mDrawLine, mDrawText, mDrawPath, mDrawRoundRect,
-    mSave, mRestore, mClipRect: jmethodID;
+    mSave, mRestore, mClipRect, mScale: jmethodID;
     // Paint methods
     mPaintInit, mSetColor, mSetStyle, mSetStrokeWidth, mSetAntiAlias,
     mSetTextSize, mMeasureText, mAscent, mDescent, mSetFakeBold,
@@ -65,6 +65,7 @@ type
     procedure ClearClip; override;
     procedure SaveState; override;
     procedure RestoreState; override;
+    procedure Scale(SX, SY: Single); override;
   end;
 
   { Minimal shell: the Java View owns the window/run loop, so most of the
@@ -146,6 +147,7 @@ begin
   mSave := MID(clsCanvas, 'save', '()I');
   mRestore := MID(clsCanvas, 'restore', '()V');
   mClipRect := MID(clsCanvas, 'clipRect', '(FFFF)Z');
+  mScale := MID(clsCanvas, 'scale', '(FF)V');
 
   // Paint
   mPaintInit := MID(clsPaint, '<init>', '()V');
@@ -351,6 +353,13 @@ end;
 procedure TAndroidCanvas.RestoreState;
 begin
   FEnv^.CallVoidMethodA(FEnv, FCanvas, mRestore, nil);
+end;
+
+procedure TAndroidCanvas.Scale(SX, SY: Single);
+var a: array[0..1] of jvalue;
+begin
+  a[0].f := SX; a[1].f := SY;
+  FEnv^.CallVoidMethodA(FEnv, FCanvas, mScale, @a[0]);
 end;
 
 { ---- shell ------------------------------------------------------------- }

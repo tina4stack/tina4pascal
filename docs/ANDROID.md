@@ -6,9 +6,10 @@ The renderer runs on Android as a native `libtina4.so` that draws through
 things that cost hours the first time.
 
 **Status:** verified on a real 32-bit (`armeabi-v7a`) device. Static rendering
-(text/type/lists/tables/SVG/QR), **scrolling** (touch drag), **button actions**
-(`onclick` → hit-test → native handler → re-render) and **text input** (soft
-keyboard via `InputConnection` + key events → native state) all work. The
+(text/type/lists/tables/SVG/QR), **density-correct sizing**, **scrolling with
+momentum/fling**, **button actions** routed through `Tina4Events`
+(`onclick="Counter:Inc()"` → registered handler → re-render), and **text
+input** (soft keyboard via `InputConnection` + key events) all work. The
 built-in demo is `MainActivity` calling `setHtml("@demo")`.
 
 ## One-command flow
@@ -100,6 +101,25 @@ builds both by default.
     scroll offset + focus + demo state, turns `nativeTouch` deltas into scroll
     and taps into `HitTest` → `onclick`, and `nativeKey` into edits — then
     re-lays-out from the (regenerated) HTML. Same model as the desktop viewer.
+
+13. **Density: lay out in CSS px, scale the canvas.** Android hands you physical
+    pixels; a 720px screen at 320dpi is a 360-CSS-px phone (`density` 2.0).
+    Render 1:1 and everything is half-size and unreadable. Fix: `nativePaint`
+    receives `getDisplayMetrics().density`, lays out at `px/density`, and
+    `Canvas.scale(density,density)` so CSS px map to physical px. Touch coords
+    are divided by density back into CSS space. This is also what makes media
+    queries see a phone-width viewport.
+
+14. **Momentum needs a per-frame tick from Java.** Native tracks a smoothed
+    velocity during the drag; on lift it returns "start fling", and Java re-posts
+    a `Runnable` (`postOnAnimation`) that calls `nativeTick()` each frame until
+    the native side (friction `×0.92`, stop at bounds) returns 0. Make the View
+    `implements Runnable` — no anonymous class (learning 10).
+
+15. **onclick is routed, not hardcoded.** `src/Tina4Events.pas` is a shared
+    registry: the app `RegisterAction('Counter:Inc', @proc)`, the shell
+    `DispatchAction('Counter:Inc()')` parses `name(args)` and calls it. The
+    renderer only surfaces the string — the Tina4 object:method(params) model.
 
 ## Building the 32-bit arm cross (one-time)
 
