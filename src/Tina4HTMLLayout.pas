@@ -776,20 +776,20 @@ begin
   if ph <> '' then run.Text := ph;
   if run.Text <> '' then
   begin
-    run.X := St.BorderWidths.Left + St.Padding.Left;
-    // vertically centre the single-line caption/value in the control box so
-    // top/bottom padding read as uniform (buttons, inputs, file, select). The
-    // +0.12em nudge optically centres for DrawText's top-of-glyph origin.
-    run.Y := Max(St.BorderWidths.Top,
-      (Result.H - St.FontSize) / 2);
     run.FontSize := St.FontSize;
     run.Styles := FontStylesOf(St);
+    m := FCanvas.MeasureText(run.Text, St.FontSize, run.Styles);
+    run.X := St.BorderWidths.Left + St.Padding.Left;
+    // vertically centre the single-line caption/value in the control box so
+    // top/bottom padding read as uniform (buttons, inputs, file, select).
+    // Centre the glyph's OWN box (ascent+descent, per the backend's metrics),
+    // not a FontSize-tall box — those differ per font, which is what left the
+    // "Choose File"/"Take Photo" captions off-centre on Core Text.
+    run.Y := Max(St.BorderWidths.Top,
+      (Result.H - (m.Ascent + m.Descent)) / 2);
     if ph <> '' then run.Color := $FF9CA3AF else run.Color := St.Color; run.LetterSpacing := 0;
-    if kind = ckButton then
-    begin // center button captions
-      m := FCanvas.MeasureText(run.Text, St.FontSize, run.Styles);
+    if kind = ckButton then    // centre button captions horizontally too
       run.X := (Result.W - m.Width) / 2;
-    end;
     Result.Runs.Add(run);
   end;
 end;
