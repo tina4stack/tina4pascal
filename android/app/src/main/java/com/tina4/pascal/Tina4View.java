@@ -84,11 +84,8 @@ public class Tina4View extends View implements Runnable {
         setFocusableInTouchMode(true);
     }
 
-    private boolean pendingKeyboard;
-
     public void setHtml(String html) {
         nativeSetHtml(html);
-        pendingKeyboard = nativeWantsKeyboard() != 0;   // autofocus
         invalidate();
     }
 
@@ -104,8 +101,9 @@ public class Tina4View extends View implements Runnable {
     @Override
     protected void onDraw(Canvas canvas) {
         nativePaint(canvas, getWidth(), getHeight(), density);
-        // autofocus: first real frame is the reliable moment to raise the kbd
-        if (pendingKeyboard) { pendingKeyboard = false; showKeyboard(); }
+        // autofocus: the engine parses on the first frame, so poll here (it
+        // returns 1 exactly once, after an input[autofocus] has been focused)
+        if (nativeWantsKeyboard() != 0) showKeyboard();
     }
 
     @Override
