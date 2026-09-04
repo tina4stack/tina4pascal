@@ -107,9 +107,39 @@ token := StoreGetDef('token', '');
 StoreDelete('token');
 ```
 
-Roadmap (shell-delegated, async — need the platform's TLS/socket stack):
-`Http.Get/Post`, `WebSocket.Connect`, and a document store. **Storage
-recommendation:** default to the pure-Pascal KV/document store (zero
+### HTTP / API (async)
+
+Fetches and pushes (REST) without blocking the UI. A request runs on a worker
+thread; the result is queued and your callback fires **on the main thread** from
+`HttpPump` (which the shell calls each frame) — so the callback may touch the DOM
+like a tap handler.
+
+```pascal
+uses Tina4Http, Tina4HttpFPC;   // desktop backend (OpenSSL); mobile uses native TLS
+
+InstallFPCHttp;                 // once (desktop). App needs cthreads on Unix.
+HttpGet('https://api…/thing', @OnThing);
+HttpPost('https://api…/thing', json, 'application/json', @OnSaved);
+// HttpRequest('PUT'|'DELETE'|…, url, body, ctype, @cb) for the rest
+
+procedure OnThing(const R: TTina4HttpResponse);
+begin
+  if R.Ok then SetElemText(FindById(Root,'x'), R.Body)   // R.Status / R.Body / R.Error
+  else ...;
+end;
+```
+
+**TLS by platform (this is deliberate):** desktop = FPC + OpenSSL
+(`Tina4HttpFPC`); **iOS/Android = the platform's native stack** (NSURLSession /
+HttpURLConnection) — so there's **no OpenSSL to ship on mobile**, which sidesteps
+the Android SSL grief. macOS dev needs `brew install openssl` for the desktop
+backend.
+
+### Roadmap
+
+`WebSocket.Connect` (shell-delegated, same pump model), remote `<link>` CSS +
+theme distribution and `<embed src>` (both ride on HTTP + cache), and a document
+store. **Storage:** default to the pure-Pascal KV/document store (zero
 dependency, identical on every target); reach for **SQLite only as the vendored
 amalgamation** (compile `sqlite3.c` in — no system/NDK lib) when you need real
 SQL. Don't link the OS's system sqlite (fine on Apple, painful on Android).
