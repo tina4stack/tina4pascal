@@ -50,6 +50,9 @@ procedure TinaFrame(WPx, HPx: Integer; Density: Single);
 { A touch: Action 0=down, 1=up, 2=move; X/Y in physical pixels. Returns one of
   the TINA_* codes. }
 function TinaTouch(Action: Integer; X, Y: Single): Integer;
+{ Wheel/trackpad scroll by (DX,DY) at (X,Y) device px — scrolls the box under
+  the cursor, or the page. (Desktop shells deliver deltas; the engine scrolls.) }
+procedure TinaScrollBy(X, Y, DX, DY: Single);
 { Advance momentum one frame; 1 = keep animating. }
 function TinaTick: Integer;
 { 1 once if the just-loaded document autofocused an input (raise the keyboard). }
@@ -645,6 +648,27 @@ begin
            DispatchAction(ctrl.GetAttribute('onclick'));
          end;
        end;
+  end;
+end;
+
+procedure TinaScrollBy(X, Y, DX, DY: Single);
+var cx, cy: Single; sb: TLayoutBox;
+begin
+  if GRoot = nil then Exit;
+  cx := X / GDensity; cy := Y / GDensity;
+  sb := FindScrollBox(GRoot, cx, cy + GScrollY);
+  if (sb <> nil) and (sb <> GRoot) and
+     ((sb.ScrollableX and (sb.MaxScrollX > 0)) or (sb.Scrollable and (sb.MaxScroll > 0))) then
+  begin
+    if sb.ScrollableX and (sb.MaxScrollX > 0) then
+      sb.ScrollLeft := Max(0, Min(sb.MaxScrollX, sb.ScrollLeft - DX));
+    if sb.Scrollable and (sb.MaxScroll > 0) then
+      sb.ScrollTop := Max(0, Min(sb.MaxScroll, sb.ScrollTop - DY));
+  end
+  else
+  begin
+    GScrollY := GScrollY - DY;
+    ClampScroll;
   end;
 end;
 
