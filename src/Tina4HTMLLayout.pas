@@ -94,6 +94,13 @@ type
     procedure RefreshStyles(Box: TLayoutBox; const ParentStyle: TComputedStyle); overload;
   end;
 
+{ Caret blink phase for focused text inputs. The shell toggles this on a
+  ~500ms timer and repaints; when False the caret is not painted. }
+var
+  Tina4CaretVisible: Boolean = True;
+  { Persistent scrollbar thumbs. Shells can disable them (mobile convention). }
+  Tina4ScrollbarsVisible: Boolean = True;
+
 procedure PaintBox(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single);
 function HitTest(Box: TLayoutBox; X, Y: Single): THTMLTag;
 { Deepest overflow-scrollable box containing the point (doc coords). }
@@ -347,7 +354,10 @@ begin
   begin
     run.Text := txt;
     run.X := St.BorderWidths.Left + St.Padding.Left; // relative for now
-    run.Y := St.BorderWidths.Top + St.Padding.Top;
+    // centre the single line in the box (matches MakeControl) so a padded
+    // inline-block used as a button reads with even top/bottom padding
+    run.Y := Max(St.BorderWidths.Top,
+      (Result.H - St.FontSize) / 2);
     run.FontSize := St.FontSize;
     run.Styles := FontStylesOf(St);
     run.Color := St.Color; run.LetterSpacing := 0;
@@ -737,7 +747,11 @@ begin
   if run.Text <> '' then
   begin
     run.X := St.BorderWidths.Left + St.Padding.Left;
-    run.Y := St.BorderWidths.Top + St.Padding.Top;
+    // vertically centre the single-line caption/value in the control box so
+    // top/bottom padding read as uniform (buttons, inputs, file, select). The
+    // +0.12em nudge optically centres for DrawText's top-of-glyph origin.
+    run.Y := Max(St.BorderWidths.Top,
+      (Result.H - St.FontSize) / 2);
     run.FontSize := St.FontSize;
     run.Styles := FontStylesOf(St);
     if ph <> '' then run.Color := $FF9CA3AF else run.Color := St.Color; run.LetterSpacing := 0;
@@ -2192,13 +2206,13 @@ begin
   if didClip then
   begin
     Canvas.ClearClip;
-    if Box.Scrollable and (Box.MaxScroll > 0) then
+    if Tina4ScrollbarsVisible and Box.Scrollable and (Box.MaxScroll > 0) then
     begin // vertical scrollbar thumb, right edge
       thumbH := Box.H * (Box.H / (Box.H + Box.MaxScroll));
       thumbY := y + (Box.ScrollTop / Box.MaxScroll) * (Box.H - thumbH);
       Canvas.FillRoundRect(Box.X + Box.W - 7, thumbY, 4, thumbH, 2, $50000000);
     end;
-    if Box.ScrollableX and (Box.MaxScrollX > 0) then
+    if Tina4ScrollbarsVisible and Box.ScrollableX and (Box.MaxScrollX > 0) then
     begin // horizontal scrollbar thumb, bottom edge
       thumbW := Box.W * (Box.W / (Box.W + Box.MaxScrollX));
       thumbX := Box.X + (Box.ScrollLeft / Box.MaxScrollX) * (Box.W - thumbW);
@@ -2209,7 +2223,8 @@ begin
   // caret + select arrow for the focused/dropdown controls
   if (Box.Tag <> nil) then
   begin
-    if (Box.ControlKind in [ckTextInput, ckTextarea]) and Box.Tag.IsFocused then
+    if (Box.ControlKind in [ckTextInput, ckTextarea]) and Box.Tag.IsFocused
+       and Tina4CaretVisible then
     begin
       if Box.ControlKind = ckTextarea then
         val := Box.Tag.GetAttribute('value', InnerText(Box.Tag))

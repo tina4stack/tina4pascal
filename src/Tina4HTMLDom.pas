@@ -1396,6 +1396,18 @@ begin
           else if Entity = 'raquo' then Builder.Append(CodePointToUTF8(187))
           else if Entity = 'bull' then Builder.Append(CodePointToUTF8(8226))
           else if Entity = 'hellip' then Builder.Append(CodePointToUTF8(8230))
+          else if Entity = 'minus' then Builder.Append(CodePointToUTF8(8722))
+          else if Entity = 'times' then Builder.Append(CodePointToUTF8(215))
+          else if Entity = 'divide' then Builder.Append(CodePointToUTF8(247))
+          else if Entity = 'plusmn' then Builder.Append(CodePointToUTF8(177))
+          else if Entity = 'deg' then Builder.Append(CodePointToUTF8(176))
+          else if Entity = 'middot' then Builder.Append(CodePointToUTF8(183))
+          else if Entity = 'check' then Builder.Append(CodePointToUTF8(10003))
+          else if Entity = 'larr' then Builder.Append(CodePointToUTF8(8592))
+          else if Entity = 'uarr' then Builder.Append(CodePointToUTF8(8593))
+          else if Entity = 'rarr' then Builder.Append(CodePointToUTF8(8594))
+          else if Entity = 'darr' then Builder.Append(CodePointToUTF8(8595))
+          else if Entity = 'harr' then Builder.Append(CodePointToUTF8(8596))
           else if Entity.StartsWith('#x') then
           begin
             if TryStrToInt('$' + Entity.Substring(2), CodePoint) and (CodePoint > 0) then

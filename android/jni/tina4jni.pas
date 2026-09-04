@@ -102,7 +102,7 @@ procedure ActInc(const Args: string);   begin Inc(GCount); end;
 procedure ActDec(const Args: string);   begin Dec(GCount); end;
 procedure ActReset(const Args: string); begin GCount := 0; end;
 procedure ActFocus(const Args: string);
-begin GInputFocused := True; GWantKeyboard := True; end;
+begin GInputFocused := True; GWantKeyboard := True; Tina4CaretVisible := True; end;
 
 procedure EnsureActions;
 begin
@@ -115,6 +115,17 @@ begin
 end;
 
 function BodyBg: TTina4Color; begin Result := $FFFBFAF7; end;
+
+{ mark the first <input> under Node as focused (drives the core's caret) }
+function FocusInputTag(Node: THTMLTag): Boolean;
+var c: THTMLTag;
+begin
+  Result := False;
+  if Node = nil then Exit;
+  if SameText(Node.TagName, 'input') then begin Node.IsFocused := True; Exit(True); end;
+  for c in Node.Children do
+    if FocusInputTag(c) then Exit(True);
+end;
 
 procedure Relayout(Env: PJNIEnv; W: Single);
 var i: Integer;
@@ -132,6 +143,9 @@ begin
   GRoot := GEngine.Build(GParser.Root, W);
   GLayoutW := W;
   GDirty := False;
+  // re-apply focus to the input tag (a rebuild makes fresh DOM nodes) so the
+  // core paints its caret
+  if GInputFocused then FocusInputTag(GParser.Root);
 end;
 
 function MaxScroll: Single;
@@ -180,6 +194,7 @@ begin
   begin
     GCanvas := TAndroidCanvas.Create(Env);
     GShell := TAndroidShell.Create(GCanvas);
+    Tina4ScrollbarsVisible := False;   // mobile: clean edge-to-edge scrolling
   end;
   if Density > 0 then GDensity := Density;
   cssW := W / GDensity; cssH := H / GDensity;
@@ -299,6 +314,16 @@ end;
 procedure Java_com_tina4_pascal_Tina4View_nativeBlur(Env: PJNIEnv; This: jobject); cdecl;
 begin
   GInputFocused := False;
+  GDirty := True;   // rebuild drops the input's IsFocused → caret disappears
+end;
+
+{ Toggle the caret blink phase; returns 1 while an input is focused so Java
+  keeps the blink timer running. }
+function Java_com_tina4_pascal_Tina4View_nativeBlinkCaret(Env: PJNIEnv; This: jobject): jint; cdecl;
+begin
+  if not GInputFocused then begin Tina4CaretVisible := True; Exit(0); end;
+  Tina4CaretVisible := not Tina4CaretVisible;
+  Result := 1;
 end;
 
 procedure Java_com_tina4_pascal_Tina4View_nativeKey(Env: PJNIEnv; This: jobject;
@@ -321,6 +346,7 @@ exports
   Java_com_tina4_pascal_Tina4View_nativeTick,
   Java_com_tina4_pascal_Tina4View_nativeWantsKeyboard,
   Java_com_tina4_pascal_Tina4View_nativeBlur,
+  Java_com_tina4_pascal_Tina4View_nativeBlinkCaret,
   Java_com_tina4_pascal_Tina4View_nativeKey;
 
 begin

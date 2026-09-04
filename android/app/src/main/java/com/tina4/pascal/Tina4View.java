@@ -27,10 +27,25 @@ public class Tina4View extends View implements Runnable {
     private native int  nativeTick();
     private native int  nativeWantsKeyboard();
     private native void nativeBlur();
+    private native int  nativeBlinkCaret();
     native void nativeKey(int codepoint);   // package-visible for KeyInput
 
     // IME "Done": drop focus + hide the keyboard
-    void imeDone() { nativeBlur(); hideKeyboard(); invalidate(); }
+    void imeDone() { nativeBlur(); hideKeyboard(); stopCaret(); invalidate(); }
+
+    // blinking text caret while an input is focused. Static nested class (with
+    // an explicit view ref) — d8 8.2.2 chokes on JDK-25 non-static/anon classes.
+    private final Blinker blinker = new Blinker(this);
+    private static final class Blinker implements Runnable {
+        private final Tina4View v;
+        Blinker(Tina4View v) { this.v = v; }
+        public void run() {
+            if (v.nativeBlinkCaret() != 0) { v.invalidate(); v.postDelayed(this, 500); }
+            else v.invalidate();
+        }
+    }
+    private void startCaret() { removeCallbacks(blinker); postDelayed(blinker, 500); }
+    private void stopCaret()  { removeCallbacks(blinker); }
 
     private final float density;
 
@@ -87,6 +102,7 @@ public class Tina4View extends View implements Runnable {
         InputMethodManager imm =
             (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
         if (imm != null) imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
+        startCaret();   // begin blinking the input caret
     }
 
     private void hideKeyboard() {
