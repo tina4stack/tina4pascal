@@ -1,0 +1,282 @@
+#!/bin/sh
+# tina4pascal — developer CLI for the Tina4Pascal native HTML renderer.
+#
+#   tina4pascal <command> [args]
+#
+# One entry point to check the toolchain, DOWNLOAD what's missing, and build /
+# test / run / package for every target from this Mac. Pure POSIX sh.
+set -eu
+
+# ---- locations ---------------------------------------------------------------
+SELF="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SELF/.." && pwd)"
+SRC="$ROOT/src"
+BUILD="$ROOT/build"
+
+FPC_HOME="${FPC_HOME:-$HOME/fpc}"
+FPC="$FPC_HOME/bin/fpc"
+export PPC_CONFIG_PATH="${PPC_CONFIG_PATH:-$FPC_HOME/etc}"
+
+# Android SDK / NDK (brew-cask defaults; override with env)
+ANDROID_SDK="${ANDROID_SDK:-${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}}"
+ANDROID_NDK="${ANDROID_NDK:-/opt/homebrew/share/android-ndk}"
+BT_VER="34.0.0"; PLATFORM_VER="android-34"
+
+# ---- pretty ------------------------------------------------------------------
+if [ -t 1 ]; then B="$(printf '\033[1m')"; D="$(printf '\033[2m')"; G="$(printf '\033[32m')"; Y="$(printf '\033[33m')"; R="$(printf '\033[31m')"; Z="$(printf '\033[0m')"; else B=; D=; G=; Y=; R=; Z=; fi
+say()  { printf '%s\n' "$*"; }
+ok()   { printf '%s✓%s %s\n' "$G" "$Z" "$*"; }
+warn() { printf '%s!%s %s\n' "$Y" "$Z" "$*"; }
+bad()  { printf '%s✗%s %s\n' "$R" "$Z" "$*"; }
+die()  { bad "$*"; exit 1; }
+
+# ---- target compiler flags ---------------------------------------------------
+# echoes the FPC flags for a target name, or nothing if unknown
+target_flags() {
+  case "$1" in
+    macos|darwin)   echo "" ;;
+    windows|win64)  echo "-Twin64 -Px86_64" ;;
+    linux|linux64)  echo "-Tlinux -Px86_64" ;;
+    linux-arm64)    echo "-Tlinux -Paarch64" ;;
+    android)        echo "-Tandroid -Paarch64" ;;
+    ios)            echo "-Tios -Paarch64" ;;
+    *) return 1 ;;
+  esac
+}
+ALL_TARGETS="macos windows linux linux-arm64 android ios"
+
+need_fpc() { [ -x "$FPC" ] || die "FPC not found at $FPC — run: tina4pascal setup fpc"; }
+
+# ---- doctor ------------------------------------------------------------------
+cmd_doctor() {
+  say "${B}Tina4Pascal toolchain${Z}   ${D}$ROOT${Z}"
+  say ""
+  say "${B}Free Pascal${Z}"
+  if [ -x "$FPC" ]; then
+    ok "fpc  $("$FPC" -iV 2>/dev/null)   ${D}$FPC${Z}"
+    for t in $ALL_TARGETS; do
+      f="$(target_flags "$t")"
+      if echo | "$FPC" $f -iTP >/dev/null 2>&1; then ok "  target $t"; else warn "  target $t (cross RTL missing)"; fi
+    done
+  else
+    bad "fpc missing → tina4pascal setup fpc"
+  fi
+  say ""
+  say "${B}Android${Z}"
+  [ -x "$ANDROID_SDK/build-tools/$BT_VER/aapt2" ] && ok "build-tools $BT_VER" || warn "SDK build-tools missing → tina4pascal setup android"
+  [ -f "$ANDROID_SDK/platforms/$PLATFORM_VER/android.jar" ] && ok "platform $PLATFORM_VER" || warn "SDK platform missing → tina4pascal setup android"
+  [ -e "$ANDROID_NDK/toolchains" ] && ok "NDK  ${D}$ANDROID_NDK${Z}" || warn "NDK missing → tina4pascal setup android"
+  if command -v adb >/dev/null 2>&1; then
+    n="$(adb devices 2>/dev/null | grep -cw device || true)"
+    [ "${n:-0}" -gt 0 ] && ok "adb — $n device(s) attached" || warn "adb — no devices attached"
+  else warn "adb not on PATH"; fi
+  say ""
+  say "${B}Java${Z}"
+  command -v java >/dev/null 2>&1 && ok "$(java -version 2>&1 | head -1)" || warn "java missing (needed to package APKs)"
+}
+
+# ---- setup (downloads) -------------------------------------------------------
+cmd_setup() {
+  what="${1:-all}"
+  case "$what" in
+    fpc)     setup_fpc ;;
+    android) setup_android ;;
+    all)     setup_fpc; setup_android ;;
+    *) die "setup: unknown component '$what' (fpc | android | all)" ;;
+  esac
+}
+
+setup_fpc() {
+  if [ -x "$FPC" ]; then ok "FPC already at $FPC_HOME"; return; fi
+  warn "FPC + cross-compilers are built from source (20+ pitfalls solved once)."
+  say  "  Follow docs/TOOLCHAIN.md, or run the formula:"
+  say  "    sh $ROOT/toolchain/build-crosses.sh"
+  say  "  (Homebrew's fpc is native-only — no cross RTLs — so it won't do.)"
+}
+
+setup_android() {
+  command -v brew >/dev/null 2>&1 || die "Homebrew required to fetch the Android toolchain"
+  if [ ! -x "$ANDROID_SDK/cmdline-tools/latest/bin/sdkmanager" ] && ! command -v sdkmanager >/dev/null 2>&1; then
+    say "→ installing Android command-line tools…"
+    brew install --cask android-commandlinetools
+  fi
+  if [ ! -e "$ANDROID_NDK/toolchains" ]; then
+    say "→ installing Android NDK…"
+    brew install --cask android-ndk
+  fi
+  SM="$ANDROID_SDK/cmdline-tools/latest/bin/sdkmanager"
+  [ -x "$SM" ] || SM="$(command -v sdkmanager)"
+  JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home 2>/dev/null || true)}"; export JAVA_HOME
+  say "→ accepting licenses + installing platform/build-tools…"
+  yes | "$SM" --licenses >/dev/null 2>&1 || true
+  "$SM" "platforms;$PLATFORM_VER" "build-tools;$BT_VER" "platform-tools" >/dev/null
+  ok "Android toolchain ready"
+  cmd_doctor | sed -n '/Android/,/Java/p'
+}
+
+# ---- build -------------------------------------------------------------------
+# build a Pascal program for a target into build/<target>/
+build_prog() {
+  target="$1"; prog="$2"
+  flags="$(target_flags "$target")" || die "unknown target '$target'"
+  need_fpc
+  outdir="$BUILD/$target"; mkdir -p "$outdir"
+  say "${D}fpc $flags $(basename "$prog")${Z}"
+  "$FPC" -Mdelphi -O2 -Xs $flags -Fu"$SRC" -FE"$outdir" -FU"$outdir" "$prog" 2>&1 \
+    | grep -Ei "error|fatal" && die "build failed" || true
+}
+
+cmd_build() {
+  target="${1:-macos}"
+  case "$target" in
+    macos)
+      build_prog macos "$ROOT/examples/htmlviewer/htmlviewer.pas"
+      ok "macOS viewer → $BUILD/macos/htmlviewer" ;;
+    android)
+      sh "$ROOT/android/build.sh" ;;
+    windows|linux|linux-arm64|ios)
+      # no GUI shell for these yet — compile the core test as a link smoke test
+      build_prog "$target" "$ROOT/tests/test_dom.pas"
+      ok "$target core builds (headless smoke test)" ;;
+    all)
+      for t in $ALL_TARGETS; do say "${B}— $t —${Z}"; cmd_build "$t"; done ;;
+    *) die "build: unknown target '$target' ($ALL_TARGETS | all)" ;;
+  esac
+}
+
+# ---- test / run / snapshot / compliance -------------------------------------
+cmd_test() {
+  need_fpc
+  fail=0
+  for t in dom qr svg picture; do
+    [ -f "$ROOT/tests/test_$t.pas" ] || continue
+    o="$BUILD/test/$t"; mkdir -p "$o"
+    "$FPC" -Mdelphi -Fu"$SRC" -FE"$o" -FU"$o" "$ROOT/tests/test_$t.pas" >/dev/null 2>&1 \
+      || { bad "test_$t build failed"; fail=1; continue; }
+    if "$o/test_$t" >/dev/null 2>&1; then ok "test_$t"; else bad "test_$t FAILED"; fail=1; fi
+  done
+  [ "$fail" -eq 0 ] && ok "all suites pass" || die "some suites failed"
+}
+
+cmd_run() {
+  cmd_build macos
+  page="${1:-$ROOT/examples/pages/bootstrap_test.html}"
+  say "→ $page"
+  ( cd "$ROOT/examples/htmlviewer" && exec "$BUILD/macos/htmlviewer" "$page" )
+}
+
+cmd_snapshot() {
+  [ $# -ge 2 ] || die "usage: tina4pascal snapshot <page.html> <out.png>"
+  cmd_build macos
+  ( cd "$(dirname "$1")" && "$BUILD/macos/htmlviewer" "$(basename "$1")" --snapshot "$2" )
+  ok "wrote $2"
+}
+
+cmd_compliance() { sh "$ROOT/tools/run-compliance.sh" "${1:-*}"; }
+
+# ---- android apk / deploy ----------------------------------------------------
+cmd_apk() {
+  sh "$ROOT/android/build.sh"
+  ANDROID_SDK="$ANDROID_SDK" sh "$ROOT/android/build-apk.sh"
+}
+
+cmd_deploy() {
+  command -v adb >/dev/null 2>&1 || die "adb not found"
+  [ "$(adb devices | grep -cw device)" -gt 0 ] || die "no device attached (adb devices)"
+  cmd_apk
+  say "→ installing…"
+  adb install -r "$ROOT/android/tina4pascal-debug.apk"
+  adb shell am start -n com.tina4.pascal/.MainActivity
+  ok "launched on device"
+}
+
+cmd_clean() { rm -rf "$BUILD" "$ROOT/android/out" "$ROOT/android/tina4pascal-debug.apk"; ok "cleaned"; }
+
+# ---- device screenshot / logs / debug loop ----------------------------------
+adb_have_device() { [ "$(adb devices | grep -cw device)" -gt 0 ]; }
+
+cmd_screenshot() {
+  adb_have_device || die "no device attached (adb devices)"
+  out="${1:-$ROOT/build/device.png}"; mkdir -p "$(dirname "$out")"
+  # wake + focus first, or a slept screen captures pure black
+  adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+  adb shell am start -n com.tina4.pascal/.MainActivity >/dev/null 2>&1 || true
+  sleep 1
+  adb exec-out screencap -p > "$out"
+  ok "screenshot → $out"
+}
+
+cmd_logcat() {
+  adb_have_device || die "no device attached"
+  case "${1:-}" in
+    -f|--follow) adb logcat -s tina4 ;;
+    *) adb logcat -d -s tina4 | tail -"${1:-40}" ;;
+  esac
+}
+
+# build → install → launch → screenshot → show logs, in one shot
+cmd_debug() {
+  adb_have_device || die "no device attached"
+  cmd_apk
+  adb install -r "$ROOT/android/tina4pascal-debug.apk" >/dev/null
+  adb logcat -c || true
+  adb shell am force-stop com.tina4.pascal >/dev/null 2>&1 || true
+  adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+  adb shell am start -n com.tina4.pascal/.MainActivity >/dev/null 2>&1
+  sleep 3
+  shot="$ROOT/build/device.png"; mkdir -p "$ROOT/build"
+  adb exec-out screencap -p > "$shot"
+  ok "screenshot → $shot"
+  say "${B}--- tina4 log ---${Z}"; adb logcat -d -s tina4 | tail -20
+}
+
+# ---- usage -------------------------------------------------------------------
+usage() {
+  cat <<EOF
+${B}tina4pascal${Z} — dev CLI for the Tina4Pascal native HTML renderer
+
+${B}usage${Z}  tina4pascal <command> [args]
+
+${B}toolchain${Z}
+  doctor                 report FPC targets, Android SDK/NDK, adb, java
+  setup [fpc|android|all] download + install missing toolchains
+
+${B}build & test${Z}
+  build <target|all>     compile ($ALL_TARGETS)
+  test                   build + run all unit suites
+  compliance [glob]      run the W3C reftest suite
+
+${B}macOS run${Z}
+  run [page.html]        build + open the viewer on a page
+  snapshot <html> <png>  headless off-screen render to PNG
+
+${B}Android${Z}
+  apk                    build native .so (all ABIs) + package a signed debug APK
+  deploy                 apk + adb install + launch on a connected device
+  debug                  deploy + screenshot + dump the on-device log (dev loop)
+  screenshot [out.png]   wake the device and grab the screen
+  logcat [-f|N]          show the app's native log (tag tina4)
+
+  clean                  remove build outputs
+EOF
+}
+
+# ---- dispatch ----------------------------------------------------------------
+cmd="${1:-help}"; [ $# -gt 0 ] && shift || true
+case "$cmd" in
+  doctor)     cmd_doctor "$@" ;;
+  setup)      cmd_setup "$@" ;;
+  build)      cmd_build "$@" ;;
+  test)       cmd_test "$@" ;;
+  run)        cmd_run "$@" ;;
+  snapshot)   cmd_snapshot "$@" ;;
+  compliance) cmd_compliance "$@" ;;
+  apk)        cmd_apk "$@" ;;
+  deploy)     cmd_deploy "$@" ;;
+  debug)      cmd_debug "$@" ;;
+  screenshot) cmd_screenshot "$@" ;;
+  logcat)     cmd_logcat "$@" ;;
+  clean)      cmd_clean "$@" ;;
+  help|-h|--help) usage ;;
+  *) bad "unknown command: $cmd"; say ""; usage; exit 1 ;;
+esac

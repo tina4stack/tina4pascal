@@ -17,3 +17,6 @@ toolchain/test/hello
 # fetched caches
 csscache/
 tests/leakcheck
+
+# tina4pascal CLI build outputs
+/build/

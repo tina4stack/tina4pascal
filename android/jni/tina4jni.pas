@@ -54,6 +54,15 @@ begin
   GDirty := False;
 end;
 
+function CountSVG(Box: TLayoutBox): Integer;
+var c: TLayoutBox;
+begin
+  Result := 0;
+  if Box = nil then Exit;
+  if Box.IsSVG then Inc(Result);
+  for c in Box.Children do Result := Result + CountSVG(c);
+end;
+
 procedure Java_com_tina4_pascal_Tina4View_nativeSetHtml(Env: PJNIEnv; This: jobject;
   Html: jstring); cdecl;
 var p: PAnsiChar;
@@ -81,7 +90,11 @@ begin
   GCanvas.FillRect(0, 0, W, H, BodyBg);
   if GHtml = '' then Exit;
   if GDirty or (Abs(GLayoutW - W) > 0.5) then
+  begin
     Relayout(Env, W);
+    AndroidLog('layout w=' + IntToStr(W) + ' h=' + IntToStr(H) +
+      ' svg=' + IntToStr(CountSVG(GRoot)));
+  end;
   if GRoot <> nil then
     PaintBox(GCanvas, GRoot, 0);
 end;

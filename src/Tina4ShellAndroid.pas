@@ -19,6 +19,10 @@ interface
 uses
   jni, Tina4RenderBackend;
 
+{ Write a line to Android logcat (tag "tina4"). Handy for the on-device
+  debug loop; cheap enough to leave in. }
+procedure AndroidLog(const Msg: string);
+
 type
   TAndroidCanvas = class(TTina4Canvas)
   private
@@ -79,6 +83,16 @@ type
   end;
 
 implementation
+
+uses SysUtils;
+
+function __android_log_write(prio: Integer; tag, text: PAnsiChar): Integer;
+  cdecl; external 'log';
+
+procedure AndroidLog(const Msg: string);
+begin
+  __android_log_write(4 { INFO }, 'tina4', PAnsiChar(Msg));
+end;
 
 const
   // android.graphics.Paint.Style.FILL / STROKE ordinals aren't used; we fetch

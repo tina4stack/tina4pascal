@@ -74,6 +74,11 @@ type
     function MakeInlineBlock(Tag: THTMLTag; const St: TComputedStyle): TLayoutBox;
     function MakeInlineContainer(Tag: THTMLTag; const St: TComputedStyle;
       AvailW: Single): TLayoutBox;
+    { A replaced element (img/svg/qrcode) used directly as a block or flex
+      item — build it as an atom instead of laying out its children. Returns
+      nil when Tag is not a replaced element. }
+    function MakeReplacedBox(T: THTMLTag; const cs: TComputedStyle;
+      CW: Single): TLayoutBox;
     function MakeControl(Tag: THTMLTag; St: TComputedStyle; AvailW: Single): TLayoutBox;
     function LayoutControlBlock(Parent: TLayoutBox; Tag: THTMLTag;
       const St: TComputedStyle; X, Y, AvailW: Single): Single;
@@ -793,6 +798,66 @@ begin
   Result.H := usedH + edgeT + edgeB;
 end;
 
+function TLayoutEngine.MakeReplacedBox(T: THTMLTag; const cs: TComputedStyle;
+  CW: Single): TLayoutBox;
+var
+  iw, ih: Single;
+  qrText: string;
+begin
+  Result := nil;
+  if SameText(T.TagName, 'svg') then
+  begin
+    Result := TLayoutBox.Create;
+    Result.Tag := T; Result.Style := cs;
+    Result.IsSVG := True; Result.SVGRoot := T;
+    if cs.ExplicitWidth >= 0 then Result.W := cs.ExplicitWidth else Result.W := -1;
+    if cs.ExplicitHeight >= 0 then Result.H := cs.ExplicitHeight else Result.H := -1;
+    if (Result.W < 0) or (Result.H < 0) then
+    begin
+      if SVGIntrinsicSize(T, iw, ih) and (iw > 0) and (ih > 0) then
+      begin
+        if (Result.W < 0) and (Result.H < 0) then begin Result.W := iw; Result.H := ih; end
+        else if Result.W < 0 then Result.W := iw * (Result.H / ih)
+        else Result.H := ih * (Result.W / iw);
+      end
+      else begin if Result.W < 0 then Result.W := 150; if Result.H < 0 then Result.H := 150; end;
+    end;
+  end
+  else if SameText(T.TagName, 'qrcode') then
+  begin
+    Result := TLayoutBox.Create;
+    Result.Tag := T; Result.Style := cs; Result.IsQRCode := True;
+    qrText := T.GetAttribute('value');
+    if qrText = '' then qrText := T.GetAttribute('data');
+    if qrText = '' then qrText := Trim(CollapseWS(InnerText(T)));
+    if not QREncode(qrText, Result.QRMatrix) then Result.QRMatrix.Size := 0;
+    if cs.ExplicitWidth >= 0 then Result.W := cs.ExplicitWidth
+    else if cs.ExplicitHeight >= 0 then Result.W := cs.ExplicitHeight
+    else Result.W := 120;
+    Result.H := Result.W;
+  end
+  else if SameText(T.TagName, 'img') then
+  begin
+    Result := TLayoutBox.Create;
+    Result.Tag := T; Result.Style := cs; Result.IsImagePlaceholder := True;
+    Result.ImageHandle := FCanvas.LoadImage(ResolveImgSrc(T, FViewportW, cs.ExplicitWidth));
+    if cs.ExplicitWidth >= 0 then Result.W := cs.ExplicitWidth else Result.W := 120;
+    if cs.ExplicitHeight >= 0 then Result.H := cs.ExplicitHeight else Result.H := 80;
+    if ((cs.ExplicitWidth < 0) or (cs.ExplicitHeight < 0)) and
+       FCanvas.ImageSize(Result.ImageHandle, iw, ih) and (iw > 0) and (ih > 0) then
+    begin
+      if (cs.ExplicitWidth < 0) and (cs.ExplicitHeight < 0) then begin Result.W := iw; Result.H := ih; end
+      else if cs.ExplicitWidth < 0 then Result.W := iw * (Result.H / ih)
+      else Result.H := ih * (Result.W / iw);
+    end;
+  end;
+  if Result <> nil then
+  begin
+    if (CW > 0) and (Result.W > CW) then
+    begin Result.H := Result.H * (CW / Result.W); Result.W := CW; end;
+  end;
+end;
+
 { Flexbox: single-line row/column with justify-content (main axis) and
   align-items (cross axis). No wrap, no grow/shrink resolution yet — items
   keep their own size. Enough for the common row layouts. }
@@ -867,7 +932,8 @@ begin
       for i := 0 to itemTags.Count - 1 do
       begin
         cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
-        cb := MakeInlineContainer(itemTags[i], cs, contentW);
+        cb := MakeReplacedBox(itemTags[i], cs, contentW);
+        if cb = nil then cb := MakeInlineContainer(itemTags[i], cs, contentW);
         box.Children.Add(cb); items.Add(cb);
       end;
     end
@@ -915,8 +981,12 @@ begin
           targetW := targetW + freeMain * growF[i] / sumGrow;
         cs.ExplicitWidth := targetW;    // force the resolved main size
         cs.BoxSizing := 'border-box';
-        cb := MakeInlineContainer(itemTags[i], cs, contentW);
-        cb.W := targetW;
+        cb := MakeReplacedBox(itemTags[i], cs, contentW);
+        if cb = nil then
+        begin
+          cb := MakeInlineContainer(itemTags[i], cs, contentW);
+          cb.W := targetW;
+        end;
         box.Children.Add(cb); items.Add(cb);
       end;
     end;
