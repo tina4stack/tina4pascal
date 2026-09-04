@@ -1,0 +1,35 @@
+# xcodegen spec for the Tina4Pascal iOS app.
+#   brew install xcodegen        # once
+#   ./ios/build.sh               # produces app/libtina4ios.a (the Pascal engine)
+#   cd ios && xcodegen           # writes Tina4Pascal.xcodeproj from this file
+#   open Tina4Pascal.xcodeproj   # set your team if needed, then Run on device
+name: Tina4Pascal
+options:
+  bundleIdPrefix: com.tina4
+  deploymentTarget:
+    iOS: "13.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: "5CSH5U4F8F"        # Apple Development team (change to yours)
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1"           # iPhone
+targets:
+  Tina4Pascal:
+    type: application
+    platform: iOS
+    sources:
+      - path: app
+        excludes: [ "libtina4ios.a", "Info.plist" ]
+    settings:
+      base:
+        INFOPLIST_FILE: app/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.tina4.pascal
+        # link the Pascal engine + the Apple C frameworks it uses
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/app"
+        OTHER_LDFLAGS: "-ltina4ios"
+    dependencies:
+      - sdk: CoreGraphics.framework
+      - sdk: CoreText.framework
+      - sdk: CoreFoundation.framework
+      - sdk: ImageIO.framework
+      - sdk: MobileCoreServices.framework

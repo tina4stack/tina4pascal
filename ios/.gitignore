@@ -1,0 +1,4 @@
+# generated build artifacts (produced by ios/build.sh + xcodegen)
+build/
+app/libtina4ios.a
+Tina4Pascal.xcodeproj/
