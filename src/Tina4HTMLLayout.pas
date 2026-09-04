@@ -1476,7 +1476,9 @@ var
         if SameText(it.Box.Style.VerticalAlign, 'top') then
           ShiftBoxTree(it.Box, x, lineTop)
         else if SameText(it.Box.Style.VerticalAlign, 'middle') then
-          ShiftBoxTree(it.Box, x, lineTop + maxAscent - it.H / 2)
+          // centre the box within the line box (matches browsers for the
+          // common case of same-height inline-blocks filling the line)
+          ShiftBoxTree(it.Box, x, lineTop + (lineH - it.H) / 2)
         else // baseline: box bottom on the baseline
           ShiftBoxTree(it.Box, x, lineTop + maxAscent - it.Ascent);
       end

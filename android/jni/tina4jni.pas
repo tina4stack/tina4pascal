@@ -74,9 +74,10 @@ begin
     '.rowc{display:flex;gap:10px;align-items:center}' +
     '.item{padding:12px;border-bottom:1px solid #eee}' +
     'input{border:1px solid #c9c8dd;border-radius:10px;padding:12px;font-size:16px}' +
-    '.strip{overflow-x:auto;white-space:nowrap;height:96px}' +
-    '.chip{display:inline-block;width:120px;height:80px;border-radius:14px;color:#fff;' +
-      'font-size:28px;font-weight:bold;text-align:center;padding-top:24px;margin-right:10px}' +
+    '.strip{overflow-x:auto;white-space:nowrap}' +
+    '.chip{display:inline-block;vertical-align:middle;width:120px;height:80px;' +
+      'border-radius:14px;color:#fff;font-size:28px;font-weight:bold;' +
+      'text-align:center;padding-top:24px;margin-right:10px}' +
     '</style></head><body>' +
     '<h1>Interactive demo</h1>' +
     '<p class="sub">Vertical + horizontal scroll · fling · tap · type.</p>' +
