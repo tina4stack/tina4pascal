@@ -93,6 +93,38 @@ begin
     'BASE[CHILD Andre]', 'extends + block override');
   Check(f.RenderString('{% extends "base.twig" %}', c), 'BASE[default]', 'extends keeps base block');
 
+  { ---- advanced: macros, tests, parent(), import/from, cache ---- }
+  { macros — define + call; macro HTML is safe (not re-escaped) }
+  Check(f.RenderString('{% macro greet(who) %}Hi {{ who }}!{% endmacro %}{{ greet("Bob") }}', c),
+    'Hi Bob!', 'macro define + call');
+  Check(f.RenderString('{% macro tag(t) %}<b>{{ t }}</b>{% endmacro %}{{ tag(name) }}', c),
+    '<b>Andre</b>', 'macro output is safe HTML');
+
+  { tests (is / is not) }
+  Check(f.RenderString('{% if name is defined %}y{% else %}n{% endif %}', c), 'y', 'is defined');
+  Check(f.RenderString('{% if missing is defined %}y{% else %}n{% endif %}', c), 'n', 'is defined (missing)');
+  Check(f.RenderString('{% if "" is empty %}e{% endif %}', c), 'e', 'is empty');
+  Check(f.RenderString('{% if name is not empty %}ne{% endif %}', c), 'ne', 'is not empty');
+  Check(f.RenderString('{% if 4 is even %}ev{% endif %}{% if 3 is odd %}od{% endif %}', c), 'evod', 'is even/odd');
+  Check(f.RenderString('{% if items is iterable %}it{% endif %}', c), 'it', 'is iterable');
+
+  { parent() inside an overridden block }
+  Check(f.RenderString('{% extends "base.twig" %}{% block body %}[{{ parent() }}]{% endblock %}', c),
+    'BASE[[default]]', 'parent() in override');
+
+  { import / from a macro file }
+  WriteRaw(dir + '/macros.twig', '{% macro input(n) %}<input name="{{ n }}">{% endmacro %}');
+  Check(f.RenderString('{% import "macros.twig" as forms %}{{ forms.input("email") }}', c),
+    '<input name="email">', 'import as ns + call');
+  Check(f.RenderString('{% from "macros.twig" import input %}{{ input("q") }}', c),
+    '<input name="q">', 'from import + call');
+
+  { cache — same key returns the first render even if context changes }
+  c.Delete('v'); c.Add('v', 'one');
+  Check(f.RenderString('{% cache "k1" 60 %}{{ v }}{% endcache %}', c), 'one', 'cache first render');
+  c.Delete('v'); c.Add('v', 'two');
+  Check(f.RenderString('{% cache "k1" 60 %}{{ v }}{% endcache %}', c), 'one', 'cache returns stored');
+
   c.Free; f.Free;
   Writeln;
   Writeln(Passed, ' assertions passed, ', Failed, ' failed.');

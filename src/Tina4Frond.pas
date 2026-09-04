@@ -39,7 +39,11 @@ type
     FDir: string;
     FGlobals: TJSONObject;                       // owned
     FFilters: TDictionary<string, TFrondFilter>;
+    FCache: TDictionary<string, string>;         // {% cache %} fragments
+    FCacheExp: TDictionary<string, TDateTime>;
     function ReadFile(const Name: string): string;
+    function CacheFetch(const Key: string; out Content: string): Boolean;
+    procedure CacheStore(const Key, Content: string; TTLSeconds: Double);
   public
     constructor Create(const TemplateDir: string = '');
     destructor Destroy; override;
@@ -58,7 +62,7 @@ implementation
 
 type
   TNodeKind = (nkText, nkOutput, nkIf, nkFor, nkSet, nkSetBlock, nkInclude,
-    nkBlock, nkExtends);
+    nkBlock, nkExtends, nkMacro, nkImport, nkFrom, nkCache);
 
   TNode = class;
   TNodeList = TObjectList<TNode>;
@@ -320,6 +324,65 @@ begin
       node := TNode.Create(nkExtends);
       node.S := Unquote(After(rest, 'extends'));
       Result.Add(node);
+    end
+    else if word = 'macro' then
+    begin
+      // {% macro name(a, b) %} … {% endmacro %}
+      node := TNode.Create(nkMacro);
+      rest := After(rest, 'macro');
+      p := Pos('(', rest);
+      if p > 0 then
+      begin
+        node.S := Trim(Copy(rest, 1, p - 1));
+        node.ListExpr := Trim(Copy(rest, p + 1, MaxInt));
+        p := Pos(')', node.ListExpr);
+        if p > 0 then node.ListExpr := Trim(Copy(node.ListExpr, 1, p - 1));
+      end
+      else node.S := Trim(rest);
+      node.Body := ParseList(['endmacro'], e2);
+      Result.Add(node);
+    end
+    else if word = 'import' then
+    begin
+      // {% import "file" as ns %}
+      node := TNode.Create(nkImport);
+      rest := After(rest, 'import');
+      p := Pos(' as ', rest);
+      if p > 0 then
+      begin
+        node.S := Unquote(Trim(Copy(rest, 1, p - 1)));
+        node.KeyVar := Trim(Copy(rest, p + 4, MaxInt));
+      end
+      else node.S := Unquote(rest);
+      Result.Add(node);
+    end
+    else if word = 'from' then
+    begin
+      // {% from "file" import a, b %}
+      node := TNode.Create(nkFrom);
+      rest := After(rest, 'from');
+      p := Pos(' import ', rest);
+      if p > 0 then
+      begin
+        node.S := Unquote(Trim(Copy(rest, 1, p - 1)));
+        node.ListExpr := Trim(Copy(rest, p + 8, MaxInt));
+      end;
+      Result.Add(node);
+    end
+    else if word = 'cache' then
+    begin
+      // {% cache "key" 300 %} … {% endcache %}   (key expr, ttl seconds)
+      node := TNode.Create(nkCache);
+      rest := Trim(After(rest, 'cache'));
+      p := Pos1Space(rest);
+      if p > 0 then
+      begin
+        node.S := Trim(Copy(rest, 1, p - 1));
+        node.ListExpr := Trim(Copy(rest, p + 1, MaxInt));
+      end
+      else node.S := rest;
+      node.Body := ParseList(['endcache'], e2);
+      Result.Add(node);
     end;
     // unknown tags are ignored
   end;
@@ -337,13 +400,15 @@ type
     N: Double;
     S: string;
     J: TJSONData;          // borrowed
+    Safe: Boolean;         // already-safe HTML (macro / parent output) — don't escape
   end;
 
-function VNull: TVal;  begin Result.Kind := vkNull; end;
-function VBool(B: Boolean): TVal; begin Result.Kind := vkBool; Result.B := B; end;
-function VNum(N: Double): TVal;   begin Result.Kind := vkNum; Result.N := N; end;
-function VStr(const S: string): TVal; begin Result.Kind := vkStr; Result.S := S; end;
-function VJSON(J: TJSONData): TVal; begin Result.Kind := vkJSON; Result.J := J; end;
+function VNull: TVal;  begin Result.Kind := vkNull; Result.Safe := False; end;
+function VBool(B: Boolean): TVal; begin Result.Kind := vkBool; Result.B := B; Result.Safe := False; end;
+function VNum(N: Double): TVal;   begin Result.Kind := vkNum; Result.N := N; Result.Safe := False; end;
+function VStr(const S: string): TVal; begin Result.Kind := vkStr; Result.S := S; Result.Safe := False; end;
+function VStrSafe(const S: string): TVal; begin Result.Kind := vkStr; Result.S := S; Result.Safe := True; end;
+function VJSON(J: TJSONData): TVal; begin Result.Kind := vkJSON; Result.J := J; Result.Safe := False; end;
 
 { format a number: whole values as plain integers, else a fixed decimal
   (fpjson's float AsString uses scientific notation, which we don't want). }
@@ -532,11 +597,36 @@ end;
 { ---- expression evaluator (recursive descent over a small token list) ---- }
 
 type
+  TMacro = class
+    Params: TStringList;
+    Body: TNodeList;                       // borrowed (kept alive via OwnedLists)
+    constructor Create;
+    destructor Destroy; override;
+  end;
+
+  TExec = class
+    Owner: TFrond;
+    Blocks: TDictionary<string, TNode>;    // child block overrides (for extends)
+    Macros: TObjectDictionary<string, TMacro>;  // name / ns.name → macro
+    OwnedLists: TObjectList<TNodeList>;    // keep imported/base ASTs alive
+    ParentStack: TList<TNode>;             // base block bodies, for parent()
+    constructor Create;
+    destructor Destroy; override;
+    function Run(Nodes: TNodeList; Ctx: TJSONObject): string;
+    procedure CollectBlocks(Nodes: TNodeList);
+    procedure CollectMacros(Nodes: TNodeList; const NS: string);
+    procedure LoadMacroFile(const FileName, NS: string);
+    function CallMacro(const Name: string; const Args: array of string): string;
+    function RenderParent(Ctx: TJSONObject): string;
+    function RunCache(N: TNode; Ctx: TJSONObject): string;
+  end;
+
   TExprEval = class
     Src: string;
     P: Integer;
     Ctx: TJSONObject;
     Owner: TFrond;
+    Exec: TExec;
     function EvalOr: TVal;
     function EvalAnd: TVal;
     function EvalNot: TVal;
@@ -605,10 +695,25 @@ begin
 end;
 
 function TExprEval.EvalCompare: TVal;
-var l, r: TVal; op: string; c: Char; i: Integer;
+var l, r: TVal; op, test: string; c: Char; i: Integer; neg, b: Boolean;
 begin
   l := EvalAdd;
   SkipWs;
+  // tests:  x is [not] defined|empty|null|none|even|odd|iterable
+  if MatchKw('is') then
+  begin
+    neg := MatchKw('not');
+    test := LowerCase(ReadIdent);
+    if test = 'defined' then b := l.Kind <> vkNull
+    else if (test = 'null') or (test = 'none') then b := l.Kind = vkNull
+    else if test = 'empty' then b := ValToStr(l) = ''
+    else if test = 'even' then b := (Round(ValToNum(l)) mod 2) = 0
+    else if test = 'odd' then b := (Round(ValToNum(l)) mod 2) <> 0
+    else if test = 'iterable' then b := (l.Kind = vkJSON) and (l.J.JSONType in [jtArray, jtObject])
+    else b := ValToBool(l);
+    if neg then b := not b;
+    Exit(VBool(b));
+  end;
   op := '';
   c := PeekCh;
   if c in ['=','!','<','>'] then
@@ -711,7 +816,7 @@ begin
 end;
 
 function TExprEval.EvalPrimary: TVal;
-var c: Char; id: string; node: TJSONData; num: string;
+var c: Char; id: string; node: TJSONData; num: string; callArgs: array of string;
 begin
   c := PeekCh;
   if c = '(' then
@@ -728,16 +833,34 @@ begin
   if SameText(id, 'true') then Exit(VBool(True));
   if SameText(id, 'false') then Exit(VBool(False));
   if SameText(id, 'null') or SameText(id, 'none') then Exit(VNull);
+  // a call: parent()  or  a macro name(args) — args evaluated to strings
+  if PeekCh = '(' then
+  begin
+    Inc(P);
+    SetLength(callArgs, 0);
+    while PeekCh <> ')' do
+    begin
+      SetLength(callArgs, Length(callArgs) + 1);
+      callArgs[High(callArgs)] := ValToStr(EvalOr);
+      if PeekCh = ',' then Inc(P);
+    end;
+    if PeekCh = ')' then Inc(P);
+    if SameText(id, 'parent') and (Exec <> nil) then Exit(VStrSafe(Exec.RenderParent(Ctx)));
+    if Exec <> nil then Exit(VStrSafe(Exec.CallMacro(id, callArgs)));  // macro HTML is safe
+    Exit(VStr(''));
+  end;
   node := ResolvePath(id, Ctx);
   if node = nil then Result := VNull else Result := VJSON(node);
 end;
 
-function EvalExpr(const Expr: string; Ctx: TJSONObject; Owner: TFrond): TVal;
+function MergeGlobals(Globals, Context: TJSONObject): TJSONObject; forward;
+
+function EvalExpr(const Expr: string; Ctx: TJSONObject; Owner: TFrond; Exec: TExec): TVal;
 var e: TExprEval;
 begin
   e := TExprEval.Create;
   try
-    e.Src := Expr; e.P := 1; e.Ctx := Ctx; e.Owner := Owner;
+    e.Src := Expr; e.P := 1; e.Ctx := Ctx; e.Owner := Owner; e.Exec := Exec;
     Result := e.EvalOr;
   finally e.Free; end;
 end;
@@ -756,13 +879,100 @@ end;
 
 { ================================================================ execute === }
 
-type
-  TExec = class
-    Owner: TFrond;
-    Blocks: TDictionary<string, TNode>;   // child block overrides (for extends)
-    function Run(Nodes: TNodeList; Ctx: TJSONObject): string;
-    procedure CollectBlocks(Nodes: TNodeList);
+constructor TMacro.Create;
+begin Params := TStringList.Create; end;
+destructor TMacro.Destroy;
+begin Params.Free; inherited; end;
+
+constructor TExec.Create;
+begin
+  Blocks := TDictionary<string, TNode>.Create;
+  Macros := TObjectDictionary<string, TMacro>.Create([doOwnsValues]);
+  OwnedLists := TObjectList<TNodeList>.Create(True);
+  ParentStack := TList<TNode>.Create;
+end;
+
+destructor TExec.Destroy;
+begin
+  Blocks.Free; Macros.Free; OwnedLists.Free; ParentStack.Free;
+  inherited;
+end;
+
+{ register macro definitions found in Nodes under an optional namespace }
+procedure TExec.CollectMacros(Nodes: TNodeList; const NS: string);
+var n: TNode; m: TMacro; parts: TStringList; i: Integer; key: string;
+begin
+  for n in Nodes do
+    if n.Kind = nkMacro then
+    begin
+      m := TMacro.Create;
+      m.Body := n.Body;
+      parts := TStringList.Create;
+      try
+        parts.CommaText := n.ListExpr;                 // "a, b" → params
+        for i := 0 to parts.Count - 1 do m.Params.Add(Trim(parts[i]));
+      finally parts.Free; end;
+      if NS <> '' then key := NS + '.' + n.S else key := n.S;
+      Macros.AddOrSetValue(LowerCase(key), m);
+    end;
+end;
+
+{ call a macro by name with positional string args; renders its body in a fresh
+  scope (globals + params only, like Twig) }
+function TExec.CallMacro(const Name: string; const Args: array of string): string;
+var m: TMacro; ctx: TJSONObject; i: Integer;
+begin
+  Result := '';
+  if not Macros.TryGetValue(LowerCase(Name), m) then Exit;
+  ctx := MergeGlobals(Owner.FGlobals, nil);
+  try
+    for i := 0 to m.Params.Count - 1 do
+    begin
+      ctx.Delete(m.Params[i]);
+      if i < Length(Args) then ctx.Add(m.Params[i], Args[i])
+      else ctx.Add(m.Params[i], TJSONNull.Create);
+    end;
+    Result := Run(m.Body, ctx);
+  finally
+    ctx.Free;
   end;
+end;
+
+{ render the parent block body (used by the parent() call in an override) }
+function TExec.RenderParent(Ctx: TJSONObject): string;
+begin
+  if ParentStack.Count > 0 then
+    Result := Run(ParentStack[ParentStack.Count - 1].Body, Ctx)
+  else
+    Result := '';
+end;
+
+{ import/from — parse a macro file and register its macros (under NS, or
+  unprefixed). The AST is kept alive so the macro bodies stay valid. }
+procedure TExec.LoadMacroFile(const FileName, NS: string);
+var src, e: string; t: TList<TToken>; par: TParser; nl: TNodeList;
+begin
+  src := Owner.ReadFile(FileName);
+  if src = '' then Exit;
+  t := Lex(src); ApplyTrim(t);
+  par := TParser.Create; par.Toks := t; par.Cur := 0;
+  nl := par.ParseList([], e);
+  OwnedLists.Add(nl);            // keep alive; macro bodies point into it
+  CollectMacros(nl, NS);
+  par.Free; t.Free;
+end;
+
+{ cache tag — return the cached fragment if fresh, else render + store }
+function TExec.RunCache(N: TNode; Ctx: TJSONObject): string;
+var key, content: string; ttl: Double;
+begin
+  key := ValToStr(EvalExpr(N.S, Ctx, Owner, Self));
+  ttl := ValToNum(EvalExpr(N.ListExpr, Ctx, Owner, Self));
+  if Owner.CacheFetch(key, content) then Exit(content);
+  content := Run(N.Body, Ctx);
+  Owner.CacheStore(key, content, ttl);
+  Result := content;
+end;
 
 procedure TExec.CollectBlocks(Nodes: TNodeList);
 var n: TNode;
@@ -795,8 +1005,8 @@ begin
         nkText: sb.Append(n.S);
         nkOutput:
           begin
-            v := EvalExpr(n.S, Ctx, Owner);
-            if EndsRaw(n.S) then sb.Append(ValToStr(v))
+            v := EvalExpr(n.S, Ctx, Owner, Self);
+            if v.Safe or EndsRaw(n.S) then sb.Append(ValToStr(v))
             else sb.Append(HtmlEscape(ValToStr(v)));
           end;
         nkIf:
@@ -804,13 +1014,13 @@ begin
             matched := False;
             for branch in n.Branches do
             begin
-              if (branch.Cond = '') or ValToBool(EvalExpr(branch.Cond, Ctx, Owner)) then
+              if (branch.Cond = '') or ValToBool(EvalExpr(branch.Cond, Ctx, Owner, Self)) then
               begin sb.Append(Run(branch.Body, Ctx)); matched := True; Break; end;
             end;
           end;
         nkFor:
           begin
-            v := EvalExpr(n.ListExpr, Ctx, Owner);
+            v := EvalExpr(n.ListExpr, Ctx, Owner, Self);
             itemName := n.ValVar; keyName := n.KeyVar;
             if (v.Kind = vkJSON) and (v.J.JSONType = jtArray) then
             begin
@@ -847,7 +1057,7 @@ begin
           end;
         nkSet:
           begin
-            v := EvalExpr(n.S, Ctx, Owner);
+            v := EvalExpr(n.S, Ctx, Owner, Self);
             Ctx.Delete(n.KeyVar);
             case v.Kind of
               vkNum:  Ctx.Add(n.KeyVar, v.N);
@@ -869,13 +1079,31 @@ begin
           end;
         nkBlock:
           begin
-            // if a child template overrode this block, render that instead
+            // a child override renders instead of the base; the base body is
+            // pushed so {{ parent() }} inside the override can reach it
             if (Blocks <> nil) and Blocks.TryGetValue(n.S, blk) and (blk <> n) then
-              sb.Append(Run(blk.Body, Ctx))
+            begin
+              ParentStack.Add(n);
+              sb.Append(Run(blk.Body, Ctx));
+              ParentStack.Delete(ParentStack.Count - 1);
+            end
             else
               sb.Append(Run(n.Body, Ctx));
           end;
         nkExtends: ;  // handled by RenderString
+        nkMacro: ;    // definition only — collected up front, emits nothing
+        nkImport:
+          begin
+            LoadMacroFile(n.S, n.KeyVar);
+          end;
+        nkFrom:
+          begin
+            LoadMacroFile(n.S, '');   // names imported unprefixed
+          end;
+        nkCache:
+          begin
+            sb.Append(RunCache(n, Ctx));
+          end;
       end;
     end;
     Result := sb.ToString;
@@ -891,12 +1119,31 @@ begin
   FDir := TemplateDir;
   FGlobals := TJSONObject.Create;
   FFilters := TDictionary<string, TFrondFilter>.Create;
+  FCache := TDictionary<string, string>.Create;
+  FCacheExp := TDictionary<string, TDateTime>.Create;
 end;
 
 destructor TFrond.Destroy;
 begin
-  FGlobals.Free; FFilters.Free;
+  FGlobals.Free; FFilters.Free; FCache.Free; FCacheExp.Free;
   inherited;
+end;
+
+function TFrond.CacheFetch(const Key: string; out Content: string): Boolean;
+var exp: TDateTime;
+begin
+  Content := '';
+  Result := FCache.TryGetValue(Key, Content);
+  if not Result then Exit;
+  if FCacheExp.TryGetValue(Key, exp) and (exp <> 0) and (Now >= exp) then
+  begin FCache.Remove(Key); FCacheExp.Remove(Key); Content := ''; Exit(False); end;
+end;
+
+procedure TFrond.CacheStore(const Key, Content: string; TTLSeconds: Double);
+begin
+  FCache.AddOrSetValue(Key, Content);
+  if TTLSeconds > 0 then FCacheExp.AddOrSetValue(Key, Now + TTLSeconds / 86400.0)
+  else FCacheExp.AddOrSetValue(Key, 0);
 end;
 
 function TFrond.ReadFile(const Name: string): string;
@@ -966,7 +1213,7 @@ begin
   ctx := MergeGlobals(FGlobals, Context);
   exec := TExec.Create;
   exec.Owner := Self;
-  exec.Blocks := TDictionary<string, TNode>.Create;
+  exec.CollectMacros(nodes, '');           // macros defined in THIS template
   try
     if extendsName <> '' then
     begin
@@ -976,16 +1223,18 @@ begin
       btoks := Lex(baseSrc); ApplyTrim(btoks);
       bparser := TParser.Create; bparser.Toks := btoks; bparser.Cur := 0;
       bnodes := bparser.ParseList([], be);
+      exec.OwnedLists.Add(bnodes);          // keep base AST alive
+      exec.CollectMacros(bnodes, '');
       try
         Result := exec.Run(bnodes, ctx);
       finally
-        bnodes.Free; bparser.Free; btoks.Free;
+        bparser.Free; btoks.Free;
       end;
     end
     else
       Result := exec.Run(nodes, ctx);
   finally
-    exec.Blocks.Free; exec.Free;
+    exec.Free;
     nodes.Free; parser.Free; toks.Free; ctx.Free;
   end;
 end;
