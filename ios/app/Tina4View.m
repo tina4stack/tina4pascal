@@ -132,6 +132,16 @@
     UIImage *img = info[UIImagePickerControllerOriginalImage];
     [picker dismissViewControllerAnimated:YES completion:nil];
     if (!img) return;
+    // The camera tags portrait shots with an EXIF orientation; our Core Graphics
+    // canvas draws raw pixels and ignores it, so bake the rotation into the
+    // pixels (draw upright) before saving.
+    if (img.imageOrientation != UIImageOrientationUp) {
+        UIGraphicsBeginImageContextWithOptions(img.size, NO, img.scale);
+        [img drawInRect:CGRectMake(0, 0, img.size.width, img.size.height)];
+        UIImage *fixed = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        if (fixed) img = fixed;
+    }
     NSString *dir = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
     NSString *path = [dir stringByAppendingPathComponent:
         [NSString stringWithFormat:@"IMG_%.0f.jpg", [NSDate date].timeIntervalSince1970]];
