@@ -14,7 +14,9 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         Tina4View view = new Tina4View(this);
         setContentView(view);
-        view.setHtml(loadAsset("index.html"));
+        // "@demo" triggers the built-in interactive demo (scroll + buttons +
+        // input). Swap for loadAsset("index.html") to render a static page.
+        view.setHtml("@demo");
     }
 
     private String loadAsset(String name) {

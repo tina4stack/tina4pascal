@@ -5,6 +5,12 @@ The renderer runs on Android as a native `libtina4.so` that draws through
 `android/`). This doc is the build recipe **and the hard-won learnings** — the
 things that cost hours the first time.
 
+**Status:** verified on a real 32-bit (`armeabi-v7a`) device. Static rendering
+(text/type/lists/tables/SVG/QR), **scrolling** (touch drag), **button actions**
+(`onclick` → hit-test → native handler → re-render) and **text input** (soft
+keyboard via `InputConnection` + key events → native state) all work. The
+built-in demo is `MainActivity` calling `setHtml("@demo")`.
+
 ## One-command flow
 
 ```sh
@@ -81,6 +87,19 @@ builds both by default.
 9. **On-device logging.** `Tina4ShellAndroid.AndroidLog` → liblog (`external
    'log'`); read with `tina4pascal logcat` (tag `tina4`). Enable a debuggable
    build for CheckJNI if a JNI call misbehaves.
+
+10. **d8 + JDK 25 hate anonymous inner classes.** d8 8.2.2 throws an internal
+    NPE dexing a JDK-25-emitted anonymous class (`Tina4View$1`). Use a *named*
+    nested class instead (e.g. `KeyInput extends BaseInputConnection`).
+
+11. **`adb shell input text` bypasses the IME.** It injects key events, not
+    `commitText`, so a view needs `onKeyDown` (→ `getUnicodeChar`) as well as an
+    `InputConnection` to catch both scripted and real soft-keyboard typing.
+
+12. **Interaction lives in the JNI host, not the core.** `tina4jni.pas` keeps
+    scroll offset + focus + demo state, turns `nativeTouch` deltas into scroll
+    and taps into `HitTest` → `onclick`, and `nativeKey` into edits — then
+    re-lays-out from the (regenerated) HTML. Same model as the desktop viewer.
 
 ## Building the 32-bit arm cross (one-time)
 
