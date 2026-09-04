@@ -342,7 +342,9 @@ begin
   Result.Width := sz.width;
   Result.Ascent := f.ascender;
   Result.Descent := -f.descender;
-  Result.LineHeight := sz.height;
+  // ascent+descent, WITHOUT external leading (sz.height includes it) — so a
+  // glyph centres in its line box instead of riding high next to a checkbox.
+  Result.LineHeight := f.ascender - f.descender;
 end;
 
 procedure TCocoaCanvas.SetClip(X, Y, W, H: Single);

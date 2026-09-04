@@ -276,8 +276,8 @@ begin
   end;
   Result.Ascent := asc;
   Result.Descent := desc;
-  Result.LineHeight := asc + desc + lead;
-end;
+  Result.LineHeight := asc + desc;   // exclude external leading (match Android),
+end;                                 // so glyphs centre in the line box, not high
 
 { ---- clip / state ------------------------------------------------------ }
 

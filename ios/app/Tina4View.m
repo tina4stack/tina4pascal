@@ -84,8 +84,14 @@
 // UIKeyInput: feed characters to the engine
 - (BOOL)hasText { return YES; }
 - (void)insertText:(NSString *)text {
-    if ([text isEqualToString:@"\n"]) { tina4_key(10); }
-    else {
+    if ([text isEqualToString:@"\n"]) {
+        if (tina4_focus_kind() == 2) {
+            tina4_key(10);                       // textarea: newline
+        } else {                                 // text field: the Return key = Next
+            if (tina4_focus_next() == 0) [self hideKeyboard];
+            else [self reloadInputViews];        // re-read returnKeyType for the new field
+        }
+    } else {
         NSUInteger n = text.length, i = 0;
         while (i < n) {
             unichar c = [text characterAtIndex:i++];

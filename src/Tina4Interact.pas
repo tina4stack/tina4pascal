@@ -192,6 +192,42 @@ begin
   end;
 end;
 
+{ First control descendant (or self) of Node, else nil. }
+function FindControlIn(Node: THTMLTag): THTMLTag;
+var c: THTMLTag;
+begin
+  Result := nil;
+  if Node = nil then Exit;
+  if CtrlKind(Node) <> ckNone then Exit(Node);
+  for c in Node.Children do
+  begin
+    Result := FindControlIn(c);
+    if Result <> nil then Exit;
+  end;
+end;
+
+{ If the tap landed on (or inside) a <label>, the control that label activates —
+  by `for=id`, by wrapping the control, or (Tina4 convenience) a control sibling
+  in the same row. nil if this is not a label. }
+function LabelTarget(Node: THTMLTag): THTMLTag;
+var lbl, c, ctl: THTMLTag;
+begin
+  Result := nil;
+  lbl := Node;
+  while (lbl <> nil) and not SameText(lbl.TagName, 'label') do lbl := lbl.Parent;
+  if lbl = nil then Exit;
+  if lbl.HasAttribute('for') then
+  begin
+    ctl := FindById(GParser.Root, lbl.GetAttribute('for'));
+    if (ctl <> nil) and (CtrlKind(ctl) <> ckNone) then Exit(ctl);
+  end;
+  ctl := FindControlIn(lbl);          // control nested in the label
+  if ctl <> nil then Exit(ctl);
+  if lbl.Parent <> nil then           // a control beside it in the same row
+    for c in lbl.Parent.Children do
+      if CtrlKind(c) <> ckNone then Exit(c);
+end;
+
 { Clear `checked` from every radio in the same name-group as Tag. }
 procedure ClearRadioGroup(Node: THTMLTag; const GroupName: string);
 var c: THTMLTag;
@@ -585,12 +621,17 @@ begin
            begin GFlingVX := GVelX; GFlingVY := GVelY; Result := TINA_FLING; end;
            Exit;
          end;
-         // a tap: find the control (or onclick) under the finger
+         // a tap: a <label> activates its control; otherwise walk up to the
+         // nearest control or onclick handler under the finger
          hit := HitTest(GRoot, cx, cy + GScrollY);
-         ctrl := hit;
-         while (ctrl <> nil) and (CtrlKind(ctrl) = ckNone) and
-               not ctrl.HasAttribute('onclick') do
-           ctrl := ctrl.Parent;
+         ctrl := LabelTarget(hit);
+         if ctrl = nil then
+         begin
+           ctrl := hit;
+           while (ctrl <> nil) and (CtrlKind(ctrl) = ckNone) and
+                 not ctrl.HasAttribute('onclick') do
+             ctrl := ctrl.Parent;
+         end;
          if ctrl = nil then
          begin
            if GFocusedTag <> nil then begin BlurAll; GLayoutDirty := True; Result := TINA_HIDE_KBD; end;

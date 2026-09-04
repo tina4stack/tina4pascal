@@ -645,7 +645,7 @@ var
   m: TTina4TextMetrics;
   run: TTextRun;
   padH, padV, lineH, wChars, ew: Single;
-  rows, i, ci: Integer;
+  rows, i, ci, firstLine: Integer;
   lines: TStringList;
   opt: THTMLTag;
   seg: string;
@@ -664,8 +664,10 @@ begin
   case kind of
     ckCheckbox, ckRadio:
       begin
+        // 16px glyph, but the control box is as tall as the text line box so it
+        // centres against the label the same way (and gives a bigger tap target).
         Result.W := 16;
-        Result.H := 16;
+        Result.H := Max(16, lineH);
         Exit;
       end;
     ckButton:
@@ -747,11 +749,15 @@ begin
         if txt[ci] = #10 then begin lines.Add(seg); seg := ''; end
         else seg := seg + txt[ci];
       lines.Add(seg);   // final segment (empty if txt ended with a newline)
-      for i := 0 to Min(lines.Count - 1, rows * 4) do
+      // auto-scroll: when the text is taller than the box, show the LAST `rows`
+      // lines so the caret line stays visible while typing.
+      firstLine := 0;
+      if lines.Count > rows then firstLine := lines.Count - rows;
+      for i := firstLine to lines.Count - 1 do
       begin
         run.Text := lines[i];
         run.X := St.BorderWidths.Left + St.Padding.Left;
-        run.Y := St.BorderWidths.Top + St.Padding.Top + i * lineH;
+        run.Y := St.BorderWidths.Top + St.Padding.Top + (i - firstLine) * lineH;
         run.FontSize := St.FontSize;
         run.Styles := FontStylesOf(St);
         run.Color := St.Color; run.LetterSpacing := 0;
@@ -2086,7 +2092,7 @@ var
   i: Integer;
   r: TTextRun;
   st: TComputedStyle;
-  y, innerOfs, thumbH, thumbY, thumbW, thumbX, cx, cy: Single;
+  y, innerOfs, thumbH, thumbY, thumbW, thumbX, cx, cy, gy: Single;
   sizeTxt, val: string;
   m: TTina4TextMetrics;
   didClip: Boolean;
@@ -2149,25 +2155,28 @@ begin
     end;
     Exit;
   end;
-  // checkbox / radio: small drawn glyphs, state from the 'checked' attribute
+  // checkbox / radio: small drawn glyphs, state from the 'checked' attribute.
+  // gy centres the 16px glyph within the (line-height-tall) control box so it
+  // lines up with the label text beside it.
   if Box.ControlKind in [ckCheckbox, ckRadio] then
   begin
+    gy := y + (Box.H - 16) / 2;
     if Box.ControlKind = ckRadio then
     begin
-      Canvas.FillRoundRect(Box.X, y, 16, 16, 8, $FFFFFFFF);
-      Canvas.StrokeRoundRect(Box.X, y, 16, 16, 8, 1.5, TC_BORDER);
+      Canvas.FillRoundRect(Box.X, gy, 16, 16, 8, $FFFFFFFF);
+      Canvas.StrokeRoundRect(Box.X, gy, 16, 16, 8, 1.5, TC_BORDER);
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
-        Canvas.FillRoundRect(Box.X + 4, y + 4, 8, 8, 4, TC_ACCENT);
+        Canvas.FillRoundRect(Box.X + 4, gy + 4, 8, 8, 4, TC_ACCENT);
     end
     else
     begin
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
-        Canvas.FillRoundRect(Box.X, y, 16, 16, 3, TC_ACCENT)
+        Canvas.FillRoundRect(Box.X, gy, 16, 16, 3, TC_ACCENT)
       else
-        Canvas.FillRoundRect(Box.X, y, 16, 16, 3, $FFFFFFFF);
-      Canvas.StrokeRoundRect(Box.X, y, 16, 16, 3, 1.5, TC_BORDER);
+        Canvas.FillRoundRect(Box.X, gy, 16, 16, 3, $FFFFFFFF);
+      Canvas.StrokeRoundRect(Box.X, gy, 16, 16, 3, 1.5, TC_BORDER);
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
-        Canvas.DrawText(Box.X + 2.5, y - 0.5, '✓', 12, [tfsBold], $FFFFFFFF);
+        Canvas.DrawText(Box.X + 2.5, gy - 0.5, '✓', 12, [tfsBold], $FFFFFFFF);
     end;
     Exit;
   end;
