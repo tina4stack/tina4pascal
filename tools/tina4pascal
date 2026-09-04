@@ -210,6 +210,7 @@ cmd_macos() {
   mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
   cp "$o/Tina4Pascal" "$app/Contents/MacOS/Tina4Pascal"
   cp "$ROOT/examples/macos/controls.html" "$app/Contents/Resources/controls.html"
+  [ -f "$ROOT/branding/AppIcon.icns" ] && cp "$ROOT/branding/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
   cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -217,6 +218,7 @@ cmd_macos() {
   <key>CFBundleExecutable</key><string>Tina4Pascal</string>
   <key>CFBundleIdentifier</key><string>com.tina4.pascal</string>
   <key>CFBundleName</key><string>Tina4Pascal</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>NSHighResolutionCapable</key><true/>

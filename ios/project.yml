@@ -24,6 +24,7 @@ targets:
       base:
         INFOPLIST_FILE: app/Info.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.tina4.pascal
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon   # app/Assets.xcassets/AppIcon
         # link the Pascal engine + the Apple C frameworks it uses
         LIBRARY_SEARCH_PATHS: "$(SRCROOT)/app"
         OTHER_LDFLAGS: "-ltina4ios"
