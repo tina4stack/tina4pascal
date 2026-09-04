@@ -5,12 +5,14 @@ The renderer runs on Android as a native `libtina4.so` that draws through
 `android/`). This doc is the build recipe **and the hard-won learnings** — the
 things that cost hours the first time.
 
-**Status:** verified on a real 32-bit (`armeabi-v7a`) device. Static rendering
-(text/type/lists/tables/SVG/QR), **density-correct sizing**, **scrolling with
-momentum/fling**, **button actions** routed through `Tina4Events`
-(`onclick="Counter:Inc()"` → registered handler → re-render), and **text
-input** (soft keyboard via `InputConnection` + key events) all work. The
-built-in demo is `MainActivity` calling `setHtml("@demo")`.
+**Status:** verified on a real 32-bit (`armeabi-v7a`) device. Working:
+static rendering (text/type/lists/tables/SVG/QR), density-correct sizing,
+**vertical + horizontal scrolling with momentum/fling** (a gesture locks onto
+the inner overflow scroller under the finger, else the page), **button actions**
+routed through `Tina4Events` (`onclick="Counter:Inc()"`), and **text input** —
+autofocus, soft keyboard, placeholder text, IME "Done" to dismiss, backspace.
+A branded launcher icon ships in `res/mipmap-*`. The built-in demo is
+`MainActivity` calling `setHtml("@demo")`.
 
 ## One-command flow
 

@@ -25,7 +25,12 @@ public class Tina4View extends View implements Runnable {
     private native void nativePaint(Canvas canvas, int w, int h, float density);
     private native int  nativeTouch(int action, float x, float y);
     private native int  nativeTick();
+    private native int  nativeWantsKeyboard();
+    private native void nativeBlur();
     native void nativeKey(int codepoint);   // package-visible for KeyInput
+
+    // IME "Done": drop focus + hide the keyboard
+    void imeDone() { nativeBlur(); hideKeyboard(); invalidate(); }
 
     private final float density;
 
@@ -36,6 +41,15 @@ public class Tina4View extends View implements Runnable {
         setFocusableInTouchMode(true);
     }
 
+    private boolean pendingKeyboard;
+
+    public void setHtml(String html) {
+        nativeSetHtml(html);
+        pendingKeyboard = nativeWantsKeyboard() != 0;   // autofocus
+        invalidate();
+    }
+
+
     // fling: the native side decays the velocity; we re-post each frame
     @Override
     public void run() {
@@ -44,14 +58,11 @@ public class Tina4View extends View implements Runnable {
     private void startFling() { removeCallbacks(this); postOnAnimation(this); }
     private void stopFling()  { removeCallbacks(this); }
 
-    public void setHtml(String html) {
-        nativeSetHtml(html);
-        invalidate();
-    }
-
     @Override
     protected void onDraw(Canvas canvas) {
         nativePaint(canvas, getWidth(), getHeight(), density);
+        // autofocus: first real frame is the reliable moment to raise the kbd
+        if (pendingKeyboard) { pendingKeyboard = false; showKeyboard(); }
     }
 
     @Override
@@ -100,8 +111,12 @@ public class Tina4View extends View implements Runnable {
 
     @Override
     public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
-        outAttrs.inputType = InputType.TYPE_CLASS_TEXT;
-        outAttrs.imeOptions = EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI;
+        // NO_SUGGESTIONS stops predictive keyboards from using composing text
+        // (which we don't track) — they commitText each character instead.
+        outAttrs.inputType = InputType.TYPE_CLASS_TEXT
+            | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
+        outAttrs.imeOptions = EditorInfo.IME_ACTION_DONE
+            | EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN;
         return new KeyInput(this);
     }
 
@@ -110,12 +125,29 @@ public class Tina4View extends View implements Runnable {
         private final Tina4View view;
         KeyInput(Tina4View v) { super(v, false); this.view = v; }
 
+        private int composing = 0;
         @Override
         public boolean commitText(CharSequence text, int newCursorPosition) {
+            for (int i = 0; i < composing; i++) view.nativeKey(8);      // erase composing run
+            composing = 0;
             for (int i = 0; i < text.length(); i++) view.nativeKey(text.charAt(i));
             view.invalidate();
             return true;
         }
+        // fallback for keyboards that still compose: replace the previous
+        // composing run, then re-emit the new text so each char lands
+        @Override
+        public boolean setComposingText(CharSequence text, int newCursorPosition) {
+            for (int i = 0; i < composing; i++) view.nativeKey(8);      // erase old
+            for (int i = 0; i < text.length(); i++) view.nativeKey(text.charAt(i));
+            composing = text.length();
+            view.invalidate();
+            return true;
+        }
+        @Override
+        public boolean finishComposingText() { composing = 0; return true; }
+        @Override
+        public boolean performEditorAction(int actionCode) { view.imeDone(); return true; }
         @Override
         public boolean deleteSurroundingText(int before, int after) {
             for (int i = 0; i < before; i++) view.nativeKey(8); // backspace
@@ -125,7 +157,9 @@ public class Tina4View extends View implements Runnable {
         @Override
         public boolean sendKeyEvent(KeyEvent event) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                if (event.getKeyCode() == KeyEvent.KEYCODE_DEL) {
+                int code = event.getKeyCode();
+                if (code == KeyEvent.KEYCODE_ENTER) { view.imeDone(); return true; }
+                if (code == KeyEvent.KEYCODE_DEL) {
                     view.nativeKey(8); view.invalidate(); return true;
                 }
                 int u = event.getUnicodeChar();

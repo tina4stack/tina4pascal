@@ -25,14 +25,20 @@ echo "2/6 dexing…"
 "$BT/d8" --min-api 21 --lib "$ANDROID_JAR" --output "$OUT" \
   $(find "$OUT/classes" -name '*.class')
 
-echo "3/6 linking resources + manifest…"
+echo "3/6 compiling + linking resources + manifest…"
+# compile res/ (icons, colors) into a flat archive for the linker
+RESFLAGS=""
+if [ -d "$APPDIR/res" ]; then
+  "$BT/aapt2" compile --dir "$APPDIR/res" -o "$OUT/res.zip"
+  RESFLAGS="$OUT/res.zip"
+fi
 # inject the package into the manifest for aapt2 (Gradle uses namespace instead)
 sed 's/<manifest /<manifest package="com.tina4.pascal" /' \
   "$APPDIR/AndroidManifest.xml" > "$OUT/AndroidManifest.xml"
 "$BT/aapt2" link -o "$OUT/base.apk" -I "$ANDROID_JAR" \
   --manifest "$OUT/AndroidManifest.xml" \
   --min-sdk-version 21 --target-sdk-version 34 \
-  -A "$APPDIR/assets"
+  -A "$APPDIR/assets" $RESFLAGS
 
 echo "4/6 adding dex + native libs ($ABIS)…"
 for abi in $ABIS; do
