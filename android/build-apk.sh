@@ -52,17 +52,37 @@ echo "5/6 zipalign…"
 "$BT/zipalign" -f -p 4 "$OUT/base.apk" "$OUT/aligned.apk"
 
 echo "6/6 signing…"
-KS="$HERE/debug.keystore"
-if [ ! -f "$KS" ]; then
-  "$JAVA_HOME/bin/keytool" -genkeypair -keystore "$KS" -alias androiddebugkey \
-    -keyalg RSA -keysize 2048 -validity 10000 \
-    -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"
+# Release signing when a real keystore is supplied (env), else a throwaway debug
+# key. For release set: TINA4_KEYSTORE (path), TINA4_KEY_ALIAS, TINA4_KS_PASS,
+# and optionally TINA4_KEY_PASS (defaults to the store pass). Make one with
+# `tina4pascal keygen`.
+if [ -n "${TINA4_KEYSTORE:-}" ]; then
+  [ -f "$TINA4_KEYSTORE" ] || { echo "TINA4_KEYSTORE not found: $TINA4_KEYSTORE"; exit 1; }
+  : "${TINA4_KEY_ALIAS:?set TINA4_KEY_ALIAS for release signing}"
+  : "${TINA4_KS_PASS:?set TINA4_KS_PASS for release signing}"
+  KP="${TINA4_KEY_PASS:-$TINA4_KS_PASS}"
+  APK="$HERE/tina4pascal-release.apk"
+  "$BT/apksigner" sign --ks "$TINA4_KEYSTORE" --ks-pass "pass:$TINA4_KS_PASS" \
+    --ks-key-alias "$TINA4_KEY_ALIAS" --key-pass "pass:$KP" \
+    --out "$APK" "$OUT/aligned.apk"
+  echo "signed RELEASE with $TINA4_KEYSTORE (alias $TINA4_KEY_ALIAS)"
+else
+  KS="$HERE/debug.keystore"
+  if [ ! -f "$KS" ]; then
+    "$JAVA_HOME/bin/keytool" -genkeypair -keystore "$KS" -alias androiddebugkey \
+      -keyalg RSA -keysize 2048 -validity 10000 \
+      -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"
+  fi
+  APK="$HERE/tina4pascal-debug.apk"
+  "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
+    --out "$APK" "$OUT/aligned.apk"
 fi
-"$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
-  --out "$HERE/tina4pascal-debug.apk" "$OUT/aligned.apk"
+# prove the signature + show the signing certificate fingerprint
+"$BT/apksigner" verify --print-certs "$APK" 2>/dev/null \
+  | grep -iE "Signer #1 certificate (DN|SHA-256)" | head -2 || true
 
 echo
-echo "APK: $HERE/tina4pascal-debug.apk"
-ls -la "$HERE/tina4pascal-debug.apk" | awk '{print "size: "$5" bytes"}'
-echo "install:  adb install -r \"$HERE/tina4pascal-debug.apk\""
+echo "APK: $APK"
+ls -la "$APK" | awk '{print "size: "$5" bytes"}'
+echo "install:  adb install -r \"$APK\""
 echo "launch:   adb shell am start -n com.tina4.pascal/.MainActivity"

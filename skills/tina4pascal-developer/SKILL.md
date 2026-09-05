@@ -131,13 +131,26 @@ the incantation before you wire it in.
 
 ```sh
 tools/tina4pascal deploy <target>      # build + install/open + launch
+tools/tina4pascal launch <target>      # re-foreground the installed app, NO rebuild
 tools/tina4pascal debug  <target>      # build → launch → screenshot → tail log
 tools/tina4pascal screenshot <target> [out.png]   # grab the app screen (read the PNG to SEE it)
 tools/tina4pascal tap   <target> X Y             # drive it: click
 tools/tina4pascal swipe <target> X1 Y1 X2 Y2 [ms] # scroll / drag
 tools/tina4pascal text  <target> "…"             # type into the focused field
-tools/tina4pascal logs  <target> [-f|N]          # on-device log
+tools/tina4pascal logs  <target> [-f|N]          # on-device log (android app-pid/crash · ios CoreDevice syslog)
+tools/tina4pascal keygen [out.jks] [alias]       # Android: one-time release keystore
+tools/tina4pascal release                        # Android: release-SIGNED APK (TINA4_KEYSTORE env)
 ```
+
+- **iOS device detection** is via `xcrun devicectl` (CoreDevice, iOS 17+), not
+  USB `idevice_id` — a network-paired iPhone is found automatically. Screenshots
+  and `logs ios` go over the same tunnel (`pymobiledevice3`).
+- **`deploy android` rebuilds every ABI** (`build.sh` → all-ABI `.so` → APK); do
+  NOT hand-build one ABI (`ABIS=arm64-v8a build.sh`) — a 32-bit device then loads
+  a stale `.so` and crashes with `UnsatisfiedLinkError`. Let the tool do it.
+- On-device native views (`<video>` overlays) are real OS views over the engine's
+  placeholder box: iOS `AVPlayerViewController`, macOS `AVPlayerView`, Android
+  `VideoView`+`MediaController`, all driven by the engine's `TinaEmbed*` query.
 
 - **iOS** deploys to a *physical iPhone* (FPC 3.2.2 is device-only — no
   Simulator target; that + Android emulator are on the roadmap). `screenshot ios`

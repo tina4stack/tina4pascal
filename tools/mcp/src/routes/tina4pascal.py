@@ -94,7 +94,39 @@ def text(target: str, value: str):
     return _run(["text", target, value])
 
 
-@mcp_tool("tina4_logs", description="Tail the on-device log (android logcat / "
-          "ios syslog).", server=mcp)
+@mcp_tool("tina4_logs", description="Tail the on-device log: android filters to "
+          "the app's process (or surfaces a crash when it died); ios uses the "
+          "CoreDevice syslog over the tunnel.", server=mcp)
 def logs(target: str, lines: int = 40):
     return _run(["logs", target, str(lines)])
+
+
+@mcp_tool("tina4_launch", description="Bring the already-installed app to the "
+          "foreground WITHOUT rebuilding (android | ios | macos) — a fast run / "
+          "re-foreground.", server=mcp)
+def launch(target: str):
+    return _run(["launch", target])
+
+
+@mcp_tool("tina4_release", description="Build a release-SIGNED Android APK "
+          "(android/tina4pascal-release.apk). Provide the keystore path/alias/"
+          "passwords, or set TINA4_KEYSTORE/TINA4_KEY_ALIAS/TINA4_KS_PASS in the "
+          "server env and omit them here. Create a keystore first with the CLI "
+          "`tina4pascal keygen` (interactive).", server=mcp)
+def release(keystore: str = "", alias: str = "", store_pass: str = "",
+            key_pass: str = ""):
+    env = os.environ.copy()
+    if keystore:
+        env["TINA4_KEYSTORE"] = keystore
+    if alias:
+        env["TINA4_KEY_ALIAS"] = alias
+    if store_pass:
+        env["TINA4_KS_PASS"] = store_pass
+    if key_pass:
+        env["TINA4_KEY_PASS"] = key_pass
+    try:
+        p = subprocess.run([CLI, "release"], cwd=REPO, capture_output=True,
+                           text=True, timeout=1800, env=env)
+        return ((p.stdout or "") + (p.stderr or "")).strip() or "(no output)"
+    except Exception as e:  # noqa: BLE001
+        return f"error: {e}"

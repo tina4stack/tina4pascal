@@ -25,6 +25,7 @@ BT_VER="34.0.0"; PLATFORM_VER="android-34"
 # iOS (physical device via Xcode + libimobiledevice/pymobiledevice3)
 IOS_DIR="$ROOT/ios"
 IOS_BUNDLE="com.tina4.pascal"
+ANDROID_PKG="com.tina4.pascal"      # Android application id (adb targets)
 # pipx installs pymobiledevice3 here; fall back to PATH
 PMD3="$(command -v pymobiledevice3 2>/dev/null || echo "$HOME/.local/bin/pymobiledevice3")"
 
@@ -264,7 +265,36 @@ cmd_compliance() { sh "$ROOT/tools/run-compliance.sh" "${1:-*}"; }
 # ---- android apk / deploy ----------------------------------------------------
 cmd_apk() {
   sh "$ROOT/android/build.sh"
-  ANDROID_SDK="$ANDROID_SDK" sh "$ROOT/android/build-apk.sh"
+  ANDROID_SDK="$ANDROID_SDK" \
+    TINA4_KEYSTORE="${TINA4_KEYSTORE:-}" TINA4_KEY_ALIAS="${TINA4_KEY_ALIAS:-}" \
+    TINA4_KS_PASS="${TINA4_KS_PASS:-}" TINA4_KEY_PASS="${TINA4_KEY_PASS:-}" \
+    sh "$ROOT/android/build-apk.sh"
+}
+
+# keygen [out.jks] [alias] — create a release signing keystore (prompts for the
+# passwords + identity). One-time; keep the file + passwords safe (Play requires
+# the SAME key for every update).
+cmd_keygen() {
+  ks="${1:-$ROOT/android/release.jks}"; alias="${2:-tina4}"
+  command -v keytool >/dev/null 2>&1 || die "keytool not found (install a JDK)"
+  [ -f "$ks" ] && die "keystore already exists: $ks (delete it to regenerate)"
+  say "→ creating release keystore ${D}$ks${Z} (alias $alias)"
+  keytool -genkeypair -v -keystore "$ks" -alias "$alias" \
+    -keyalg RSA -keysize 2048 -validity 10000 || die "keytool failed"
+  ok "keystore created: $ks"
+  say "To sign a release build, export these (then: tina4pascal release):"
+  say "  export TINA4_KEYSTORE=\"$ks\""
+  say "  export TINA4_KEY_ALIAS=\"$alias\""
+  say "  export TINA4_KS_PASS=…   # store password you just set"
+  say "  export TINA4_KEY_PASS=…  # key password (omit if same as store)"
+}
+
+# release — build a release-SIGNED APK (needs the TINA4_KEYSTORE env, see keygen)
+cmd_release() {
+  [ -n "${TINA4_KEYSTORE:-}" ] \
+    || die "no release keystore — run: tina4pascal keygen, then export TINA4_KEYSTORE/TINA4_KEY_ALIAS/TINA4_KS_PASS"
+  cmd_apk
+  ok "release APK → $ROOT/android/tina4pascal-release.apk"
 }
 
 cmd_deploy() {
@@ -381,19 +411,40 @@ cmd_logs() {
   plat="${1:-android}"; shift 2>/dev/null || true
   case "$plat" in
     ios)
-      if command -v idevicesyslog >/dev/null 2>&1; then
-        case "${1:-}" in -f|--follow) idevicesyslog -m Tina4Pascal ;;
-        *) idevicesyslog -m Tina4Pascal & p=$!; sleep 3; kill $p 2>/dev/null || true ;; esac
-      else die "idevicesyslog missing — run: tina4pascal setup ios"; fi ;;
+      # CoreDevice (iOS 17+) syslog over the tunnel — same transport as the
+      # screenshots; idevicesyslog needs USB libimobiledevice and won't see a
+      # network-paired phone. Filter to the app + its media stack.
+      PMD3="$(command -v pymobiledevice3 2>/dev/null || echo "$HOME/.local/bin/pymobiledevice3")"
+      { [ -x "$PMD3" ] || command -v pymobiledevice3 >/dev/null 2>&1; } \
+        || die "pymobiledevice3 missing — run: tina4pascal setup ios"
+      filt='Tina4Pascal|tina4|AVPlayer|CoreMedia|VideoToolbox'
+      case "${1:-}" in
+        -f|--follow) "$PMD3" syslog live 2>/dev/null | grep --line-buffered -iE "$filt" ;;
+        *) tmp="$(mktemp)"
+           "$PMD3" syslog live 2>/dev/null | grep --line-buffered -iE "$filt" > "$tmp" & p=$!
+           sleep "${1:-5}"; kill "$p" 2>/dev/null || true
+           tail -"${2:-60}" "$tmp"; rm -f "$tmp" ;;
+      esac ;;
     android|*) cmd_logcat "$@" ;;
   esac
 }
 
+# Android logs. Filters to the app's own process when it's running; if it isn't
+# (e.g. it just crashed), falls back to the crash channels so a FATAL EXCEPTION
+# is never hidden by a too-narrow tag filter.
 cmd_logcat() {
   adb_have_device || die "no device attached"
+  pid="$(adb shell pidof "$ANDROID_PKG" 2>/dev/null | tr -d '\r ' | awk '{print $1}')"
   case "${1:-}" in
-    -f|--follow) adb logcat -s tina4 ;;
-    *) adb logcat -d -s tina4 | tail -"${1:-40}" ;;
+    -f|--follow)
+      if [ -n "$pid" ]; then adb logcat --pid="$pid"
+      else adb logcat -s AndroidRuntime:* DEBUG:* tina4:* ; fi ;;
+    *)
+      if [ -n "$pid" ]; then adb logcat -d --pid="$pid" | tail -"${1:-60}"
+      else
+        warn "$ANDROID_PKG not running — showing recent crashes"
+        adb logcat -d -s AndroidRuntime:* DEBUG:* tina4:* | tail -"${1:-60}"
+      fi ;;
   esac
 }
 
@@ -422,7 +473,8 @@ cmd_debug() {
       adb shell am start -n com.tina4.pascal/.MainActivity >/dev/null 2>&1
       sleep 3
       cmd_screenshot android "$ROOT/build/device.png"
-      say "${B}--- tina4 log ---${Z}"; adb logcat -d -s tina4 | tail -20 ;;
+      say "${B}--- device log (app pid, or crashes if it died) ---${Z}"
+      cmd_logcat 40 ;;
     ios)
       cmd_ios
       sleep 2
@@ -500,8 +552,14 @@ ${B}macOS run${Z}
 
 ${B}deploy & run${Z}  (targets: android · ios · macos · win64 · linux)
   deploy <target>        build + install/open + launch on the target
+  launch <target>        re-foreground the installed app, NO rebuild (fast run)
   ios                    (alias) build engine + xcodebuild sign + install + launch on iPhone
   apk                    Android: native .so (all ABIs) + signed debug APK
+
+${B}release signing${Z}  (Android)
+  keygen [out.jks] [alias]   create a release keystore (one-time; keep it safe)
+  release                    build a release-SIGNED APK
+                             (needs TINA4_KEYSTORE / TINA4_KEY_ALIAS / TINA4_KS_PASS)
 
 ${B}debug loop${Z}
   debug <target>         build → install → launch → screenshot → tail log
@@ -512,7 +570,8 @@ ${B}drive the app${Z}  (the device-automation the IDE builds on)
   tap <target> X Y                click/tap at screen coords
   swipe <target> X1 Y1 X2 Y2 [ms] scroll / drag
   text <target> "..."             type into the focused field
-  logs <target> [-f|N]            tail the on-device log
+  logs <target> [-f|N]            on-device log: android = app pid (or crash),
+                                  ios = CoreDevice syslog over the tunnel
                          (android: full live input; ios/macos: screenshot+deploy now,
                           live input via WebDriverAgent / in-app bridge — roadmap)
 
@@ -534,6 +593,8 @@ case "$cmd" in
   snapshot)   cmd_snapshot "$@" ;;
   compliance) cmd_compliance "$@" ;;
   apk)        cmd_apk "$@" ;;
+  keygen)     cmd_keygen "$@" ;;
+  release)    cmd_release "$@" ;;
   deploy)     case "${1:-}" in android|ios|macos|win64|windows|linux) cmd_run_target "$@" ;; *) cmd_deploy "$@" ;; esac ;;
   ios)        cmd_ios "$@" ;;
   launch)     cmd_launch "$@" ;;
