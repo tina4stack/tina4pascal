@@ -2479,7 +2479,11 @@ begin
   begin
     Result.Margin.Top := 8;
     Result.Margin.Bottom := 8;
+    Result.ExplicitHeight := 1;        // a 1px horizontal rule …
+    Result.BackgroundColor := $FFC7C7CC; // … painted as a thin grey line
   end
+  else if (TN = 'template') or (TN = 'datalist') then
+    Result.Display := 'none'           // inert: parsed but never rendered
   else if TN = 'br' then
     Result.Display := 'inline'
   else if TN = 'img' then
