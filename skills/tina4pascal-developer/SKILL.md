@@ -91,8 +91,43 @@ Verification discipline: real compiles and real runs, never mocks.
 
 Latent-bug watch: FPC does NOT zero record/local fields — an uninitialised
 `Single` fed to `MeasureText` returns a garbage-huge width (this caused every
-inline-block to stack). Initialise every field of a `TInlineItem`/style record
-you construct.
+inline-block to stack); an uninitialised `Boolean` (e.g. `AppearanceNone`,
+`FontWeight`) makes a control randomly render wrong. Initialise **every** field
+of a `TInlineItem`/`TTextRun`/style record you construct — including new ones
+you add — and default new style fields in BOTH `TComputedStyle.Default` and the
+inherit path in `ForTag`.
+
+## Device dev loop — always via `tools/tina4pascal`
+
+Do NOT hand-run `xcodebuild` / `devicectl` / `pymobiledevice3` / `adb` — the CLI
+wraps them so the workflow is one command and downstream devs get the same. One
+verb, five targets (`android · ios · macos · win64 · linux`):
+
+```sh
+tools/tina4pascal deploy <target>      # build + install/open + launch
+tools/tina4pascal debug  <target>      # build → launch → screenshot → tail log
+tools/tina4pascal screenshot <target> [out.png]   # grab the app screen (read the PNG to SEE it)
+tools/tina4pascal tap   <target> X Y             # drive it: click
+tools/tina4pascal swipe <target> X1 Y1 X2 Y2 [ms] # scroll / drag
+tools/tina4pascal text  <target> "…"             # type into the focused field
+tools/tina4pascal logs  <target> [-f|N]          # on-device log
+```
+
+- **iOS** deploys to a *physical iPhone* (FPC 3.2.2 is device-only — no
+  Simulator target; that + Android emulator are on the roadmap). `screenshot ios`
+  uses `pymobiledevice3` over the CoreDevice tunnel (iOS 17+, phone unlocked) —
+  this is how you SEE the app on device; capture then `Read` the PNG.
+- Live input (`tap/swipe/text`) is wired for **Android** today; on iOS/macOS
+  `deploy`/`debug`/`screenshot` work now, live input needs a WebDriverAgent /
+  in-app bridge (roadmap). `win64`/`linux` cross-compile only (shells pending).
+- An **MCP service** (`tools/mcp/`, a tina4-python app) exposes all of the above
+  as `@mcp_tool`s for the IDE/an agent: `cd tools/mcp && uv sync &&
+  TINA4_DEBUG=true tina4 serve` → `http://localhost:7146/tina4pascal`. It shells
+  out to this same CLI, so keep new device capabilities in the CLI and the MCP
+  tool inherits them.
+- On-device changes: a Pascal (engine) change needs the shell lib rebuilt
+  (`deploy`/`debug` do it); an HTML-only change (e.g. `ios/app/showcase.html`)
+  just needs the app rebuilt (still `deploy`), no `.a` rebuild.
 
 ## Porting from Tina4Delphi
 
