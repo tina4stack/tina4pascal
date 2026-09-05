@@ -49,8 +49,9 @@ Close the audited gaps until an author can trust the box. Ordered by impact ÷ e
 - **Per-side borders** + **border-style** (dashed/dotted/double) (today: Top side, solid).
 
 ### 1c. Typography
-- **font-weight** numeric (light/medium/semibold/black); **@font-face** downloadable
-  fonts (fetch + `RegisterFont` on each shell — the plumbing exists).
+- ✅ **@font-face** downloadable fonts — parse + fetch (async/disk-cached) +
+  `RegisterFont` on all three shells, CSS family aliased to the real face.
+- **font-weight** numeric (light/medium/semibold/black).
 - **text-overflow: ellipsis**, **overflow-wrap/word-break**, **white-space: pre-wrap**.
 - **text-shadow** paint, **text-indent**, **text-decoration** overline + color/style.
 
