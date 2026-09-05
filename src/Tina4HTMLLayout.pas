@@ -2135,6 +2135,14 @@ begin
       begin
         LayoutBlock(Box, c, ParentStyle, CX, CY, CW);
         absBox := Box.Children[Box.Children.Count - 1];
+        // Shrink-to-fit: an out-of-flow box with no explicit width sizes to its
+        // content (CSS "shrink-to-fit"), not the full container — e.g. a pill
+        // pinned with `right` only should hug its text, not span the row.
+        if (ResolveSize(cs.ExplicitWidth, CW) < 0) and (absBox.NaturalW > 0) then
+        begin
+          absCH := absBox.NaturalW + cs.Padding.Horz + cs.BorderWidths.Horz;
+          if absCH < absBox.W then absBox.W := absCH;
+        end;
         // fixed is viewport-relative (origin 0,0); absolute is container-relative.
         // Paint (PaintBoxEx) drops the scroll offset for fixed so it stays put.
         if SameText(cs.CSSPosition, 'fixed') then
@@ -2816,7 +2824,7 @@ begin
     rcx := Box.X + Box.W / 2; rcy := y + Box.H / 2;
     Canvas.SaveState;
     Canvas.Translate(rcx, rcy);
-    if st.TransformRotate <> 0 then Canvas.Rotate(-st.TransformRotate); // CSS is clockwise
+    if st.TransformRotate <> 0 then Canvas.Rotate(st.TransformRotate); // +deg = CSS clockwise (flipped canvas)
     if (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1) then
       Canvas.Scale(st.TransformScaleX, st.TransformScaleY);
     Canvas.Translate(-rcx, -rcy);
@@ -2892,14 +2900,23 @@ begin
     Exit;
   end;
 
-  // box-shadow (drawn under the box; blur approximated as a hard edge)
+  // box-shadow (drawn under the box; blur approximated as a hard edge). Follows
+  // the box's corner radius so a square shadow never peeks past a rounded card.
   if (not Hidden) and st.BoxShadow.Active and not st.BoxShadow.Inset then
-    Canvas.FillRect(
-      Box.X + st.BoxShadow.OffsetX - st.BoxShadow.SpreadRadius,
-      y + st.BoxShadow.OffsetY - st.BoxShadow.SpreadRadius,
-      Box.W + 2 * st.BoxShadow.SpreadRadius,
-      Box.H + 2 * st.BoxShadow.SpreadRadius,
-      ScaleAlpha(st.BoxShadow.Color, op));
+    if st.MaxCornerRadius > 0 then
+      Canvas.FillRoundRect(
+        Box.X + st.BoxShadow.OffsetX - st.BoxShadow.SpreadRadius,
+        y + st.BoxShadow.OffsetY - st.BoxShadow.SpreadRadius,
+        Box.W + 2 * st.BoxShadow.SpreadRadius,
+        Box.H + 2 * st.BoxShadow.SpreadRadius,
+        st.MaxCornerRadius, ScaleAlpha(st.BoxShadow.Color, op))
+    else
+      Canvas.FillRect(
+        Box.X + st.BoxShadow.OffsetX - st.BoxShadow.SpreadRadius,
+        y + st.BoxShadow.OffsetY - st.BoxShadow.SpreadRadius,
+        Box.W + 2 * st.BoxShadow.SpreadRadius,
+        Box.H + 2 * st.BoxShadow.SpreadRadius,
+        ScaleAlpha(st.BoxShadow.Color, op));
 
   bg := ScaleAlpha(st.BackgroundColor, op);
   bd := ScaleAlpha(st.BorderColor, op);

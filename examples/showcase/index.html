@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  :root{
+    --blue:#2b41e6; --blue-deep:#1a2aa8; --blue-soft:#e4e8ff;
+    --pink:#ff5aa0; --pink-deep:#d63884; --pink-soft:#ffe1ee;
+    --yellow:#ffd23c; --yellow-soft:#fff4cf;
+    --paper:#fbfaf7; --surface:#ffffff; --surface-2:#f3f2fb;
+    --ink:#15162e; --muted:#5b5c78; --faint:#9698b4; --border:#e6e5f0;
+    --radius:16px;
+  }
+  body{ background:var(--paper); color:var(--ink);
+        font-family:"Hanken Grotesk", system-ui, sans-serif; }
+  .wrap{ max-width:900px; margin:0 auto; padding:24px; }
+  h1{ font-family:"Gabarito", system-ui, sans-serif; font-size:34px; letter-spacing:-0.02em; margin:0 0 4px; }
+  h2{ font-family:"Gabarito", system-ui, sans-serif; font-size:20px; margin:28px 0 10px; color:var(--blue-deep); }
+  p{ color:var(--muted); line-height:1.5; }
+  .card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+         padding:16px; box-shadow:0 1px 2px rgba(21,22,46,.06); }
+  .tag{ font-family:"Space Mono", monospace; font-size:11px; text-transform:uppercase;
+        letter-spacing:0.08em; color:var(--faint); }
+
+  /* fixed badge (stays put on scroll) */
+  .badge{ position:fixed; top:14px; right:14px; z-index:50;
+          background:var(--pink); color:#fff; padding:6px 12px; border-radius:999px;
+          font-family:"Space Mono", monospace; font-size:12px; }
+
+  /* borders */
+  .brow{ font-size:0; }
+  .bbox{ display:inline-block; width:110px; height:52px; margin:6px; background:#fff; }
+  .b-solid{ border:3px solid var(--blue); }
+  .b-dashed{ border:3px dashed var(--pink-deep); }
+  .b-dotted{ border:3px dotted var(--ink); }
+  .b-double{ border:6px double var(--blue); }
+  .b-side{ border-left:6px solid var(--yellow); border-bottom:2px solid var(--border); }
+
+  /* flex */
+  .flex{ display:flex; gap:10px; }
+  .grow1{ flex:1; }
+  .fcell{ background:var(--blue-soft); border-radius:10px; padding:10px; color:var(--ink); }
+
+  /* grid */
+  .grid3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  .grid-mix{ display:grid; grid-template-columns:140px 1fr; gap:10px; }
+  .gcell{ background:var(--yellow-soft); border-radius:10px; padding:12px; }
+  .span2{ grid-column:span 2; background:var(--pink-soft); }
+
+  /* backgrounds & transforms */
+  .grad{ height:60px; border-radius:10px;
+         background:linear-gradient(90deg, var(--blue), var(--pink)); }
+  .rot{ display:inline-block; width:60px; height:60px; background:var(--blue);
+        border-radius:10px; transform:rotate(12deg); }
+  .scl{ display:inline-block; width:60px; height:60px; background:var(--pink);
+        border-radius:10px; transform:scale(0.8); }
+
+  /* text features */
+  .ellip{ width:240px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+          background:var(--surface-2); padding:8px; border-radius:8px; }
+  .brk{ width:240px; overflow-wrap:break-word; background:var(--surface-2);
+        padding:8px; border-radius:8px; }
+  .indent{ text-indent:32px; }
+  pre{ background:var(--surface-2); padding:10px; border-radius:8px;
+       font-family:"Space Mono", monospace; font-size:13px; }
+
+  /* buttons with pseudo-classes */
+  .btn{ background:var(--blue); color:#fff; border:none; border-radius:11px;
+        padding:9px 16px; font-family:"Hanken Grotesk", sans-serif; font-size:14px; }
+  .btn:hover{ background:var(--blue-deep); }
+  .btn:active{ background:var(--pink-deep); }
+  .btn-ghost{ background:var(--surface); color:var(--blue); border:1px solid var(--border); }
+
+  /* table */
+  table{ width:100%; }
+  th{ background:var(--surface-2); }
+  td, th{ border:1px solid var(--border); padding:8px; }
+
+  /* form */
+  label{ display:block; font-size:13px; color:var(--muted); margin:8px 0 3px; }
+  input[type=text], select, textarea{ width:100%; padding:8px; border:1px solid var(--border);
+        border-radius:9px; box-sizing:border-box; }
+
+  @media (max-width:600px){ .grid3{ grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+  <div class="badge">position:fixed · z-index</div>
+  <div class="wrap">
+
+    <span class="tag">Tina4Pascal renderer</span>
+    <h1>Everything, on one page</h1>
+    <p>A single document exercising the implemented HTML + CSS: layout, paint, typography,
+    controls and interaction — all rendered natively by pure Free Pascal.</p>
+
+    <h2>Typography</h2>
+    <div class="card">
+      <p style="font-family:'Gabarito',sans-serif;font-size:22px;color:var(--ink)">Gabarito display heading</p>
+      <p style="font-family:serif;font-size:17px">A serif paragraph (Times), for contrast against the sans body.</p>
+      <p style="font-family:monospace;font-size:14px">monospace: the quick brown fox 0123456789</p>
+      <p style="font-weight:bold">Bold weight,
+         <span style="font-style:italic">italic</span>,
+         <span style="text-decoration:underline">underline</span>,
+         <span style="text-decoration:line-through">strike</span>,
+         <span style="text-transform:uppercase">uppercased</span>,
+         H<sub>2</sub>O and x<sup>2</sup>, and <mark>a highlight</mark>.</p>
+      <p class="indent">This paragraph uses text-indent to push its first line in by 32px,
+         and then the following wrapped lines return to the left margin as expected.</p>
+      <div class="ellip">This label is far too long for its box so it truncates with an ellipsis</div>
+      <div class="brk" style="margin-top:8px">Break long words: https://example.com/very/long/token=abcdefghijklmnopqrstuvwxyz0123456789</div>
+      <pre>function greet(name)
+    return "hello, " + name   // whitespace + newlines preserved</pre>
+    </div>
+
+    <h2>Borders &amp; radius</h2>
+    <div class="card brow">
+      <div class="bbox b-solid"></div><div class="bbox b-dashed"></div><div class="bbox b-dotted"></div><div class="bbox b-double"></div><div class="bbox b-side"></div>
+    </div>
+
+    <h2>Backgrounds &amp; transforms</h2>
+    <div class="card">
+      <div class="grad"></div>
+      <div style="margin-top:12px"><span class="rot"></span> <span class="scl"></span>
+        <span style="margin-left:12px;color:var(--muted)">transform: rotate &amp; scale</span></div>
+    </div>
+
+    <h2>Flexbox</h2>
+    <div class="card">
+      <div class="flex">
+        <div class="fcell grow1">flex:1 grows</div>
+        <div class="fcell">auto</div>
+        <div class="fcell grow1">flex:1 grows</div>
+      </div>
+      <div class="flex" style="margin-top:10px">
+        <div class="fcell" style="padding-top:24px;padding-bottom:24px">taller</div>
+        <div class="fcell grow1">align-items:stretch makes me match the tall one</div>
+      </div>
+    </div>
+
+    <h2>CSS Grid</h2>
+    <div class="card">
+      <div class="grid3">
+        <div class="gcell">1fr</div><div class="gcell">1fr</div><div class="gcell">1fr</div>
+      </div>
+      <div class="grid-mix" style="margin-top:10px">
+        <div class="gcell">140px</div><div class="gcell">1fr</div>
+        <div class="gcell span2">grid-column: span 2</div>
+      </div>
+    </div>
+
+    <h2>Buttons &amp; pseudo-classes</h2>
+    <div class="card">
+      <button class="btn" onclick="app:primary()">Primary</button>
+      <button class="btn btn-ghost" onclick="app:secondary()">Secondary</button>
+      <span style="color:var(--faint);font-size:13px;margin-left:8px">:hover / :active change colour</span>
+    </div>
+
+    <h2>Table</h2>
+    <div class="card">
+      <table>
+        <tr><th>Feature</th><th>Status</th><th colspan="1">Notes</th></tr>
+        <tr><td>Grid</td><td>✓</td><td>fr / repeat / gap / span</td></tr>
+        <tr><td>Fixed</td><td>✓</td><td>viewport-pinned</td></tr>
+        <tr><td>Fonts</td><td>✓</td><td>@font-face, all shells</td></tr>
+      </table>
+    </div>
+
+    <h2>Form controls</h2>
+    <div class="card">
+      <label>Text</label>
+      <input type="text" value="editable field">
+      <label>Choose</label>
+      <select><option>One</option><option>Two</option><option>Three</option></select>
+      <label>Date</label>
+      <input type="date" value="2026-09-05">
+      <label>Notes</label>
+      <textarea>multi-line
+textarea</textarea>
+      <div style="margin-top:10px">
+        <input type="checkbox" checked> <span>Checkbox</span>
+        &nbsp;&nbsp;
+        <input type="radio" checked> <span>Radio</span>
+      </div>
+    </div>
+
+    <h2>Details</h2>
+    <div class="card">
+      <details open>
+        <summary>Open by default — click to toggle</summary>
+        <p>The summary stays; this body shows/hides on tap.</p>
+      </details>
+      <hr>
+      <blockquote style="border-left:4px solid var(--blue);margin:0;padding-left:12px;color:var(--muted)">
+        A blockquote, with a left accent border.</blockquote>
+    </div>
+
+    <h2>Not yet built <span class="tag">— compare with Chrome to see the gap</span></h2>
+    <div class="card">
+      <p>These are parsed but not yet faithfully rendered. In Chrome they look right;
+         in Tina4 they fall back (flat colour / hard edge / no effect).</p>
+
+      <p class="tag" style="margin-top:12px">real gradients — linear multi-stop + radial</p>
+      <div style="height:48px;border-radius:10px;background:linear-gradient(90deg,#2b41e6 0%,#ff5aa0 50%,#ffd23c 100%)"></div>
+      <div style="height:48px;border-radius:10px;margin-top:8px;background:radial-gradient(circle, #ff5aa0, #2b41e6)"></div>
+
+      <p class="tag" style="margin-top:12px">box-shadow — soft blur + inset</p>
+      <div style="display:inline-block;width:90px;height:48px;margin:8px 14px;background:#fff;border-radius:10px;box-shadow:0 8px 24px rgba(43,65,230,.45)"></div>
+      <div style="display:inline-block;width:90px;height:48px;margin:8px;background:#fff;border-radius:10px;box-shadow:inset 0 3px 10px rgba(214,56,132,.5)"></div>
+
+      <p class="tag" style="margin-top:12px">font-weight numeric (100 · 300 · 500 · 700 · 900)</p>
+      <p style="margin:2px 0"><span style="font-weight:100">Thin</span> ·
+        <span style="font-weight:300">Light</span> ·
+        <span style="font-weight:500">Medium</span> ·
+        <span style="font-weight:700">Bold</span> ·
+        <span style="font-weight:900">Black</span></p>
+
+      <p class="tag" style="margin-top:12px">text-shadow · transform: skew</p>
+      <p style="margin:2px 0;font-size:22px;text-shadow:2px 2px 0 var(--pink)">Shadowed heading</p>
+      <div style="display:inline-block;width:70px;height:44px;background:var(--blue);transform:skewX(-12deg)"></div>
+
+      <p class="tag" style="margin-top:16px">form controls: range · color · progress · meter</p>
+      <label>range</label><input type="range" min="0" max="100" value="60">
+      <label>color</label><input type="color" value="#2b41e6">
+      <label>progress</label><progress value="0.6"></progress>
+      <label>meter</label><meter value="0.75"></meter>
+
+      <p class="tag" style="margin-top:12px">position: sticky · &lt;dialog&gt;</p>
+      <dialog open style="position:static;border:1px solid var(--border);border-radius:10px;padding:12px">
+        &lt;dialog open&gt; — should render as a modal panel.</dialog>
+    </div>
+
+    <p style="text-align:center;color:var(--faint);font-size:12px;margin-top:24px">
+      Rendered by Tina4Pascal — one Pascal engine, native on macOS · iOS · Android.</p>
+  </div>
+</body>
+</html>

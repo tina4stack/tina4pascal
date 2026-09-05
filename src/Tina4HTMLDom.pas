@@ -344,6 +344,10 @@ type
     BgGradientEnd: TAlphaColor;
     BgGradientAngle: Single;     // degrees clockwise from `to top`
     BgGradientActive: Boolean;
+    BgGradientRadial: Boolean;   // radial-gradient() vs linear-gradient()
+    GradStopColors: array[0..7] of TAlphaColor;  // up to 8 colour stops
+    GradStopPos: array[0..7] of Single;          // stop position 0..1, -1 = auto
+    GradStopCount: Integer;
     // CSS transforms (subset)
     TransformActive: Boolean;
     TransformTranslateX: Single;
@@ -1824,7 +1828,7 @@ begin
         // (so `<div style="white-space:pre-wrap">` keeps its newlines — the DOM
         // stays collapsed everywhere else, which the layout re-processes).
         OldInPre := FInPre;
-        if SameText(TagName, 'pre') or
+        if SameText(TagName, 'pre') or SameText(TagName, 'textarea') or
            (ChildTag.Style.TryGetValue('white-space', InlineWS) and
             LowerCase(Trim(InlineWS)).StartsWith('pre')) then
           FInPre := True;
@@ -2084,6 +2088,9 @@ begin
   Result.BgPosY := 0;
   Result.BgRepeat := 'no-repeat';
   Result.BgGradientActive := False;
+  Result.BgGradientRadial := False;
+  Result.GradStopCount := 0;
+  Result.AppearanceNone := False;
   Result.TransformActive := False;
   Result.TransformScaleX := 1;
   Result.TransformScaleY := 1;
@@ -2370,6 +2377,9 @@ begin
   Result.BgPosY := 0;
   Result.BgRepeat := 'no-repeat';
   Result.BgGradientActive := False;
+  Result.BgGradientRadial := False;
+  Result.GradStopCount := 0;
+  Result.AppearanceNone := False;
   Result.TransformActive := False;
   Result.TransformScaleX := 1;
   Result.TransformScaleY := 1;

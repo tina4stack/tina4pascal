@@ -277,6 +277,7 @@ begin
     LastW := W;
     FreeAndNil(RootBox);
     FreeAndNil(Engine);
+    Sheet.SetMediaContext(W, False);   // @media evaluates against the real viewport width
     Engine := TLayoutEngine.Create(Canvas, Sheet);
     RootBox := Engine.Build(Parser.Root, W);
   end;
@@ -701,9 +702,10 @@ end;
 var
   FileName, SnapPath, HTML, CSSFile, ScriptPath, FontFam, FontUrl: string;
   SL: TStringList;
-  i: Integer;
+  i, WinW, WinH: Integer;
   autof: TList<THTMLTag>;
 begin
+  WinW := 1024; WinH := 800;
   FileName := ExpandFileName(ExtractFilePath(ParamStr(0)) + 'bootstrap_test.html');
   SnapPath := '';
   i := 1;
@@ -719,6 +721,16 @@ begin
     begin
       Inc(i);
       ScriptPath := ParamStr(i);
+    end
+    else if ParamStr(i) = '--height' then
+    begin
+      Inc(i);
+      WinH := StrToIntDef(ParamStr(i), 800);
+    end
+    else if ParamStr(i) = '--width' then
+    begin
+      Inc(i);
+      WinW := StrToIntDef(ParamStr(i), 1024);
     end
     else
       FileName := ExpandFileName(ParamStr(i));
@@ -821,7 +833,7 @@ begin
   else
     Viewer.Shell.OnTick := Viewer.MomentumTick;  // flick inertia
 
-  Viewer.Shell.Initialize(1024, 800, 'Tina4 HTMLRender — Free Pascal');
+  Viewer.Shell.Initialize(WinW, WinH, 'Tina4 HTMLRender — Free Pascal');
 
   // one-shot --snapshot: render off-screen and exit, no run loop / no window
   if (SnapPath <> '') and (ScriptPath = '') then
