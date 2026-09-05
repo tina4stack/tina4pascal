@@ -82,6 +82,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 |---|---|---|
 | include[src] | ✅ | fetches HTML + splices in place, caches, nested, per-tag auth headers |
 | secure | ✅ | redacted under capture-protection (see `TinaSetCaptureProtected`) |
+| lottie | ✅ | **Tina4 custom** — pure-Pascal Lottie/Bodymovin player (`Tina4Lottie`) rendering inline JSON via Canvas 2D; shape layers, bezier paths, fills/strokes, keyframed transforms + parenting, cubic-bezier easing; animates off the ticker. No Skia/JS. Verified on iPhone |
 
 ## Table content
 
