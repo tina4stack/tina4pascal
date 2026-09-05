@@ -97,7 +97,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | Element | Status | Note |
 |---|---|---|
 | form | ✅ | block; submit collects name=value |
-| input[text/email/password/search/number] | 🟡 | password now masks (•); text otherwise; no number stepper |
+| input[text/email/password/search/number] | 🟡 | all accept text + focus/caret; password masks (•). Type-specific affordances (numeric/email soft-keyboard, number steppers) pending a keyboard-type shell contract — steppers are a desktop convention; touch uses a typed keyboard |
 | input[checkbox] | ✅ | draw + toggle, `:checked` stylable |
 | input[radio] | ✅ | draw + group exclusivity by name |
 | input[submit/button] | ✅ | drawn button + press feedback |
@@ -111,7 +111,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | label | ✅ | `for=`/wrapping/sibling all wired to focus+toggle |
 | fieldset, legend | 🟡 | border + bold legend (not notched) |
 | datalist | ✅ | inert (display:none UA); options never painted |
-| output | 🟡 | text renders; no form binding |
+| output | 🟡 | renders its text; live form-binding needs a script/eval model (deferred) |
 | progress, meter | ✅ | drawn bars (progress accent, meter green) from value/max |
 
 ## Interactive & scripting
