@@ -109,7 +109,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | input[file] | ✅ | "Choose File" → shell picker; shows filename |
 | **input[date]** | ✅ | **native calendar picker** — formatted display (`format` attr), month nav, today, ISO value (see examples/datepicker) |
 | input[color/range/tel/url/…] | ✅/🟡 | color swatch + range slider drawn; tel/url as text |
-| textarea | 🟡 | multi-line + line-aware caret; **append/backspace-at-end only** (no mid-text edit) |
+| textarea | ✅ | multi-line editing: click positions the caret (line by Y, column by X); type/backspace/delete at the caret; Enter splits the line; ←/→ and ↑/↓ navigate (↑/↓ keep the column across lines) |
 | select, option | ✅ | drawn dropdown overlay with ✓ |
 | optgroup | ✅ | label row + indented options in the dropdown; nested options selectable and resolved when closed |
 | button | ✅ | drawn; submit |
@@ -146,8 +146,8 @@ wishlist.
 
 **Core-renderable, still open (in priority order):**
 1. **Forms polish** — done: `input[number]` steppers, `<fieldset>`/`<legend>`
-   notch. Remaining: `<output>` form-binding (needs the scripting model);
-   `<textarea>` mid-text editing (append/backspace-at-end today).
+   notch, `<textarea>` mid-text editing (click caret, Enter-split, ↑/↓ line nav).
+   Remaining: `<output>` form-binding (needs the scripting model).
 2. **`<dialog>` modal** — backdrop + centering (`showModal`); needs the scripting
    model. Non-modal open/closed already works.
 

@@ -134,6 +134,21 @@ begin
   if Result < 0 then Result := 0;
 end;
 
+{ Textarea line math (offsets are 0-based, between bytes; newline = #10).
+  LineStartOffset: offset just after the newline that begins the caret's line
+  (or 0). LineEndOffset: offset just before the next newline (or end). }
+function LineStartOffset(const V: string; Caret: Integer): Integer;
+begin
+  Result := Caret;
+  while (Result > 0) and (V[Result] <> #10) do Dec(Result);
+end;
+
+function LineEndOffset(const V: string; Caret: Integer): Integer;
+begin
+  Result := Caret;
+  while (Result < Length(V)) and (V[Result + 1] <> #10) do Inc(Result);
+end;
+
 procedure SetChain(T: THTMLTag; Hover, Active: Boolean; Value: Boolean);
 begin
   while T <> nil do
@@ -192,9 +207,21 @@ begin
     else if cmd = 'enter' then KeyDown('', TK_RETURN)
     else if cmd = 'tab' then KeyDown('', TK_TAB)
     else if cmd = 'backspace' then KeyDown('', TK_BACKSPACE)
+    else if cmd = 'left' then KeyDown('', TK_LEFT)
+    else if cmd = 'right' then KeyDown('', TK_RIGHT)
+    else if cmd = 'up' then KeyDown('', TK_UP)
+    else if cmd = 'down' then KeyDown('', TK_DOWN)
     else if cmd = 'esc' then KeyDown('', TK_ESCAPE)
     else if cmd = 'wheel' then
       Scroll(StrToFloatDef(a, 0), StrToFloatDef(b, 0), 0, StrToFloatDef(c, 0))
+    else if cmd = 'dumpval' then
+    begin
+      if FocusTag = nil then WriteLn('[dumpval] no focus')
+      else
+        WriteLn('[dumpval] caret=', FocusTag.GetAttribute('_caret', '?'), ' value=[',
+          StringReplace(FocusTag.GetAttribute('value', InnerText(FocusTag)), #10, '\n', [rfReplaceAll]), ']');
+      Flush(Output);
+    end
     else if cmd = 'snap' then
     begin
       Shell.SnapshotPath := a;
@@ -534,8 +561,8 @@ var
   typ, ot, ov, v, picked: string;
   radios: TList<THTMLTag>;
   cb: TLayoutBox;
-  tx, mw, stepv, curv: Single;
-  ci, ni: Integer;
+  tx, mw, stepv, curv, topY, lineH, wPrev, wNext: Single;
+  ci, ni, lstart, lend, curline, tline: Integer;
   wasDragging: Boolean;
 begin
   if RootBox = nil then Exit;
@@ -654,11 +681,13 @@ begin
     end;
     if SameText(t.TagName, 'input') or SameText(t.TagName, 'textarea') then
     begin
+      // Capture the laid-out box BEFORE SetFocus — Rebuild frees RootBox and
+      // defers layout to the next paint, so it would be nil right after.
+      cb := FindBoxForTag(RootBox, t);
       SetFocus(t);
       // click-to-position the caret (single-line inputs)
       if SameText(t.TagName, 'input') then
       begin
-        cb := FindBoxForTag(RootBox, t);
         if cb <> nil then
         begin
           v := t.GetAttribute('value');
@@ -671,6 +700,44 @@ begin
               cb.Style.FontSize, []).Width;
             if tx + mw - (mw - Shell.GetMeasuringCanvas.MeasureText(Copy(v, 1, ci),
               cb.Style.FontSize, []).Width) / 2 > X then Break;
+            ci := ni;
+          end;
+          t.Attributes.AddOrSetValue('_caret', IntToStr(ci));
+          Rebuild;
+        end;
+      end
+      // click-to-position the caret (multi-line textarea): pick the line by Y,
+      // then the column by X within that line
+      else if SameText(t.TagName, 'textarea') then
+      begin
+        if cb <> nil then
+        begin
+          v := t.GetAttribute('value', InnerText(t));
+          if cb.Style.LineHeight > 4 then lineH := cb.Style.LineHeight
+          else if cb.Style.LineHeight > 0 then lineH := cb.Style.FontSize * cb.Style.LineHeight
+          else lineH := cb.Style.FontSize * 1.4;
+          topY := (cb.Y - ScrollY) + cb.Style.BorderWidths.Top + cb.Style.Padding.Top;
+          tline := Trunc((Y - topY) / lineH);
+          if tline < 0 then tline := 0;
+          // offset at the start of the clicked line
+          lstart := 0; curline := 0; ci := 0;
+          while (curline < tline) and (ci < Length(v)) do
+          begin
+            Inc(ci);
+            if v[ci] = #10 then begin Inc(curline); lstart := ci; end;
+          end;
+          lend := LineEndOffset(v, lstart);
+          // column by X, at the nearest character gap
+          tx := cb.X + cb.Style.BorderWidths.Left + cb.Style.Padding.Left;
+          ci := lstart;
+          while ci < lend do
+          begin
+            ni := Utf8StepFwd(v, ci);
+            wPrev := Shell.GetMeasuringCanvas.MeasureText(
+              Copy(v, lstart + 1, ci - lstart), cb.Style.FontSize, []).Width;
+            wNext := Shell.GetMeasuringCanvas.MeasureText(
+              Copy(v, lstart + 1, ni - lstart), cb.Style.FontSize, []).Width;
+            if tx + (wPrev + wNext) / 2 > X then Break;
             ci := ni;
           end;
           t.Attributes.AddOrSetValue('_caret', IntToStr(ci));
@@ -721,7 +788,7 @@ procedure TViewer.KeyDown(const Chars: string; KeyCode: Integer);
 var
   v: string;
   focusables: TList<THTMLTag>;
-  i, idx, caret, np: Integer;
+  i, idx, caret, np, ls, col, pls, le: Integer;
   isArea: Boolean;
 begin
   if FocusTag = nil then Exit;
@@ -762,18 +829,46 @@ begin
       end;
     TK_UP:
       begin
-        FocusTag.Attributes.AddOrSetValue('_caret', '0'); // home
+        if isArea then
+        begin
+          ls := LineStartOffset(v, caret);
+          if ls > 0 then                       // move to the same column one line up
+          begin
+            col := caret - ls;
+            pls := LineStartOffset(v, ls - 1);
+            np := Min(pls + col, ls - 1);
+          end
+          else np := 0;                        // first line → home
+          FocusTag.Attributes.AddOrSetValue('_caret', IntToStr(np));
+        end
+        else
+          FocusTag.Attributes.AddOrSetValue('_caret', '0'); // single-line: home
         Rebuild;
       end;
     TK_DOWN:
       begin
-        FocusTag.Attributes.AddOrSetValue('_caret', IntToStr(Length(v))); // end
+        if isArea then
+        begin
+          le := LineEndOffset(v, caret);
+          if le < Length(v) then               // move to the same column one line down
+          begin
+            ls := LineStartOffset(v, caret);
+            col := caret - ls;
+            np := Min(le + 1 + col, LineEndOffset(v, le + 1));
+          end
+          else np := Length(v);                // last line → end
+          FocusTag.Attributes.AddOrSetValue('_caret', IntToStr(np));
+        end
+        else
+          FocusTag.Attributes.AddOrSetValue('_caret', IntToStr(Length(v))); // single-line: end
         Rebuild;
       end;
     TK_RETURN:
       if isArea then
       begin
-        FocusTag.Attributes.AddOrSetValue('value', v + sLineBreak);
+        Insert(#10, v, caret + 1);             // split the line at the caret
+        FocusTag.Attributes.AddOrSetValue('value', v);
+        FocusTag.Attributes.AddOrSetValue('_caret', IntToStr(caret + 1));
         Rebuild;
       end
       else
