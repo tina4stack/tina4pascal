@@ -154,6 +154,13 @@ begin
   Result := Env^.NewStringUTF(Env, PAnsiChar(s));
 end;
 
+{ boolean <video> attributes: bit0 controls·1 autoplay·2 loop·3 muted }
+function Java_com_tina4_pascal_Tina4View_nativeEmbedFlags(Env: PJNIEnv;
+  This: jobject; Index: jint): jint; cdecl;
+begin
+  Result := TinaEmbedFlags(Index);
+end;
+
 exports
   Java_com_tina4_pascal_Tina4View_nativeSetHtml,
   Java_com_tina4_pascal_Tina4View_nativePaint,
@@ -170,6 +177,7 @@ exports
   Java_com_tina4_pascal_Tina4View_nativeEmbedCount,
   Java_com_tina4_pascal_Tina4View_nativeEmbedRect,
   Java_com_tina4_pascal_Tina4View_nativeEmbedSrc,
+  Java_com_tina4_pascal_Tina4View_nativeEmbedFlags,
   Java_com_tina4_pascal_Http_nativeHttpResult,
   Java_com_tina4_pascal_ImageLoader_nativeImageReady,
   JNI_OnLoad;

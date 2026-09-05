@@ -140,11 +140,30 @@ begin
   end;
 end;
 
+function tina4_embed_flags(Index: cint): cint; cdecl;
+begin
+  Result := TinaEmbedFlags(Index);
+end;
+
+function tina4_embed_poster(Index: cint; Buf: PAnsiChar; Cap: cint): cint; cdecl;
+var s: AnsiString;
+begin
+  s := TinaEmbedPoster(Index);
+  Result := Length(s);
+  if (Buf <> nil) and (Cap > 0) then
+  begin
+    if Result > Cap - 1 then Result := Cap - 1;
+    if Result > 0 then Move(s[1], Buf^, Result);
+    Buf[Result] := #0;
+  end;
+end;
+
 exports
   tina4_set_html, tina4_frame, tina4_touch, tina4_tick, tina4_http_pending,
   tina4_wants_keyboard, tina4_blur, tina4_blink_caret, tina4_key,
   tina4_focus_kind, tina4_focus_next, tina4_set_file, tina4_set_photo,
-  tina4_embed_count, tina4_embed_rect, tina4_embed_src;
+  tina4_embed_count, tina4_embed_rect, tina4_embed_src,
+  tina4_embed_flags, tina4_embed_poster;
 
 begin
 end.

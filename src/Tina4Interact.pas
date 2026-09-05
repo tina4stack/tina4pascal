@@ -114,6 +114,10 @@ procedure TinaSetCaptureProtected(Protect: Boolean);
 function TinaEmbedCount: Integer;
 procedure TinaEmbedRect(Index: Integer; out X, Y, W, H: Single);
 function TinaEmbedSrc(Index: Integer): string;
+{ Boolean <video> attributes as a bitmask: 1 controls, 2 autoplay, 4 loop,
+  8 muted. Poster is the poster image URL ('' if none). }
+function TinaEmbedFlags(Index: Integer): Integer;
+function TinaEmbedPoster(Index: Integer): string;
 
 implementation
 
@@ -122,7 +126,11 @@ uses
   Tina4HTMLDom, Tina4HTMLLayout, Tina4Events, Tina4Frond, Tina4Http, Tina4Services;
 
 type
-  TEmbedRec = record Src: string; X, Y, W, H: Single; end;
+  TEmbedRec = record
+    Src, Poster: string;
+    X, Y, W, H: Single;
+    Flags: Integer;   // bit0 controls · bit1 autoplay · bit2 loop · bit3 muted
+  end;
 
 var
   GEmbeds: array of TEmbedRec; // shell-owned <video> boxes, refreshed by TinaEmbedCount
@@ -1516,10 +1524,16 @@ begin
           src := sc.GetAttribute('src');
     n := Length(GEmbeds); SetLength(GEmbeds, n + 1);
     GEmbeds[n].Src := src;
+    GEmbeds[n].Poster := c.GetAttribute('poster');
     GEmbeds[n].X := Box.X;
     GEmbeds[n].Y := Box.Y - GScrollY;     // content → screen (scroll applied)
     GEmbeds[n].W := Box.W;
     GEmbeds[n].H := Box.H;
+    GEmbeds[n].Flags := 0;                 // presence of each boolean attribute
+    if c.HasAttribute('controls') then GEmbeds[n].Flags := GEmbeds[n].Flags or 1;
+    if c.HasAttribute('autoplay') then GEmbeds[n].Flags := GEmbeds[n].Flags or 2;
+    if c.HasAttribute('loop')     then GEmbeds[n].Flags := GEmbeds[n].Flags or 4;
+    if c.HasAttribute('muted')    then GEmbeds[n].Flags := GEmbeds[n].Flags or 8;
   end;
   for b in Box.Children do CollectEmbeds(b);
 end;
@@ -1544,6 +1558,18 @@ end;
 function TinaEmbedSrc(Index: Integer): string;
 begin
   if (Index >= 0) and (Index < Length(GEmbeds)) then Result := GEmbeds[Index].Src
+  else Result := '';
+end;
+
+function TinaEmbedFlags(Index: Integer): Integer;
+begin
+  if (Index >= 0) and (Index < Length(GEmbeds)) then Result := GEmbeds[Index].Flags
+  else Result := 0;
+end;
+
+function TinaEmbedPoster(Index: Integer): string;
+begin
+  if (Index >= 0) and (Index < Length(GEmbeds)) then Result := GEmbeds[Index].Poster
   else Result := '';
 end;
 

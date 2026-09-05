@@ -46,6 +46,7 @@ public class Tina4View extends View implements Runnable {
     private native int    nativeEmbedCount();          // laid-out <video> boxes
     private native float[] nativeEmbedRect(int index); // [x,y,w,h] in CSS px (scroll applied)
     private native String  nativeEmbedSrc(int index);  // the video source URL
+    private native int     nativeEmbedFlags(int index);// 1 controls·2 autoplay·4 loop·8 muted
 
     /** Called by MainActivity once the system file picker returns a name. */
     void onFilePicked(String name) { nativeSetFile(name); invalidate(); }
@@ -136,14 +137,18 @@ public class Tina4View extends View implements Runnable {
         public void run() { v.syncVideos(); }
     }
 
-    // muted, looping autoplay once the media is prepared
-    private static final class LoopPrepared implements MediaPlayer.OnPreparedListener {
+    // apply the <video> attributes once the media is prepared
+    private static final class PreparedApply implements MediaPlayer.OnPreparedListener {
         private final VideoView v;
-        LoopPrepared(VideoView v) { this.v = v; }
+        private final boolean autoplay, loop, muted;
+        PreparedApply(VideoView v, boolean autoplay, boolean loop, boolean muted) {
+            this.v = v; this.autoplay = autoplay; this.loop = loop; this.muted = muted;
+        }
         public void onPrepared(MediaPlayer mp) {
-            mp.setLooping(true);
-            mp.setVolume(0f, 0f);
-            v.start();
+            mp.setLooping(loop);                                 // `loop`
+            mp.setVolume(muted ? 0f : 1f, muted ? 0f : 1f);      // `muted`
+            if (autoplay) v.start();                             // `autoplay`
+            else v.seekTo(1);                                    // show first frame, paused
         }
     }
 
@@ -162,17 +167,21 @@ public class Tina4View extends View implements Runnable {
             int w = Math.round(r[2] * density), h = Math.round(r[3] * density);
             VideoView vv = videoViews.get(src);
             if (vv == null) {
+                int flags = nativeEmbedFlags(i);   // 1 controls·2 autoplay·4 loop·8 muted
+                boolean controls = (flags & 1) != 0, autoplay = (flags & 2) != 0,
+                        loop = (flags & 4) != 0, muted = (flags & 8) != 0;
                 vv = new VideoView(getContext());
                 vv.setVideoURI(Uri.parse(src));
-                MediaController mc = new MediaController(getContext());
-                mc.setAnchorView(vv);
-                vv.setMediaController(mc);
-                vv.setOnPreparedListener(new LoopPrepared(vv));
+                if (controls) {                                  // `controls`
+                    MediaController mc = new MediaController(getContext());
+                    mc.setAnchorView(vv);
+                    vv.setMediaController(mc);
+                }
+                vv.setOnPreparedListener(new PreparedApply(vv, autoplay, loop, muted));
                 FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, h);
                 lp.leftMargin = x; lp.topMargin = y;
                 parent.addView(vv, lp);
                 videoViews.put(src, vv);
-                vv.start();
             } else {
                 FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) vv.getLayoutParams();
                 lp.width = w; lp.height = h; lp.leftMargin = x; lp.topMargin = y;

@@ -15,6 +15,7 @@
 // poster box each frame (see -syncVideos:).
 @property (strong, nonatomic) NSMutableDictionary<NSString *, AVPlayerViewController *> *videoControllers;
 @property (strong, nonatomic) NSMutableDictionary<NSString *, id> *videoLoopObservers;
+@property (strong, nonatomic) NSMutableDictionary<NSString *, NSNumber *> *videoFlags;   // bit0 controls·1 autoplay·2 loop·3 muted
 @end
 
 @implementation Tina4View
@@ -26,6 +27,7 @@
         self.clipsToBounds = YES;                      // keep video views inside the view
         _videoControllers = [NSMutableDictionary dictionary];
         _videoLoopObservers = [NSMutableDictionary dictionary];
+        _videoFlags = [NSMutableDictionary dictionary];
         // a playback audio session so <video> actually starts (even muted)
         [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback
                                                 error:nil];
@@ -85,7 +87,11 @@
     if (item.status == AVPlayerItemStatusReadyToPlay) {
         for (NSString *src in self.videoControllers) {
             AVPlayerViewController *vc = self.videoControllers[src];
-            if (vc.player.currentItem == item) { [vc.player play]; break; }
+            if (vc.player.currentItem == item) {
+                // autoplay only when the <video> has the `autoplay` attribute
+                if ((self.videoFlags[src].intValue & 2) != 0) [vc.player play];
+                break;
+            }
         }
     } else if (item.status == AVPlayerItemStatusFailed) {
         NSLog(@"[tina4] video item failed: %@", item.error);
@@ -109,34 +115,39 @@
         if (!vc) {
             NSURL *url = [NSURL URLWithString:src];
             if (!url) continue;
+            int flags = tina4_embed_flags(i);   // 1 controls·2 autoplay·4 loop·8 muted
+            BOOL wantControls = (flags & 1) != 0;
+            BOOL wantLoop     = (flags & 4) != 0;
+            BOOL wantMuted    = (flags & 8) != 0;
+            self.videoFlags[src] = @(flags);
             AVPlayer *player = [AVPlayer playerWithURL:url];
-            player.muted = YES;                 // muted so autoplay is allowed; user can unmute
+            player.muted = wantMuted;           // honor the `muted` attribute
             player.allowsExternalPlayback = NO; // keep video on-device (don't AirPlay it away)
             vc = [[AVPlayerViewController alloc] init];
             vc.player = player;
-            vc.showsPlaybackControls = YES;     // native play / pause / scrubber (scan)
+            vc.showsPlaybackControls = wantControls;   // honor the `controls` attribute
             vc.videoGravity = AVLayerVideoGravityResizeAspect;
             vc.view.backgroundColor = [UIColor blackColor];
             if (self.host) [self.host addChildViewController:vc];
             [self addSubview:vc.view];
             if (self.host) [vc didMoveToParentViewController:self.host];
             self.videoControllers[src] = vc;
-            // autoplay the moment the item is ready (calling play() before it
-            // loads is a no-op, which is why it sat on the play button)
+            // autoplay happens on the status→ready KVO (below) only if `autoplay`
             [player.currentItem addObserver:self forKeyPath:@"status"
                                     options:NSKeyValueObservingOptionNew context:NULL];
-            // loop: on end, rewind and keep playing
-            __weak AVPlayer *wplayer = player;
-            id obs = [[NSNotificationCenter defaultCenter]
-                addObserverForName:AVPlayerItemDidPlayToEndTimeNotification
-                            object:player.currentItem
-                             queue:[NSOperationQueue mainQueue]
-                        usingBlock:^(NSNotification *note) {
-                            [wplayer seekToTime:kCMTimeZero];
-                            [wplayer play];
-                        }];
-            self.videoLoopObservers[src] = obs;
-            [player play];
+            // loop: rewind on end, only if the `loop` attribute is present
+            if (wantLoop) {
+                __weak AVPlayer *wplayer = player;
+                id obs = [[NSNotificationCenter defaultCenter]
+                    addObserverForName:AVPlayerItemDidPlayToEndTimeNotification
+                                object:player.currentItem
+                                 queue:[NSOperationQueue mainQueue]
+                            usingBlock:^(NSNotification *note) {
+                                [wplayer seekToTime:kCMTimeZero];
+                                [wplayer play];
+                            }];
+                self.videoLoopObservers[src] = obs;
+            }
         }
         // reposition to track scroll (no implicit animation)
         [CATransaction begin];
@@ -159,6 +170,7 @@
         if (obs) [[NSNotificationCenter defaultCenter] removeObserver:obs];
         [self.videoLoopObservers removeObjectForKey:src];
         [self.videoControllers removeObjectForKey:src];
+        [self.videoFlags removeObjectForKey:src];
     }
 }
 

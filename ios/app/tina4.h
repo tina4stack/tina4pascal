@@ -32,5 +32,7 @@ void tina4_set_photo(const char *path);
 int  tina4_embed_count(void);
 void tina4_embed_rect(int index, float *x, float *y, float *w, float *h);
 int  tina4_embed_src(int index, char *buf, int cap);   // fills buf, returns length
+int  tina4_embed_flags(int index);                     // 1 controls·2 autoplay·4 loop·8 muted
+int  tina4_embed_poster(int index, char *buf, int cap);// poster URL ('' if none)
 
 #endif

@@ -2540,9 +2540,15 @@ begin
   else if TN = 'video' then
   begin
     // A shell-owned native player sits on top; the core reserves a correctly
-    // sized black box (HTML default intrinsic size 300x150) as the poster area.
+    // sized box (HTML default intrinsic size 300x150). A `poster` image shows
+    // through until the native player draws; otherwise a black poster area.
     Result.Display := 'inline-block';
     Result.BackgroundColor := $FF000000;
+    if Tag.HasAttribute('poster') then
+    begin
+      Result.BackgroundImage := Tag.GetAttribute('poster');
+      Result.BackgroundSize := 'cover';
+    end;
     if Result.ExplicitWidth < 0 then Result.ExplicitWidth := 300;
     if Result.ExplicitHeight < 0 then Result.ExplicitHeight := 150;
   end

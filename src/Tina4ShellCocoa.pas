@@ -680,7 +680,7 @@ end;
   torn down when the box is gone — the macOS twin of the iOS Tina4View path. }
 procedure SyncCocoaVideos(host: NSView);
 var
-  n, i: LongInt; x, y, w, h: Single; src: string;
+  n, i, flags: LongInt; x, y, w, h: Single; src: string;
   key: NSString; url: NSURL; player: AVPlayer; pv: AVPlayerView;
   live: NSMutableSet; keys: NSArray; k: LongWord;
 begin
@@ -699,15 +699,19 @@ begin
     begin
       url := NSURL.URLWithString(key);
       if url = nil then Continue;
+      flags := TinaEmbedFlags(i);   // 1 controls·2 autoplay·4 loop·8 muted
       player := AVPlayer.playerWithURL(url);
-      player.setMuted(True);
+      player.setMuted((flags and 8) <> 0);                    // `muted`
       pv := AVPlayerView(AVPlayerView.alloc).initWithFrame(NSMakeRect(x, y, w, h));
       pv.setPlayer(player);
-      pv.setControlsStyle(AVPlayerViewControlsStyleInline);   // native play/pause/scrub
+      if (flags and 1) <> 0 then                              // `controls`
+        pv.setControlsStyle(AVPlayerViewControlsStyleInline)
+      else
+        pv.setControlsStyle(AVPlayerViewControlsStyleNone);
       pv.setVideoGravity(AVLayerVideoGravityResizeAspect);
       host.addSubview(pv);
       GVideoViews.setObject_forKey(pv, key);
-      player.play;
+      if (flags and 2) <> 0 then player.play;                 // `autoplay` (loop: TODO on macOS)
     end
     else
       pv.setFrame(NSMakeRect(x, y, w, h));   // track scroll
