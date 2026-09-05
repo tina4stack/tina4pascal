@@ -153,10 +153,13 @@ wishlist.
 3. **`<dialog>` modal** — backdrop + centering (`showModal`); needs the scripting
    model. Non-modal open/closed already works.
 
-**Media — outstanding HTML, shell-owned (NOT done):**
-4. **`video`** — in progress (iOS AVPlayer overlay over the core placeholder box).
-5. **`audio`** — native audio player over a core-laid box.
-6. **`canvas`** — a Tina4 native draw hook (no JS engine).
+**Media — status:**
+4. **`video`** ✅ done — iOS `AVPlayerViewController` + Android `VideoView` overlays
+   over the core placeholder box; attributes (controls/autoplay/loop/muted/poster)
+   honored. macOS Cocoa `AVPlayerView` 🟡 (loop TODO).
+5. **`audio`** ❌ outstanding — native audio player over a core-laid box.
+6. **`canvas`** ✅ done — pure-Pascal Canvas 2D (`Tina4Canvas2D`), no JS engine.
+7. **`lottie`** ✅ done — pure-Pascal Bodymovin player (`Tina4Lottie`) over Canvas 2D.
    (`iframe` is intentionally not supported — use `<include src>`; `object`/`map`
    are not planned.)
 

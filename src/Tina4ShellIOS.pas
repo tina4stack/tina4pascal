@@ -53,6 +53,8 @@ type
     procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); override;
     procedure StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color); override;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); override;
+    procedure StrokePolyline(const Pts: TTina4PointArray; Width: Single;
+      Color: TTina4Color; Closed: Boolean); override;
     procedure FillPolygon(const Contours: array of TTina4PointArray;
       Color: TTina4Color; EvenOdd: Boolean = False); override;
     procedure DrawText(X, Y: Single; const Text: string; FontSize: Single;
@@ -209,6 +211,22 @@ begin
   CGContextBeginPath(FCtx);
   CGContextMoveToPoint(FCtx, X1, Y1);
   CGContextAddLineToPoint(FCtx, X2, Y2);
+  CGContextStrokePath(FCtx);
+end;
+
+procedure TIOSCanvas.StrokePolyline(const Pts: TTina4PointArray; Width: Single;
+  Color: TTina4Color; Closed: Boolean);
+var i: Integer;
+begin
+  if Length(Pts) < 2 then Exit;
+  SetStroke(FCtx, Color);
+  CGContextSetLineWidth(FCtx, Width);
+  CGContextSetLineJoin(FCtx, kCGLineJoinRound);
+  CGContextSetLineCap(FCtx, kCGLineCapRound);
+  CGContextBeginPath(FCtx);
+  CGContextMoveToPoint(FCtx, Pts[0].X, Pts[0].Y);
+  for i := 1 to High(Pts) do CGContextAddLineToPoint(FCtx, Pts[i].X, Pts[i].Y);
+  if Closed then CGContextClosePath(FCtx);
   CGContextStrokePath(FCtx);
 end;
 

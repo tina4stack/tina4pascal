@@ -3320,9 +3320,8 @@ begin
       Canvas.SetClip(Box.X, y, Box.W, Box.H);
       cv2d := TTina4Canvas2D.Create(Canvas, Box.W, Box.H, bg);
       try
-        // contain-fit + centre with a small inset so limbs that swing to the
-        // composition edge during the animation are never clipped
-        lotTotal := Min(Box.W / lot.Width, Box.H / lot.Height) * 0.94;
+        // contain-fit + centre (fills the box at full composition size)
+        lotTotal := Min(Box.W / lot.Width, Box.H / lot.Height);
         cv2d.Translate(Box.X + (Box.W - lot.Width * lotTotal) / 2,
                        y + (Box.H - lot.Height * lotTotal) / 2);
         cv2d.Scale(lotTotal, lotTotal);

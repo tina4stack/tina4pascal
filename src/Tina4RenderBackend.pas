@@ -58,6 +58,12 @@ type
       class draws a hard-edged rect so simple backends still show a shadow. }
     procedure FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color); virtual;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); virtual; abstract;
+    { Stroke a connected polyline (device coords) with ROUND joins + caps — used
+      by the canvas/Lottie path stroker so curved outlines are smooth. The base
+      class falls back to independent line segments (visible joints); shells
+      override with a native round-joined path stroke. }
+    procedure StrokePolyline(const Pts: TTina4PointArray; Width: Single;
+      Color: TTina4Color; Closed: Boolean); virtual;
     { Fills the area covered by one or more closed contours (device coords),
       used by the SVG painter for circles, polygons and path shapes. EvenOdd
       selects the even-odd rule; otherwise nonzero winding. The base class
@@ -160,6 +166,17 @@ end;
 function TTina4Shell.CaptureCamera: string;
 begin
   Result := '';
+end;
+
+procedure TTina4Canvas.StrokePolyline(const Pts: TTina4PointArray; Width: Single;
+  Color: TTina4Color; Closed: Boolean);
+var i: Integer;
+begin
+  if Length(Pts) < 2 then Exit;
+  for i := 0 to High(Pts) - 1 do
+    DrawLine(Pts[i].X, Pts[i].Y, Pts[i + 1].X, Pts[i + 1].Y, Width, Color);
+  if Closed then
+    DrawLine(Pts[High(Pts)].X, Pts[High(Pts)].Y, Pts[0].X, Pts[0].Y, Width, Color);
 end;
 
 procedure TTina4Canvas.FillPolygon(const Contours: array of TTina4PointArray;

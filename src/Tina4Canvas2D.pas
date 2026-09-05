@@ -50,6 +50,7 @@ type
     procedure AddDev(UX, UY: Single);
     function Dev(UX, UY: Single): TTina4Point;
     function ApplyAlpha(C: TTina4Color): TTina4Color;
+    function MatrixScale: Single;   // device-per-user scale, for line widths
   public
     constructor Create(ACanvas: TTina4Canvas; AWidth, AHeight: Single;
       ABg: TTina4Color);
@@ -403,14 +404,12 @@ begin
 end;
 
 procedure TTina4Canvas2D.StrokeRect(X, Y, W, H: Single);
-var p0, p1, p2, p3: TTina4Point; col: TTina4Color;
+var pts: TTina4PointArray;
 begin
-  col := ApplyAlpha(S.Stroke);
-  p0 := Dev(X, Y); p1 := Dev(X + W, Y); p2 := Dev(X + W, Y + H); p3 := Dev(X, Y + H);
-  FCanvas.DrawLine(p0.X, p0.Y, p1.X, p1.Y, S.LineWidth, col);
-  FCanvas.DrawLine(p1.X, p1.Y, p2.X, p2.Y, S.LineWidth, col);
-  FCanvas.DrawLine(p2.X, p2.Y, p3.X, p3.Y, S.LineWidth, col);
-  FCanvas.DrawLine(p3.X, p3.Y, p0.X, p0.Y, S.LineWidth, col);
+  SetLength(pts, 4);
+  pts[0] := Dev(X, Y); pts[1] := Dev(X + W, Y);
+  pts[2] := Dev(X + W, Y + H); pts[3] := Dev(X, Y + H);
+  FCanvas.StrokePolyline(pts, S.LineWidth * MatrixScale, ApplyAlpha(S.Stroke), True);
 end;
 
 // --- paths ---
@@ -509,15 +508,33 @@ begin
   if Length(FPath) > 0 then FCanvas.FillPolygon(FPath, ApplyAlpha(S.Fill), EvenOdd);
 end;
 
+function TTina4Canvas2D.MatrixScale: Single;
+begin
+  Result := Sqrt(Abs(S.M.A * S.M.D - S.M.B * S.M.C));   // sqrt of the area scale
+  if Result <= 0.0001 then Result := 1;
+end;
+
 procedure TTina4Canvas2D.Stroke;
-var i, j: Integer; col: TTina4Color;
+var i, m: Integer; col: TTina4Color; dw: Single; sub: TTina4PointArray; closed: Boolean;
 begin
   PushSub;
   col := ApplyAlpha(S.Stroke);
+  dw := S.LineWidth * MatrixScale;      // line width lives in user space → to device
+  if dw < 0.4 then dw := 0.4;
   for i := 0 to High(FPath) do
-    for j := 0 to Length(FPath[i]) - 2 do
-      FCanvas.DrawLine(FPath[i][j].X, FPath[i][j].Y,
-                       FPath[i][j + 1].X, FPath[i][j + 1].Y, S.LineWidth, col);
+  begin
+    sub := FPath[i];
+    m := Length(sub);
+    if m < 2 then Continue;
+    // a ClosePath duplicated the first point at the end — pass it as a closed
+    // ring so the join at the closure is round too
+    closed := (m > 2) and (Abs(sub[m - 1].X - sub[0].X) < 0.01)
+                      and (Abs(sub[m - 1].Y - sub[0].Y) < 0.01);
+    if closed then
+      FCanvas.StrokePolyline(Copy(sub, 0, m - 1), dw, col, True)
+    else
+      FCanvas.StrokePolyline(sub, dw, col, False);
+  end;
 end;
 
 // --- text ---

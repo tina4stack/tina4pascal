@@ -34,8 +34,8 @@ begin
   end;
   if (GLottie <> nil) and (GLottie.Width > 0) and (GLottie.Height > 0) then
   begin
-    // contain-fit + centre with a small inset (never clip swinging limbs)
-    sc := Min(ctx.Width / GLottie.Width, ctx.Height / GLottie.Height) * 0.94;
+    // contain-fit + centre (full composition size)
+    sc := Min(ctx.Width / GLottie.Width, ctx.Height / GLottie.Height);
     ctx.Translate((ctx.Width - GLottie.Width * sc) / 2,
                   (ctx.Height - GLottie.Height * sc) / 2);
     ctx.Scale(sc, sc);

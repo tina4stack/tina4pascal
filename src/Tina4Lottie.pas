@@ -71,7 +71,13 @@ end;
 
 function JNum(N: TJSONData; Def: Single = 0): Single;
 begin
-  if (N <> nil) and (N.JSONType in [jtNumber]) then Result := N.AsFloat else Result := Def;
+  if N = nil then Exit(Def);
+  case N.JSONType of
+    jtNumber:  Result := N.AsFloat;
+    jtBoolean: if N.AsBoolean then Result := 1 else Result := 0;  // bodymovin 'c' is a JSON bool
+  else
+    Result := Def;
+  end;
 end;
 
 function JObj(P: TJSONData; const Key: string): TJSONObject;

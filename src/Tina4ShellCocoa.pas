@@ -43,6 +43,8 @@ type
       const Colors: array of TTina4Color; const Positions: array of Single); override;
     procedure FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color); override;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); override;
+    procedure StrokePolyline(const Pts: TTina4PointArray; Width: Single;
+      Color: TTina4Color; Closed: Boolean); override;
     procedure FillPolygon(const Contours: array of TTina4PointArray;
       Color: TTina4Color; EvenOdd: Boolean = False); override;
     procedure DrawText(X, Y: Single; const Text: string; FontSize: Single;
@@ -570,6 +572,22 @@ begin
   p.moveToPoint(NSMakePoint(X1, Y1));
   p.lineToPoint(NSMakePoint(X2, Y2));
   p.setLineWidth(Thickness);
+  p.stroke;
+end;
+
+procedure TCocoaCanvas.StrokePolyline(const Pts: TTina4PointArray; Width: Single;
+  Color: TTina4Color; Closed: Boolean);
+var p: NSBezierPath; i: Integer;
+begin
+  if Length(Pts) < 2 then Exit;
+  p := NSBezierPath.bezierPath;
+  p.moveToPoint(NSMakePoint(Pts[0].X, Pts[0].Y));
+  for i := 1 to High(Pts) do p.lineToPoint(NSMakePoint(Pts[i].X, Pts[i].Y));
+  if Closed then p.closePath;
+  p.setLineWidth(Width);
+  p.setLineJoinStyle(NSRoundLineJoinStyle);
+  p.setLineCapStyle(NSRoundLineCapStyle);
+  NSColorOf(Color).setStroke;
   p.stroke;
 end;
 
