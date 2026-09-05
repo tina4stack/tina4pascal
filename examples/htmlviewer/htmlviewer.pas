@@ -443,6 +443,37 @@ begin
   end;
 end;
 
+{ The form control a <label> resolves to: one nested inside it, else its `for`
+  target. Lets a click on the label text toggle the checkbox/radio it labels. }
+function LabelControl(Root, Node: THTMLTag): THTMLTag;
+  function NestedControl(T: THTMLTag): THTMLTag;
+  var c, r: THTMLTag;
+  begin
+    Result := nil;
+    for c in T.Children do
+    begin
+      if IsFormControlTag(c.TagName) then Exit(c);
+      r := NestedControl(c); if r <> nil then Exit(r);
+    end;
+  end;
+  function ById(T: THTMLTag; const Id: string): THTMLTag;
+  var c, r: THTMLTag;
+  begin
+    Result := nil;
+    if T.GetAttribute('id') = Id then Exit(T);
+    for c in T.Children do begin r := ById(c, Id); if r <> nil then Exit(r); end;
+  end;
+var lbl: THTMLTag;
+begin
+  Result := nil;
+  lbl := Node;
+  while (lbl <> nil) and not SameText(lbl.TagName, 'label') do lbl := lbl.Parent;
+  if lbl = nil then Exit;
+  Result := NestedControl(lbl);
+  if (Result = nil) and lbl.HasAttribute('for') then
+    Result := ById(Root, lbl.GetAttribute('for'));
+end;
+
 procedure TViewer.MouseUp(X, Y: Single);
 var
   hit, t, g: THTMLTag;
@@ -478,6 +509,10 @@ begin
   end;
 
   hit := HitTest(RootBox, X, Y + ScrollY);
+
+  // a click on a <label> acts on the control it labels
+  t := LabelControl(Parser.Root, hit);
+  if t <> nil then hit := t;
 
   // form controls first
   t := hit;
