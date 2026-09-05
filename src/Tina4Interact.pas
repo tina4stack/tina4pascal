@@ -741,7 +741,7 @@ begin
     GCanvas.FillRoundRect(bx - 1, by + 7, bw + 2, panelH, 16, $14000000);
     GCanvas.FillRoundRect(bx, by + 3, bw, panelH, 16, $10000000);
     GCanvas.FillRoundRect(bx, by, bw, panelH, 16, $FFFFFFFF);
-    GCanvas.StrokeRect(bx, by, bw, panelH, 1, BORDER);
+    GCanvas.StrokeRoundRect(bx, by, bw, panelH, 16, 1, BORDER);
     for i := 0 to opts.Count - 1 do
     begin
       c := THTMLTag(opts[i]);
@@ -852,16 +852,19 @@ begin
   GCalDays := DaysInAMonth(GCalYear, GCalMonth);
   GCalFirstDow := DayOfWeek(EncodeDate(GCalYear, GCalMonth, 1)) - 1;  // 0=Sun
 
-  // panel + soft shadow
+  // panel + soft shadow (rounded border to match the rounded fill — no square
+  // corners poking out behind it)
   GCanvas.FillRoundRect(bx - 1, by + 8, w + 2, h, 18, $14000000);
   GCanvas.FillRoundRect(bx, by, w, h, 18, PAPER);
-  GCanvas.StrokeRect(bx, by, w, h, 1, BORDER);
+  GCanvas.StrokeRoundRect(bx, by, w, h, 18, 1, BORDER);
 
-  // header: prev / title / next
+  // header: « year‹ month  Title  month› year »
   GCalHdrY := by;
   titleY := by + (GCalHdrH - 18) / 2;
-  GCanvas.DrawText(bx + 16, titleY, #$E2#$80#$B9, 22, [tfsBold], BLUE);  // ‹
-  GCanvas.DrawText(bx + w - 30, titleY, #$E2#$80#$BA, 22, [tfsBold], BLUE); // ›
+  GCanvas.DrawText(bx + 10, titleY, #$C2#$AB, 18, [tfsBold], BLUE);       // « year prev
+  GCanvas.DrawText(bx + 34, titleY, #$E2#$80#$B9, 22, [tfsBold], BLUE);   // ‹ month prev
+  GCanvas.DrawText(bx + w - 40, titleY, #$E2#$80#$BA, 22, [tfsBold], BLUE); // › month next
+  GCanvas.DrawText(bx + w - 22, titleY, #$C2#$BB, 18, [tfsBold], BLUE);   // » year next
   title := MonName(GCalMonth) + ' ' + IntToStr(GCalYear);
   GCanvas.DrawText(bx + (w - GCanvas.MeasureText(title, 16, [tfsBold]).Width) / 2,
     titleY + 1, title, 16, [tfsBold], INK);
@@ -914,19 +917,19 @@ end;
 procedure HandleDateOverlayTap(cx, cy: Single);
 var i, col, row, day: Integer; iso: string;
 begin
-  // header arrows
+  // header arrows: « year- | ‹ month- (left) … month+ › | » year+ (right)
   if (cy >= GCalHdrY) and (cy < GCalHdrY + GCalHdrH) then
   begin
-    if (cx >= GCalX) and (cx < GCalX + 46) then
-    begin
-      Dec(GCalMonth); if GCalMonth < 1 then begin GCalMonth := 12; Dec(GCalYear); end;
-      GLayoutDirty := True; Exit;                       // stay open
-    end;
-    if (cx >= GCalX + GCalW - 46) and (cx < GCalX + GCalW) then
-    begin
-      Inc(GCalMonth); if GCalMonth > 12 then begin GCalMonth := 1; Inc(GCalYear); end;
-      GLayoutDirty := True; Exit;                       // stay open
-    end;
+    if (cx >= GCalX) and (cx < GCalX + 28) then
+    begin Dec(GCalYear); GLayoutDirty := True; Exit; end;           // «
+    if (cx >= GCalX + 28) and (cx < GCalX + 56) then
+    begin Dec(GCalMonth); if GCalMonth < 1 then begin GCalMonth := 12; Dec(GCalYear); end;
+      GLayoutDirty := True; Exit; end;                              // ‹
+    if (cx >= GCalX + GCalW - 56) and (cx < GCalX + GCalW - 28) then
+    begin Inc(GCalMonth); if GCalMonth > 12 then begin GCalMonth := 1; Inc(GCalYear); end;
+      GLayoutDirty := True; Exit; end;                              // ›
+    if (cx >= GCalX + GCalW - 28) and (cx < GCalX + GCalW) then
+    begin Inc(GCalYear); GLayoutDirty := True; Exit; end;           // »
   end;
   // Today
   if (cy >= GCalTodayY) and (cy < GCalTodayY + GCalTodayH) and
