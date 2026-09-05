@@ -161,6 +161,12 @@ begin
   Result := TinaEmbedFlags(Index);
 end;
 
+function Java_com_tina4_pascal_Tina4View_nativeEmbedKind(Env: PJNIEnv;
+  This: jobject; Index: jint): jint; cdecl;
+begin
+  Result := TinaEmbedKind(Index);   // 0 = video · 1 = audio
+end;
+
 exports
   Java_com_tina4_pascal_Tina4View_nativeSetHtml,
   Java_com_tina4_pascal_Tina4View_nativePaint,
@@ -178,6 +184,7 @@ exports
   Java_com_tina4_pascal_Tina4View_nativeEmbedRect,
   Java_com_tina4_pascal_Tina4View_nativeEmbedSrc,
   Java_com_tina4_pascal_Tina4View_nativeEmbedFlags,
+  Java_com_tina4_pascal_Tina4View_nativeEmbedKind,
   Java_com_tina4_pascal_Http_nativeHttpResult,
   Java_com_tina4_pascal_ImageLoader_nativeImageReady,
   JNI_OnLoad;

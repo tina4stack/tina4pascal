@@ -2555,6 +2555,21 @@ begin
     if Result.ExplicitWidth < 0 then Result.ExplicitWidth := 300;
     if Result.ExplicitHeight < 0 then Result.ExplicitHeight := 150;
   end
+  else if TN = 'audio' then
+  begin
+    // shell-owned native audio player over a core placeholder box. Only shown
+    // with `controls` (a bare <audio> is display:none, like a browser). The
+    // control-bar intrinsic size is 300x54.
+    if Tag.HasAttribute('controls') then
+    begin
+      Result.Display := 'inline-block';
+      Result.BackgroundColor := $FFF1F3F4;      // light control-bar backing
+      if Result.ExplicitWidth < 0 then Result.ExplicitWidth := 300;
+      if Result.ExplicitHeight < 0 then Result.ExplicitHeight := 54;
+    end
+    else
+      Result.Display := 'none';
+  end
   else if TN = 'canvas' then
   begin
     // core-rendered drawing surface (Tina4Canvas2D painter); HTML default 300x150
@@ -2643,9 +2658,19 @@ begin
   end
   else if TN = 'legend' then
   begin
+    // The legend straddles the fieldset's top border and masks the segment
+    // behind it (the classic notch): a negative top margin lifts it onto the
+    // border line, and its own background — painted after the border — cuts the
+    // gap. Inherit the parent's background so the notch matches the page; fall
+    // back to white when transparent.
     Result.Bold := True;
-    Result.Padding.Left := 4;
-    Result.Padding.Right := 4;
+    Result.Padding.Left := 6;
+    Result.Padding.Right := 6;
+    Result.Margin.Top := -(Result.FontSize * 0.6 + 2);   // lift onto the border
+    if (ParentStyle.BackgroundColor shr 24) > 0 then
+      Result.BackgroundColor := ParentStyle.BackgroundColor
+    else
+      Result.BackgroundColor := $FFFFFFFF;
   end;
 
   // HTML attribute overrides

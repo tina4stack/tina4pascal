@@ -145,6 +145,11 @@ begin
   Result := TinaEmbedFlags(Index);
 end;
 
+function tina4_embed_kind(Index: cint): cint; cdecl;
+begin
+  Result := TinaEmbedKind(Index);   // 0 = video · 1 = audio
+end;
+
 function tina4_embed_poster(Index: cint; Buf: PAnsiChar; Cap: cint): cint; cdecl;
 var s: AnsiString;
 begin
@@ -163,7 +168,7 @@ exports
   tina4_wants_keyboard, tina4_blur, tina4_blink_caret, tina4_key,
   tina4_focus_kind, tina4_focus_next, tina4_set_file, tina4_set_photo,
   tina4_embed_count, tina4_embed_rect, tina4_embed_src,
-  tina4_embed_flags, tina4_embed_poster;
+  tina4_embed_flags, tina4_embed_poster, tina4_embed_kind;
 
 begin
 end.

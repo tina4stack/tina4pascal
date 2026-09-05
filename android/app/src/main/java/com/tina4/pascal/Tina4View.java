@@ -47,6 +47,7 @@ public class Tina4View extends View implements Runnable {
     private native float[] nativeEmbedRect(int index); // [x,y,w,h] in CSS px (scroll applied)
     private native String  nativeEmbedSrc(int index);  // the video source URL
     private native int     nativeEmbedFlags(int index);// 1 controls·2 autoplay·4 loop·8 muted
+    private native int     nativeEmbedKind(int index); // 0 = video · 1 = audio
 
     /** Called by MainActivity once the system file picker returns a name. */
     void onFilePicked(String name) { nativeSetFile(name); invalidate(); }

@@ -34,5 +34,6 @@ void tina4_embed_rect(int index, float *x, float *y, float *w, float *h);
 int  tina4_embed_src(int index, char *buf, int cap);   // fills buf, returns length
 int  tina4_embed_flags(int index);                     // 1 controls·2 autoplay·4 loop·8 muted
 int  tina4_embed_poster(int index, char *buf, int cap);// poster URL ('' if none)
+int  tina4_embed_kind(int index);                      // 0 = video · 1 = audio
 
 #endif

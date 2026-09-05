@@ -70,7 +70,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | camera | ✅ | **Tina4 custom** — "Take Photo" → shell capture |
 | picture, source, srcset | ✅ | responsive selection (media/type/density/width/sizes) |
 | video | ✅ iOS · ✅ Android · 🟡 macOS | core lays out a poster box + exposes rect/src/**flags**/poster via `tina4_embed_*`. Attributes honored per shell: `controls`, `autoplay`, `loop`, `muted` (bitmask), and `poster` (painted as the box background by the core). **iOS** ✅ `AVPlayerViewController`. **Android** ✅ `VideoView`+`MediaController` in a host `FrameLayout`. **macOS** 🟡 Cocoa `AVPlayerView` (AVKit; loop TODO) — compiles, verify pending a GUI run |
-| audio | ❌ | outstanding — shell-owned native audio player over a core placeholder box |
+| audio | ✅ | `<audio controls>` = a core-laid 300×54 placeholder box with a shell-owned native player over it (bare `<audio>` is `display:none`). Shares the `<video>` embed pipeline: `tina4_embed_*` now reports **kind** (0 video · 1 audio); AVPlayer/AVPlayerView (macOS+iOS) and Android VideoView all play audio. Attributes: controls/autoplay/loop/muted via the same flag bitmask |
 | canvas | ✅ | **pure-Pascal Canvas 2D** (`Tina4Canvas2D`) — an app registers a painter for `<canvas id>`; draws with the familiar methods (rects, paths, arc/bezier/quadratic, fill/stroke, text, transforms, globalAlpha, drawImage). Core-rendered → every shell + snapshot-testable. No JS, no Skia |
 | iframe | ⬜ | **intentionally not supported** — Tina4 composes pages with `<include src>` (native HTML splice into the same render tree), not a foreign web view |
 | object, map | ⬜ | legacy embed / image maps — not planned |
@@ -157,7 +157,8 @@ wishlist.
 4. **`video`** ✅ done — iOS `AVPlayerViewController` + Android `VideoView` overlays
    over the core placeholder box; attributes (controls/autoplay/loop/muted/poster)
    honored. macOS Cocoa `AVPlayerView` 🟡 (loop TODO).
-5. **`audio`** ❌ outstanding — native audio player over a core-laid box.
+5. **`audio`** ✅ done — `<audio controls>` placeholder box + shell-owned native
+   player, sharing the `<video>` embed pipeline (`tina4_embed_kind` = 0/1).
 6. **`canvas`** ✅ done — pure-Pascal Canvas 2D (`Tina4Canvas2D`), no JS engine.
 7. **`lottie`** ✅ done — pure-Pascal Bodymovin player (`Tina4Lottie`) over Canvas 2D.
    (`iframe` is intentionally not supported — use `<include src>`; `object`/`map`

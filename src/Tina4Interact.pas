@@ -122,6 +122,9 @@ function TinaEmbedSrc(Index: Integer): string;
   8 muted. Poster is the poster image URL ('' if none). }
 function TinaEmbedFlags(Index: Integer): Integer;
 function TinaEmbedPoster(Index: Integer): string;
+{ Embed media kind: 0 = <video> (picture surface), 1 = <audio> (control bar).
+  Lets a shell pick the right native player for the same rect/src/flags API. }
+function TinaEmbedKind(Index: Integer): Integer;
 
 implementation
 
@@ -135,6 +138,7 @@ type
     Src, Poster: string;
     X, Y, W, H: Single;
     Flags: Integer;   // bit0 controls · bit1 autoplay · bit2 loop · bit3 muted
+    Kind: Integer;    // 0 = video · 1 = audio
   end;
 
 var
@@ -1529,7 +1533,8 @@ procedure CollectEmbeds(Box: TLayoutBox);
 var c, sc: THTMLTag; b: TLayoutBox; src: string; n: Integer;
 begin
   if Box = nil then Exit;
-  if (Box.Tag <> nil) and SameText(Box.Tag.TagName, 'video') then
+  if (Box.Tag <> nil) and
+     (SameText(Box.Tag.TagName, 'video') or SameText(Box.Tag.TagName, 'audio')) then
   begin
     c := Box.Tag;
     src := c.GetAttribute('src');
@@ -1544,6 +1549,7 @@ begin
     GEmbeds[n].Y := Box.Y - GScrollY;     // content → screen (scroll applied)
     GEmbeds[n].W := Box.W;
     GEmbeds[n].H := Box.H;
+    if SameText(c.TagName, 'audio') then GEmbeds[n].Kind := 1 else GEmbeds[n].Kind := 0;
     GEmbeds[n].Flags := 0;                 // presence of each boolean attribute
     if c.HasAttribute('controls') then GEmbeds[n].Flags := GEmbeds[n].Flags or 1;
     if c.HasAttribute('autoplay') then GEmbeds[n].Flags := GEmbeds[n].Flags or 2;
@@ -1586,6 +1592,12 @@ function TinaEmbedPoster(Index: Integer): string;
 begin
   if (Index >= 0) and (Index < Length(GEmbeds)) then Result := GEmbeds[Index].Poster
   else Result := '';
+end;
+
+function TinaEmbedKind(Index: Integer): Integer;
+begin
+  if (Index >= 0) and (Index < Length(GEmbeds)) then Result := GEmbeds[Index].Kind
+  else Result := 0;
 end;
 
 finalization
