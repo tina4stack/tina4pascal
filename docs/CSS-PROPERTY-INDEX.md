@@ -118,7 +118,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | Property | Status | Note |
 |---|---|---|
 | table layout + colspan | ✅ | auto column sizing; colspan both passes |
-| rowspan | ❌ | multi-row cells collapse |
+| rowspan | ✅ | column-occupancy tracked across rows; spanned height + valign resolved |
 | border-collapse, border-spacing, table-layout | ❌ | not parsed; per-cell borders only |
 | caption-side, empty-cells | ❌ | `<caption>` dropped |
 | vertical-align (cells) | ✅ | top/middle/bottom |

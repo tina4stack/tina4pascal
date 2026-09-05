@@ -88,7 +88,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | tr, td | ✅ | |
 | th | 🟡 | renders as a cell; **no default bold/center** |
 | colspan (attr) | ✅ | both layout passes |
-| rowspan (attr) | ❌ | multi-row cells collapse, following rows misalign |
+| rowspan (attr) | ✅ | cell reserves its columns downward; following rows shift correctly |
 | caption | ❌ | dropped by row collection, never painted |
 | col, colgroup | ❌ | ignored (widths from content only) |
 

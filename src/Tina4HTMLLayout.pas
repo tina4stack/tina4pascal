@@ -2414,6 +2414,14 @@ var
   va: string;
   colspan: Integer;
   spanW: Single;
+  rowspan, ri, lastRow, nspan: Integer;
+  blocked: array of Integer;              // per-column: rows still covered by a rowspan above
+  rowTop, rowHeight: array of Single;     // geometry of each laid-out row
+  spanBox: array of TLayoutBox;           // deferred rowspan cells (height set after all rows)
+  spanStart, spanRows: array of Integer;
+  spanNatH: array of Single;
+  spanVA: array of string;
+  spanH: Single;
 
   procedure CollectRows(T: THTMLTag);
   var c: THTMLTag;
@@ -2448,12 +2456,17 @@ begin
     // content plus padding (+ a little slop for content-sized cells).
     SetLength(prefW, ncols);
     for i := 0 to ncols - 1 do prefW[i] := 0;
+    SetLength(blocked, ncols);
+    for i := 0 to ncols - 1 do blocked[i] := 0;
     for r in rows do
     begin
       ci := 0;
       for cell in r.Children do
       begin
         if not (SameText(cell.TagName, 'td') or SameText(cell.TagName, 'th')) then Continue;
+        // step past columns still covered by a rowspanning cell from a row above
+        while (ci < ncols) and (blocked[ci] > 0) do Inc(ci);
+        if ci >= ncols then Break;
         cs := TComputedStyle.ForTag(cell, Style, FSheet);
         cw := ResolveSize(cs.ExplicitWidth, tblAvail);
         if cell.HasAttribute('width') then
@@ -2473,10 +2486,16 @@ begin
         end;
         // a colspan cell spreads its width across the columns it covers
         colspan := Max(1, StrToIntDef(cell.GetAttribute('colspan', '1'), 1));
+        rowspan := Max(1, StrToIntDef(cell.GetAttribute('rowspan', '1'), 1));
         for i := ci to Min(ci + colspan - 1, ncols - 1) do
+        begin
           prefW[i] := Max(prefW[i], cw / colspan);
+          if rowspan > 1 then blocked[i] := rowspan;   // reserve these columns downward
+        end;
         Inc(ci, colspan);
       end;
+      for i := 0 to ncols - 1 do
+        if blocked[i] > 0 then Dec(blocked[i]);
     end;
     total := 0;
     for i := 0 to ncols - 1 do total := total + prefW[i];
@@ -2495,9 +2514,14 @@ begin
     tbox.Y := Y + Style.Margin.Top;
     tbox.W := tableW;
 
+    for i := 0 to ncols - 1 do blocked[i] := 0;
+    SetLength(rowTop, rows.Count);
+    SetLength(rowHeight, rows.Count);
+    nspan := 0;
     rowY := tbox.Y;
-    for r in rows do
+    for ri := 0 to rows.Count - 1 do
     begin
+      r := rows[ri];
       rs := TComputedStyle.ForTag(r, Style, FSheet);
       rbox := TLayoutBox.Create;
       rbox.Tag := r;
@@ -2510,6 +2534,10 @@ begin
       for cell in r.Children do
       begin
         if not (SameText(cell.TagName, 'td') or SameText(cell.TagName, 'th')) then Continue;
+        // a rowspanning cell from an earlier row owns these columns — walk past them
+        while (ci < ncols) and (blocked[ci] > 0) do
+        begin cx := cx + prefW[ci]; Inc(ci); end;
+        if ci >= ncols then Break;
         cs := TComputedStyle.ForTag(cell, rs, FSheet);
         if hasBorder and (cs.BorderWidths.Top <= 0) then
         begin
@@ -2523,6 +2551,8 @@ begin
         // colspan: this cell spans the next N columns; its width sums them
         colspan := StrToIntDef(cell.GetAttribute('colspan', '1'), 1);
         if colspan < 1 then colspan := 1;
+        rowspan := StrToIntDef(cell.GetAttribute('rowspan', '1'), 1);
+        if rowspan < 1 then rowspan := 1;
         spanW := 0;
         for i := ci to Min(ci + colspan - 1, ncols - 1) do spanW := spanW + prefW[i];
         cbox.X := cx; cbox.Y := rowY; cbox.W := spanW;
@@ -2537,14 +2567,32 @@ begin
         if cell.HasAttribute('height') then
           usedH := Max(usedH, TComputedStyle.ParseLength(cell.GetAttribute('height'), cs.FontSize));
         cbox.H := usedH + cs.Padding.Vert + cs.BorderWidths.Vert;
-        rowH := Max(rowH, cbox.H);
+        if rowspan <= 1 then
+          rowH := Max(rowH, cbox.H)     // single-row cell contributes to this row's height
+        else
+        begin
+          // multi-row cell: reserve its columns downward and resolve height once
+          // every spanned row is laid out (below); it must not inflate its start row
+          for i := ci to Min(ci + colspan - 1, ncols - 1) do blocked[i] := rowspan;
+          if nspan = Length(spanBox) then
+          begin
+            SetLength(spanBox, nspan + 8); SetLength(spanStart, nspan + 8);
+            SetLength(spanRows, nspan + 8); SetLength(spanNatH, nspan + 8);
+            SetLength(spanVA, nspan + 8);
+          end;
+          spanBox[nspan] := cbox; spanStart[nspan] := ri; spanRows[nspan] := rowspan;
+          spanNatH[nspan] := cbox.H; spanVA[nspan] := LowerCase(cs.VerticalAlign);
+          Inc(nspan);
+        end;
         cx := cx + spanW;
         Inc(ci, colspan);
       end;
-      // uniform row height + vertical-align of cell content (middle/bottom)
+      // uniform row height + vertical-align — single-row cells only; rowspan
+      // cells get their height after every row is placed (see below)
       for i := 0 to rbox.Children.Count - 1 do
       begin
         cbox := rbox.Children[i];
+        if StrToIntDef(cbox.Tag.GetAttribute('rowspan', '1'), 1) > 1 then Continue;
         va := LowerCase(cbox.Style.VerticalAlign);
         if ((va = 'middle') or (va = 'bottom')) and (rowH > cbox.NaturalH) then
         begin
@@ -2556,7 +2604,31 @@ begin
         cbox.H := rowH;
       end;
       rbox.H := rowH;
+      rowTop[ri] := rowY;
+      rowHeight[ri] := rowH;
       rowY := rowY + rowH;
+      for i := 0 to ncols - 1 do
+        if blocked[i] > 0 then Dec(blocked[i]);
+    end;
+    // resolve rowspan cell heights: span from their start row to the bottom of
+    // the last row they cover, then vertical-align the content within that span
+    for i := 0 to nspan - 1 do
+    begin
+      lastRow := Min(spanStart[i] + spanRows[i] - 1, rows.Count - 1);
+      spanH := (rowTop[lastRow] + rowHeight[lastRow]) - rowTop[spanStart[i]];
+      cbox := spanBox[i];
+      if spanH > cbox.NaturalH then
+      begin
+        if spanVA[i] = 'middle' then vaShift := (spanH - cbox.NaturalH) / 2
+        else if spanVA[i] = 'bottom' then vaShift := spanH - cbox.NaturalH
+        else vaShift := 0;
+        if vaShift > 0 then
+        begin
+          ShiftBoxTree(cbox, 0, vaShift);
+          cbox.Y := cbox.Y - vaShift;
+        end;
+      end;
+      cbox.H := Max(cbox.H, spanH);
     end;
     tbox.H := rowY - tbox.Y;
     Result := tbox.H + Style.Margin.Vert;
