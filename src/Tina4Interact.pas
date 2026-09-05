@@ -142,6 +142,7 @@ var
   // open <select> dropdown overlay (nil = closed). Painted on top of the page;
   // rows are hit-tested in screen space.
   GOpenSelect: THTMLTag = nil;
+  GRangeDrag: THTMLTag = nil;          // <input type=range> being dragged
   GFileTag: THTMLTag = nil;            // <input type=file>/<camera> awaiting a result
   GOptCount: Integer = 0;
   GOptTop: array[0..63] of Single;    // screen-y of each option row
@@ -297,6 +298,38 @@ begin
   if ctrl.HasAttribute('onclick') or (k = ckButton) or (k = ckCheckbox)
      or (k = ckRadio) or (k = ckFile) then
     Result := ctrl;
+end;
+
+{ The <input type=range> under the finger (walking up from the hit), or nil. }
+function RangeAt(cx, cy: Single): THTMLTag;
+var ctrl: THTMLTag;
+begin
+  Result := nil;
+  if GRoot = nil then Exit;
+  ctrl := HitTest(GRoot, cx, cy + GScrollY);
+  while (ctrl <> nil) and (CtrlKind(ctrl) <> ckRange) do ctrl := ctrl.Parent;
+  Result := ctrl;
+end;
+
+{ Set a range's value from a touch X (snapped to step), so dragging works. }
+procedure SetRangeFromX(tag: THTMLTag; screenX: Single);
+var box: TLayoutBox; mn, mx, st, frac, val: Single;
+begin
+  box := FindBoxForTag(GRoot, tag);
+  if (box = nil) or (box.W <= 0) then Exit;
+  mn := StrToFloatDef(tag.GetAttribute('min'), 0);
+  mx := StrToFloatDef(tag.GetAttribute('max'), 100);
+  if mx <= mn then mx := mn + 1;
+  st := StrToFloatDef(tag.GetAttribute('step'), 1); if st <= 0 then st := 1;
+  frac := (screenX - box.X) / box.W;
+  if frac < 0 then frac := 0; if frac > 1 then frac := 1;
+  val := mn + frac * (mx - mn);
+  val := mn + Round((val - mn) / st) * st;      // snap to step
+  if val > mx then val := mx; if val < mn then val := mn;
+  if Abs(val - Round(val)) < 0.001 then
+    tag.Attributes.AddOrSetValue('value', IntToStr(Round(val)))
+  else
+    tag.Attributes.AddOrSetValue('value', FloatToStrF(val, ffGeneral, 6, 2));
 end;
 
 var
@@ -868,9 +901,9 @@ begin
   box := FindBoxForTag(GRoot, GOpenDate);
   if box = nil then begin CloseDate; Exit; end;
 
-  pad := 12; GCalCellW := 40; GCalCellH := 38;
-  w := 7 * GCalCellW + 2 * pad;                 // 304
-  GCalHdrH := 46;
+  pad := 12; GCalCellW := 46; GCalCellH := 44;   // finger-friendly tap targets
+  w := 7 * GCalCellW + 2 * pad;                 // 346 (fits a 375px phone)
+  GCalHdrH := 52;
   h := GCalHdrH + 26 + 6 * GCalCellH + 48 + pad; // header + dow + 6 rows + footer
   bx := box.X; by := box.Y - GScrollY + box.H + 6;
   if bx + w > cssW then bx := cssW - w - 6;
@@ -1153,6 +1186,15 @@ begin
     0: begin
          GDownX := cx; GDownY := cy; GLastX := cx; GLastY := cy;
          GVelX := 0; GVelY := 0; GFlingVX := 0; GFlingVY := 0; GMoved := False;
+         // a range slider grabs the gesture (drag the thumb, don't scroll)
+         GRangeDrag := RangeAt(cx, cy);
+         if GRangeDrag <> nil then
+         begin
+           GDragBox := nil;
+           SetRangeFromX(GRangeDrag, cx);
+           GLayoutDirty := True;
+           Exit;
+         end;
          sb := FindScrollBox(GRoot, cx, cy + GScrollY);
          if (sb <> nil) and (sb <> GRoot) and
             ((sb.ScrollableX and (sb.MaxScrollX > 0)) or
@@ -1163,6 +1205,14 @@ begin
          SetActiveTag(PressTargetAt(cx, cy));    // :active pseudo-class on press
        end;
     2: begin
+         // dragging a range slider tracks the finger, never scrolls the page
+         if GRangeDrag <> nil then
+         begin
+           GLastX := cx; GLastY := cy;
+           SetRangeFromX(GRangeDrag, cx);
+           GLayoutDirty := True;
+           Exit;
+         end;
          dx := cx - GLastX; dy := cy - GLastY; GLastX := cx; GLastY := cy;
          if (Abs(cx - GDownX) > 4) or (Abs(cy - GDownY) > 4) then
          begin GMoved := True; SetActiveTag(nil); end;   // a drag cancels :active
@@ -1182,6 +1232,16 @@ begin
        end;
     1: begin
          SetActiveTag(nil);               // release: drop :active
+         if GRangeDrag <> nil then        // finish a slider drag: commit + fire handler
+         begin
+           SetRangeFromX(GRangeDrag, cx);
+           if GRangeDrag.HasAttribute('onchange') then
+             DispatchAction(GRangeDrag.GetAttribute('onchange'))
+           else if GRangeDrag.HasAttribute('oninput') then
+             DispatchAction(GRangeDrag.GetAttribute('oninput'));
+           GRangeDrag := nil; GLayoutDirty := True;
+           Exit;
+         end;
          if GMoved then
          begin
            if (Abs(GVelX) > 1) or (Abs(GVelY) > 1) then

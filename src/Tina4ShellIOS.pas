@@ -21,7 +21,7 @@ interface
 
 uses
   CFBase, CFString, CFAttributedString, CFDictionary, CFURL, CFError,
-  CGBase, CGContext, CGColor, CGColorSpace, CGGeometry, CGPath,
+  CGBase, CGContext, CGColor, CGColorSpace, CGGeometry, CGPath, CGGradient,
   CGImage, CGImageSource, CGAffineTransforms, CGFont, CGDataProvider,
   CTFont, CTFontTraits, CTFontManager, CTLine, CTStringAttributes,
   Tina4RenderBackend;
@@ -64,6 +64,12 @@ type
     procedure SaveState; override;
     procedure RestoreState; override;
     procedure Scale(SX, SY: Single); override;
+    procedure Translate(DX, DY: Single); override;
+    procedure Rotate(Degrees: Single); override;
+    procedure FillLinearGradient(X, Y, W, H, Radius, AngleDeg: Single;
+      const Colors: array of TTina4Color; const Positions: array of Single); override;
+    procedure FillRadialGradient(X, Y, W, H, Radius: Single;
+      const Colors: array of TTina4Color; const Positions: array of Single); override;
     function LoadImage(const Src: string): Integer; override;
     function RegisterFont(const Family, Src: string): Boolean; override;
     function ImageSize(Handle: Integer; out W, H: Single): Boolean; override;
@@ -371,6 +377,81 @@ end;
 procedure TIOSCanvas.Scale(SX, SY: Single);
 begin
   CGContextScaleCTM(FCtx, SX, SY);
+end;
+
+procedure TIOSCanvas.Translate(DX, DY: Single);
+begin
+  CGContextTranslateCTM(FCtx, DX, DY);
+end;
+
+procedure TIOSCanvas.Rotate(Degrees: Single);
+begin
+  // y-down context: a positive CTM rotation reads as CSS clockwise
+  CGContextRotateCTM(FCtx, Degrees * Pi / 180);
+end;
+
+procedure TIOSCanvas.FillLinearGradient(X, Y, W, H, Radius, AngleDeg: Single;
+  const Colors: array of TTina4Color; const Positions: array of Single);
+var
+  grad: CGGradientRef;
+  comps, locs: array of Double;
+  i, n: Integer;
+  a, dx, dy, gl, cx, cy: Double;
+begin
+  n := Length(Colors); if n = 0 then Exit;
+  SetLength(comps, n * 4); SetLength(locs, n);
+  for i := 0 to n - 1 do
+  begin
+    comps[i*4]   := ((Colors[i] shr 16) and $FF) / 255;
+    comps[i*4+1] := ((Colors[i] shr 8) and $FF) / 255;
+    comps[i*4+2] := (Colors[i] and $FF) / 255;
+    comps[i*4+3] := ((Colors[i] shr 24) and $FF) / 255;
+    if (i < Length(Positions)) and (Positions[i] >= 0) then locs[i] := Positions[i]
+    else if n > 1 then locs[i] := i / (n - 1) else locs[i] := 0;
+    if (i > 0) and (locs[i] < locs[i-1]) then locs[i] := locs[i-1];
+  end;
+  grad := CGGradientCreateWithColorComponents(FSpace, @comps[0], @locs[0], n);
+  if grad = nil then Exit;
+  CGContextSaveGState(FCtx);
+  RRectPath(X, Y, W, H, Radius); CGContextClip(FCtx);
+  a := AngleDeg * Pi / 180; dx := Sin(a); dy := -Cos(a);
+  gl := Abs(W * Sin(a)) + Abs(H * Cos(a)); cx := X + W/2; cy := Y + H/2;
+  CGContextDrawLinearGradient(FCtx, grad,
+    CGPointMake(cx - dx*gl/2, cy - dy*gl/2),
+    CGPointMake(cx + dx*gl/2, cy + dy*gl/2), 3);  // extend both ends
+  CGContextRestoreGState(FCtx);
+  CGGradientRelease(grad);
+end;
+
+procedure TIOSCanvas.FillRadialGradient(X, Y, W, H, Radius: Single;
+  const Colors: array of TTina4Color; const Positions: array of Single);
+var
+  grad: CGGradientRef;
+  comps, locs: array of Double;
+  i, n: Integer;
+  cx, cy, r: Double;
+begin
+  n := Length(Colors); if n = 0 then Exit;
+  SetLength(comps, n * 4); SetLength(locs, n);
+  for i := 0 to n - 1 do
+  begin
+    comps[i*4]   := ((Colors[i] shr 16) and $FF) / 255;
+    comps[i*4+1] := ((Colors[i] shr 8) and $FF) / 255;
+    comps[i*4+2] := (Colors[i] and $FF) / 255;
+    comps[i*4+3] := ((Colors[i] shr 24) and $FF) / 255;
+    if (i < Length(Positions)) and (Positions[i] >= 0) then locs[i] := Positions[i]
+    else if n > 1 then locs[i] := i / (n - 1) else locs[i] := 0;
+    if (i > 0) and (locs[i] < locs[i-1]) then locs[i] := locs[i-1];
+  end;
+  grad := CGGradientCreateWithColorComponents(FSpace, @comps[0], @locs[0], n);
+  if grad = nil then Exit;
+  CGContextSaveGState(FCtx);
+  RRectPath(X, Y, W, H, Radius); CGContextClip(FCtx);
+  cx := X + W/2; cy := Y + H/2; r := Sqrt(Sqr(W/2) + Sqr(H/2));  // farthest corner
+  CGContextDrawRadialGradient(FCtx, grad, CGPointMake(cx, cy), 0,
+    CGPointMake(cx, cy), r, 3);
+  CGContextRestoreGState(FCtx);
+  CGGradientRelease(grad);
 end;
 
 { ---- images (Core Graphics + Image I/O) -------------------------------- }
