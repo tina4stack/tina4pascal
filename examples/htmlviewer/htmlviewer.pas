@@ -699,7 +699,7 @@ begin
 end;
 
 var
-  FileName, SnapPath, HTML, CSSFile, ScriptPath: string;
+  FileName, SnapPath, HTML, CSSFile, ScriptPath, FontFam, FontUrl: string;
   SL: TStringList;
   i: Integer;
   autof: TList<THTMLTag>;
@@ -771,6 +771,21 @@ begin
 
   WriteLn('Loaded ', FileName);
   Viewer.Shell := TCocoaShell.Create;
+
+  { @font-face: register downloadable fonts before the first layout so text
+    measurement uses the real face. RegisterFont fetches + disk-caches URLs. }
+  for i := 0 to Viewer.Sheet.FontFaceCount - 1 do
+  begin
+    Viewer.Sheet.GetFontFace(i, FontFam, FontUrl);
+    if (FontFam <> '') and (FontUrl <> '') then
+    begin
+      if Viewer.Shell.GetMeasuringCanvas.RegisterFont(FontFam, FontUrl) then
+        WriteLn('[font] registered "', FontFam, '" from ', FontUrl)
+      else
+        WriteLn('[font] FAILED to register "', FontFam, '" from ', FontUrl);
+    end;
+  end;
+
   Viewer.Shell.OnPaint := Viewer.Paint;
   Viewer.Shell.OnScroll := Viewer.Scroll;
   Viewer.Shell.OnMouseDown := Viewer.MouseDown;
