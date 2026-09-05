@@ -20,12 +20,12 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 |---|---|---|
 | width, height | ✅ | px/%/auto, box-sizing-aware |
 | min-width, max-width | ✅ | clamped in layout |
-| min-height, max-height | 📦 | parsed, never applied |
+| min-height, max-height | ✅ | clamped in LayoutBlock |
 | margin (+ 4 sides) | ✅ | shorthand, auto-center, vertical collapse |
 | padding (+ 4 sides) | ✅ | |
-| border-width (+ 4 sides) | 🟡 | per-side parsed; **paint uses only the Top width** for all sides |
-| border-style (+ 4 sides) | ❌ | no BorderStyle field — always solid (no dashed/dotted/double) |
-| border-color (+ 4 sides) | 🟡 | per-side parsed; **paint uses only the Top color** |
+| border-width (+ 4 sides) | ✅ | per-side widths painted (rectangular boxes); rounded boxes use a uniform stroke |
+| border-style (+ 4 sides) | ✅ | solid / dashed / dotted / double painted (rectangular boxes); groove/ridge/inset/outset → solid |
+| border-color (+ 4 sides) | ✅ | per-side colours painted (rectangular boxes) |
 | border-radius (+ 4 corners) | ✅ | 1–4 shorthand + per-corner |
 | box-sizing | ✅ | content-box/border-box |
 | overflow, overflow-x, overflow-y | ✅ | both axes scroll+clip (tracker's "overflow-x ❌" was stale) |
@@ -51,12 +51,12 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | Property | Status | Note |
 |---|---|---|
 | flex, flex-grow, flex-basis | ✅ | grow distributes free main space |
-| flex-shrink | 📦 | parsed, **no shrink pass** — items overflow instead of shrinking |
+| flex-shrink | ✅ | weighted shrink pass on overflowing non-wrapping rows |
 | flex-direction | 🟡 | row/column; reverse variants not reversed |
 | flex-wrap | 🟡 | wrap works; wrap-reverse = plain wrap; grow disabled while wrapping |
 | flex-flow | ❌ | use longhands |
 | justify-content | ✅ | start/center/end/space-between/around/evenly |
-| align-items | 🟡 | center/flex-end; **stretch is a no-op**, no baseline |
+| align-items | ✅ | center/flex-end/stretch (the default, fills the cross axis); no baseline |
 | align-content, align-self, order | ❌ | no multi-line cross-align, per-item align, or reorder |
 | gap, row-gap, column-gap | 🟡 | one shared gap value (no per-axis distinction) |
 | grid + all grid-\* | ❌ | not started |
@@ -69,7 +69,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | font-size | ✅ | px/pt/em/rem/% |
 | font-weight | 🟡 | binary bold/normal (≥500 = bold); no light/medium/semibold/black |
 | font-style | ✅ | italic/oblique |
-| font-family | 📦 | **parsed only** — canvas has no family arg, everything renders in one system font |
+| font-family | ✅ | resolved on all 3 shell canvases (generic + named + @font-face); real fonts, not one system face |
 | font (shorthand), font-variant, font-stretch | ❌ | not parsed |
 | line-height | 🟡 | unitless + px; %/rem unhandled |
 | letter-spacing | ✅ | applied in measure AND paint |
@@ -94,7 +94,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 |---|---|---|
 | background-color | ✅ | alpha-scaled by opacity |
 | background (shorthand) | 🟡 | color channel only |
-| background-image: url() | 📦 | url + position/size/repeat all parsed; **never painted** |
+| background-image: url() | ✅ | painted via the cached/async image path; size cover/contain/auto, position, repeat; clipped |
 | background: linear-gradient() | 🟡 | collapsed to a flat **midpoint** color; angle + mid-stops dropped |
 | background: radial-gradient() | ❌ | not parsed |
 | box-shadow | 🟡 | **hard-edge** (blur ignored), outset-only, ignores radius |
