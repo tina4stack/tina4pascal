@@ -37,6 +37,11 @@ type
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); override;
     procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); override;
     procedure StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color); override;
+    procedure FillLinearGradient(X, Y, W, H, Radius, AngleDeg: Single;
+      const Colors: array of TTina4Color; const Positions: array of Single); override;
+    procedure FillRadialGradient(X, Y, W, H, Radius: Single;
+      const Colors: array of TTina4Color; const Positions: array of Single); override;
+    procedure FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color); override;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); override;
     procedure FillPolygon(const Contours: array of TTina4PointArray;
       Color: TTina4Color; EvenOdd: Boolean = False); override;
@@ -408,6 +413,9 @@ end;
 
 procedure TCocoaCanvas.FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color);
 begin
+  // a corner radius can't exceed half the shorter side (pill = radius >= H/2)
+  if Radius > W / 2 then Radius := W / 2;
+  if Radius > H / 2 then Radius := H / 2;
   NSColorOf(Color).setFill;
   NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius(
     NSMakeRect(X, Y, W, H), Radius, Radius).fill;
@@ -417,12 +425,106 @@ procedure TCocoaCanvas.StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Co
 var
   p: NSBezierPath;
 begin
+  if Radius > W / 2 then Radius := W / 2;
+  if Radius > H / 2 then Radius := H / 2;
   NSColorOf(Color).setStroke;
   p := NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius(
     NSMakeRect(X + Thickness / 2, Y + Thickness / 2, W - Thickness, H - Thickness),
     Radius, Radius);
   p.setLineWidth(Thickness);
   p.stroke;
+end;
+
+function BuildNSGradient(const Colors: array of TTina4Color;
+  const Positions: array of Single): NSGradient;
+var
+  arr: NSMutableArray;
+  locs: array of Double;
+  i, n: Integer;
+begin
+  n := Length(Colors);
+  arr := NSMutableArray.arrayWithCapacity(n);
+  SetLength(locs, n);
+  for i := 0 to n - 1 do
+  begin
+    arr.addObject(NSColorOf(Colors[i]));
+    if (i < Length(Positions)) and (Positions[i] >= 0) then locs[i] := Positions[i]
+    else if n > 1 then locs[i] := i / (n - 1)
+    else locs[i] := 0;
+    if (i > 0) and (locs[i] < locs[i - 1]) then locs[i] := locs[i - 1]; // monotonic
+  end;
+  Result := NSGradient(NSGradient.alloc).initWithColors_atLocations_colorSpace(
+    arr, @locs[0], NSColorSpace.sRGBColorSpace);
+end;
+
+procedure TCocoaCanvas.FillLinearGradient(X, Y, W, H, Radius, AngleDeg: Single;
+  const Colors: array of TTina4Color; const Positions: array of Single);
+var
+  grad: NSGradient;
+  path: NSBezierPath;
+  a, dx, dy, gradLen, cx, cy: Double;
+begin
+  if Length(Colors) = 0 then Exit;
+  if Radius > W / 2 then Radius := W / 2;
+  if Radius > H / 2 then Radius := H / 2;
+  grad := BuildNSGradient(Colors, Positions);
+  if grad = nil then Exit;
+  NSGraphicsContext.currentContext.saveGraphicsState;
+  path := NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius(
+    NSMakeRect(X, Y, W, H), Radius, Radius);
+  path.addClip;
+  // CSS angle: 0=up, 90=right. Flipped view is y-down, matching CSS.
+  a := AngleDeg * Pi / 180;
+  dx := Sin(a); dy := -Cos(a);
+  gradLen := Abs(W * Sin(a)) + Abs(H * Cos(a));
+  cx := X + W / 2; cy := Y + H / 2;
+  grad.drawFromPoint_toPoint_options(
+    NSMakePoint(cx - dx * gradLen / 2, cy - dy * gradLen / 2),
+    NSMakePoint(cx + dx * gradLen / 2, cy + dy * gradLen / 2), 0);
+  NSGraphicsContext.currentContext.restoreGraphicsState;
+  grad.release;
+end;
+
+procedure TCocoaCanvas.FillRadialGradient(X, Y, W, H, Radius: Single;
+  const Colors: array of TTina4Color; const Positions: array of Single);
+var
+  grad: NSGradient;
+  path: NSBezierPath;
+begin
+  if Length(Colors) = 0 then Exit;
+  if Radius > W / 2 then Radius := W / 2;
+  if Radius > H / 2 then Radius := H / 2;
+  grad := BuildNSGradient(Colors, Positions);
+  if grad = nil then Exit;
+  NSGraphicsContext.currentContext.saveGraphicsState;
+  path := NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius(
+    NSMakeRect(X, Y, W, H), Radius, Radius);
+  path.addClip;
+  grad.drawInBezierPath_relativeCenterPosition(path, NSMakePoint(0, 0));
+  NSGraphicsContext.currentContext.restoreGraphicsState;
+  grad.release;
+end;
+
+procedure TCocoaCanvas.FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color);
+var
+  sh: NSShadow;
+  path: NSBezierPath;
+begin
+  if Radius > W / 2 then Radius := W / 2;
+  if Radius > H / 2 then Radius := H / 2;
+  NSGraphicsContext.currentContext.saveGraphicsState;
+  sh := NSShadow(NSShadow.alloc.init).autorelease;
+  sh.setShadowBlurRadius(Blur);
+  sh.setShadowOffset(NSMakeSize(0, 0));   // offset already baked into X,Y
+  sh.setShadowColor(NSColorOf(Color));
+  sh.set_;
+  // draw the shape in the shadow colour; NSShadow blurs what we paint. Painting
+  // slightly outside the visible area is fine — the blur is what shows.
+  NSColorOf(Color).setFill;
+  path := NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius(
+    NSMakeRect(X, Y, W, H), Radius, Radius);
+  path.fill;
+  NSGraphicsContext.currentContext.restoreGraphicsState;
 end;
 
 procedure TCocoaCanvas.DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color);

@@ -2802,7 +2802,9 @@ var
   rightEdge, avail: Single;
   drawTxt: string;
   zorder: array of Integer;
-  zi, zj, ztmp: Integer;
+  zi, zj, ztmp, gi: Integer;
+  gcol: array of TTina4Color;
+  gpos: array of Single;
   bg, bd, fg: TTina4Color;
 begin
   st := Box.Style;
@@ -2900,10 +2902,19 @@ begin
     Exit;
   end;
 
-  // box-shadow (drawn under the box; blur approximated as a hard edge). Follows
-  // the box's corner radius so a square shadow never peeks past a rounded card.
+  // box-shadow (drawn under the box). A blurred (soft) shadow uses the backend
+  // blur primitive; a zero-blur shadow is a hard rounded rect. Follows the box's
+  // corner radius so a square shadow never peeks past a rounded card.
   if (not Hidden) and st.BoxShadow.Active and not st.BoxShadow.Inset then
-    if st.MaxCornerRadius > 0 then
+    if st.BoxShadow.BlurRadius > 0 then
+      Canvas.FillSoftShadow(
+        Box.X + st.BoxShadow.OffsetX - st.BoxShadow.SpreadRadius,
+        y + st.BoxShadow.OffsetY - st.BoxShadow.SpreadRadius,
+        Box.W + 2 * st.BoxShadow.SpreadRadius,
+        Box.H + 2 * st.BoxShadow.SpreadRadius,
+        st.MaxCornerRadius, st.BoxShadow.BlurRadius,
+        ScaleAlpha(st.BoxShadow.Color, op))
+    else if st.MaxCornerRadius > 0 then
       Canvas.FillRoundRect(
         Box.X + st.BoxShadow.OffsetX - st.BoxShadow.SpreadRadius,
         y + st.BoxShadow.OffsetY - st.BoxShadow.SpreadRadius,
@@ -2920,10 +2931,24 @@ begin
 
   bg := ScaleAlpha(st.BackgroundColor, op);
   bd := ScaleAlpha(st.BorderColor, op);
-  // linear-gradient background approximated by the midpoint of its end stops
-  if ((bg shr 24) = 0) and st.BgGradientActive then
-    bg := ScaleAlpha(AvgColor(st.BgGradientStart, st.BgGradientEnd), op);
-  if (not Hidden) and ((bg shr 24) > 0) then
+  // real gradient background (linear or radial, multi-stop), when no solid
+  // background-color covers it. Stops are opacity-scaled; the backend clips to
+  // the corner radius and falls back to a flat fill if it can't gradient.
+  if (not Hidden) and ((bg shr 24) = 0) and st.BgGradientActive and (st.GradStopCount >= 2) then
+  begin
+    SetLength(gcol, st.GradStopCount); SetLength(gpos, st.GradStopCount);
+    for gi := 0 to st.GradStopCount - 1 do
+    begin
+      gcol[gi] := ScaleAlpha(st.GradStopColors[gi], op);
+      gpos[gi] := st.GradStopPos[gi];
+    end;
+    if st.BgGradientRadial then
+      Canvas.FillRadialGradient(Box.X, y, Box.W, Box.H, st.MaxCornerRadius, gcol, gpos)
+    else
+      Canvas.FillLinearGradient(Box.X, y, Box.W, Box.H, st.MaxCornerRadius,
+        st.BgGradientAngle, gcol, gpos);
+  end
+  else if (not Hidden) and ((bg shr 24) > 0) then
   begin
     if st.MaxCornerRadius > 0 then
       Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, st.MaxCornerRadius, bg)

@@ -41,6 +41,18 @@ type
       backends (headless/null) stay correct. }
     procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); virtual;
     procedure StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color); virtual;
+    { Gradient fills for CSS linear-/radial-gradient backgrounds. Colors[] +
+      Positions[] (0..1, or <0 = auto/evenly-spaced) describe the stops; Radius
+      rounds the box corners. AngleDeg is the CSS gradient angle (0=up,90=right).
+      The base class approximates with a flat average-colour fill so headless and
+      not-yet-updated shells still render something sensible. }
+    procedure FillLinearGradient(X, Y, W, H, Radius, AngleDeg: Single;
+      const Colors: array of TTina4Color; const Positions: array of Single); virtual;
+    procedure FillRadialGradient(X, Y, W, H, Radius: Single;
+      const Colors: array of TTina4Color; const Positions: array of Single); virtual;
+    { A soft (blurred) drop shadow for a rounded rect — CSS box-shadow. The base
+      class draws a hard-edged rect so simple backends still show a shadow. }
+    procedure FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color); virtual;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); virtual; abstract;
     { Fills the area covered by one or more closed contours (device coords),
       used by the SVG painter for circles, polygons and path shapes. EvenOdd
@@ -235,6 +247,43 @@ end;
 procedure TTina4Canvas.StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color);
 begin
   StrokeRect(X, Y, W, H, Thickness, Color);
+end;
+
+{ Average a stop list into one colour (per-channel mean over alpha, R, G, B). }
+function AvgStops(const Colors: array of TTina4Color): TTina4Color;
+var i, n: Integer; a, r, g, b: Integer;
+begin
+  n := Length(Colors);
+  if n = 0 then Exit($00000000);
+  a := 0; r := 0; g := 0; b := 0;
+  for i := 0 to n - 1 do
+  begin
+    a := a + Integer((Colors[i] shr 24) and $FF);
+    r := r + Integer((Colors[i] shr 16) and $FF);
+    g := g + Integer((Colors[i] shr 8) and $FF);
+    b := b + Integer(Colors[i] and $FF);
+  end;
+  Result := (Cardinal(a div n) shl 24) or (Cardinal(r div n) shl 16) or
+            (Cardinal(g div n) shl 8) or Cardinal(b div n);
+end;
+
+procedure TTina4Canvas.FillLinearGradient(X, Y, W, H, Radius, AngleDeg: Single;
+  const Colors: array of TTina4Color; const Positions: array of Single);
+begin
+  // base fallback: flat average-colour fill (shells override for real gradients)
+  FillRoundRect(X, Y, W, H, Radius, AvgStops(Colors));
+end;
+
+procedure TTina4Canvas.FillRadialGradient(X, Y, W, H, Radius: Single;
+  const Colors: array of TTina4Color; const Positions: array of Single);
+begin
+  FillRoundRect(X, Y, W, H, Radius, AvgStops(Colors));
+end;
+
+procedure TTina4Canvas.FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color);
+begin
+  // base fallback: a hard-edged shadow rect (no blur)
+  FillRoundRect(X, Y, W, H, Radius, Color);
 end;
 
 function TTina4Canvas.LoadImage(const Src: string): Integer;

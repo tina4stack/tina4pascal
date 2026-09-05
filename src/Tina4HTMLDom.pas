@@ -2674,6 +2674,59 @@ begin
     Url := Url.Substring(1, Url.Length - 2);
 end;
 
+{ Split on commas that are NOT inside parentheses, so rgb(…)/var(…) stops in a
+  gradient argument list survive intact. }
+function SplitTopLevelCommas(const S: string): TStringArray;
+var
+  i, depth, start, n: Integer;
+begin
+  SetLength(Result, 0);
+  depth := 0; start := 1; n := 0;
+  for i := 1 to Length(S) do
+  begin
+    if S[i] = '(' then Inc(depth)
+    else if S[i] = ')' then Dec(depth)
+    else if (S[i] = ',') and (depth = 0) then
+    begin
+      SetLength(Result, n + 1);
+      Result[n] := Copy(S, start, i - start); Inc(n);
+      start := i + 1;
+    end;
+  end;
+  SetLength(Result, n + 1);
+  Result[n] := Copy(S, start, Length(S) - start + 1);
+end;
+
+{ Parse one gradient colour stop ("#fff", "var(--x)", "red 50%") and append it
+  to the style's stop arrays (capped at 8). }
+procedure ParseGradientStop(const S: string; var Style: TComputedStyle);
+var
+  t, colStr, posStr: string;
+  sp: Integer;
+  pos: Single;
+begin
+  if Style.GradStopCount >= 8 then Exit;
+  t := Trim(S);
+  if t = '' then Exit;
+  pos := -1;                       // auto
+  // a trailing "NN%" is the stop position; keep the rest as the colour
+  sp := t.LastIndexOf(' ');
+  if (sp > 0) then
+  begin
+    posStr := Trim(Copy(t, sp + 2, MaxInt));
+    if posStr.EndsWith('%') then
+    begin
+      pos := StrToFloatDef(Copy(posStr, 1, Length(posStr) - 1), -1) / 100;
+      colStr := Trim(Copy(t, 1, sp));
+    end
+    else colStr := t;
+  end
+  else colStr := t;
+  Style.GradStopColors[Style.GradStopCount] := TComputedStyle.ParseColor(colStr);
+  Style.GradStopPos[Style.GradStopCount] := pos;
+  Inc(Style.GradStopCount);
+end;
+
 class procedure TComputedStyle.ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle);
 var
   Temp: string;
@@ -3264,27 +3317,29 @@ begin
   if Decls.TryGetValue('background-repeat', Temp) and not ShouldSkip(Temp) then
     Style.BgRepeat := Temp.Trim.ToLower;
 
-  // linear-gradient — extract from background-image OR the background
-  // shorthand. Multi-stop gradients fall back to first + last colour.
+  // linear-gradient / radial-gradient — from background-image OR the background
+  // shorthand. All colour stops (up to 8) + positions are captured for a real
+  // multi-stop gradient; Start/End/Angle are kept as a fallback.
   GradientSrc := '';
   if Decls.TryGetValue('background-image', Temp) and not ShouldSkip(Temp) then
-    if Temp.ToLower.Contains('linear-gradient(') then
-      GradientSrc := Temp;
+    if Temp.ToLower.Contains('gradient(') then GradientSrc := Temp;
   if (GradientSrc = '') and Decls.TryGetValue('background', Temp) and not ShouldSkip(Temp) then
-    if Temp.ToLower.Contains('linear-gradient(') then
-      GradientSrc := Temp;
+    if Temp.ToLower.Contains('gradient(') then GradientSrc := Temp;
   if GradientSrc <> '' then
   begin
     GSrc := GradientSrc;
     GLower := GSrc.ToLower;
-    GP1 := GLower.IndexOf('linear-gradient(');
-    GP2 := GLower.IndexOf(')', GP1 + 16);
-    if (GP1 >= 0) and (GP2 > GP1) then
+    Style.BgGradientRadial := GLower.Contains('radial-gradient(');
+    if Style.BgGradientRadial then GP1 := GLower.IndexOf('radial-gradient(') + 15
+    else GP1 := GLower.IndexOf('linear-gradient(') + 15;
+    GP2 := GLower.LastIndexOf(')');
+    if (GP1 >= 15) and (GP2 > GP1) then
     begin
-      GInner := GSrc.Substring(GP1 + 16, GP2 - GP1 - 16);
-      GArgs := GInner.Split([',']);
+      GInner := GSrc.Substring(GP1 + 1, GP2 - GP1 - 1);
+      GArgs := SplitTopLevelCommas(GInner);
       Style.BgGradientAngle := 180;  // default `to bottom` (top->bottom)
       SetLength(GColors, 0);
+      Style.GradStopCount := 0;
       for GArg in GArgs do
       begin
         GAngleStr := GArg.Trim.ToLower;
@@ -3297,16 +3352,17 @@ begin
           else if GAngleStr = 'to bottom' then Style.BgGradientAngle := 180
           else if GAngleStr = 'to left' then Style.BgGradientAngle := 270;
         end
+        else if GAngleStr.StartsWith('circle') or GAngleStr.StartsWith('ellipse')
+             or GAngleStr.StartsWith('at ') or GAngleStr.StartsWith('closest')
+             or GAngleStr.StartsWith('farthest') then
+          // radial shape/size/position keywords — accepted, not modelled yet
         else
-        begin
-          SetLength(GColors, Length(GColors) + 1);
-          GColors[High(GColors)] := ParseColor(GArg.Trim);
-        end;
+          ParseGradientStop(GArg.Trim, Style);   // "colour [pos%]"
       end;
-      if Length(GColors) >= 2 then
+      if Style.GradStopCount >= 2 then
       begin
-        Style.BgGradientStart := GColors[0];
-        Style.BgGradientEnd := GColors[High(GColors)];
+        Style.BgGradientStart := Style.GradStopColors[0];
+        Style.BgGradientEnd := Style.GradStopColors[Style.GradStopCount - 1];
         Style.BgGradientActive := True;
       end;
     end;

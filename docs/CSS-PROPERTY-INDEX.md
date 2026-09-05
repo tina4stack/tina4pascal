@@ -95,9 +95,9 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | background-color | ✅ | alpha-scaled by opacity |
 | background (shorthand) | 🟡 | color channel only |
 | background-image: url() | ✅ | painted via the cached/async image path; size cover/contain/auto, position, repeat; clipped |
-| background: linear-gradient() | 🟡 | collapsed to a flat **midpoint** color; angle + mid-stops dropped |
-| background: radial-gradient() | ❌ | not parsed |
-| box-shadow | 🟡 | **hard-edge** (blur ignored), outset-only, ignores radius |
+| background: linear-gradient() | ✅ | real multi-stop gradient (up to 8 stops + positions), angle honored; backend NSGradient on Cocoa (base fallback = flat avg) |
+| background: radial-gradient() | ✅ | parsed + painted (center radial); shape/size keywords accepted, not yet modelled |
+| box-shadow | ✅ | soft blur (NSShadow) + spread + corner-radius aware, outset; inset still TODO |
 | outline (+ width/style/color/offset) | 📦 | fully parsed, **never painted** (focus ring is bespoke) |
 
 ## Visual effects & compositing
