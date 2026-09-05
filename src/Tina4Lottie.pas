@@ -5,11 +5,12 @@ unit Tina4Lottie;
   Parses a Lottie animation (fpjson) and renders any frame onto a Tina4Canvas2D,
   so a <lottie> is drawn by the SAME portable canvas as everything else and
   animates off the shared ticker. Supported (the common shape-animation subset):
-  shape layers, groups (gr), bezier paths (sh), fills (fl), strokes (st), group +
-  layer transforms (position/rotation/scale/anchor/opacity), layer parenting
-  (a null parent cascades its transform, not its opacity), and keyframed
-  properties with cubic-bezier temporal easing. Not yet: gradients, text, images,
-  masks/mattes, precomps, trim paths, path keyframe morphing. }
+  shape layers, groups (gr), bezier paths (sh) with keyframe MORPHING, fills (fl)
+  with the winding rule (nonzero/even-odd holes), strokes (st), group + layer
+  transforms (position/rotation/scale/anchor/opacity), layer parenting (a null
+  parent cascades its transform, not its opacity), correct top-first paint order,
+  and keyframed properties with cubic-bezier temporal easing. Not yet: gradients,
+  text, images, masks/mattes, precomps, trim paths. }
 
 {$mode delphi}{$H+}
 
@@ -212,10 +213,10 @@ begin
 end;
 
 procedure TTina4Lottie.BuildPath(ctx: TTina4Canvas2D; shp: TJSONObject; frame: Single);
-var ksd, kd: TJSONData; pathObj: TJSONObject;
-    v, inT, outT: TJSONArray; n, j, jn: Integer;
-    vx, vy, o1x, o1y, i2x, i2y, nx, ny: Single;
-    arr: TJSONArray; i: Integer; t0, t1: Single;
+var ksd, kd: TJSONData; p0, p1: TJSONObject;
+    v0, i0, o0, v1, i1, o1: TJSONArray; n, j, jn: Integer;
+    vx, vy, o1x, o1y, i2x, i2y, nx, ny, mix, lt, t0, t1: Single;
+    arr: TJSONArray; i: Integer; closed: Boolean; kf: TJSONObject;
 
   function VC(a: TJSONArray; idx, comp: Integer): Single;
   begin
@@ -224,65 +225,94 @@ var ksd, kd: TJSONData; pathObj: TJSONObject;
        and (comp < TJSONArray(a[idx]).Count) then
       Result := JNum(TJSONArray(a[idx])[comp]);
   end;
+  // morphed component: linear-interpolate matching vertices of the two shapes
+  function LV(a, b: TJSONArray; idx, comp: Integer): Single;
+  var va, vb: Single;
+  begin
+    va := VC(a, idx, comp); vb := VC(b, idx, comp);
+    Result := va + (vb - va) * mix;
+  end;
+
+  function ShapeAt(pk: TJSONData): TJSONObject;
+  begin
+    Result := nil;
+    if (pk is TJSONArray) and (TJSONArray(pk).Count > 0) then
+      Result := TJSONObject(TJSONArray(pk)[0]);
+  end;
 
 begin
   ksd := shp.Find('ks');
   if not (ksd is TJSONObject) then Exit;
   kd := TJSONObject(ksd).Find('k');
-  pathObj := nil;
+  p0 := nil; p1 := nil; mix := 0;
   if JNum(TJSONObject(ksd).Find('a'), 0) = 0 then
   begin
-    if kd is TJSONObject then pathObj := TJSONObject(kd);
+    if kd is TJSONObject then begin p0 := TJSONObject(kd); p1 := p0; end;
   end
   else if kd is TJSONArray then
   begin
-    // pick the keyframe's start shape for the current segment (no path morphing yet)
     arr := TJSONArray(kd);
-    pathObj := nil;
-    for i := 0 to arr.Count - 1 do
+    if arr.Count = 0 then Exit;
+    if frame <= JNum(TJSONObject(arr[0]).Find('t')) then
+    begin p0 := ShapeAt(TJSONObject(arr[0]).Find('s')); p1 := p0; end
+    else
     begin
-      t0 := JNum(TJSONObject(arr[i]).Find('t'));
-      if i < arr.Count - 1 then t1 := JNum(TJSONObject(arr[i + 1]).Find('t')) else t1 := 1e9;
-      if (frame >= t0) and (frame < t1) then
+      for i := 0 to arr.Count - 2 do
       begin
-        if TJSONObject(arr[i]).Find('s') is TJSONArray then
-          pathObj := TJSONObject(TJSONArray(TJSONObject(arr[i]).Find('s'))[0]);
-        Break;
+        kf := TJSONObject(arr[i]);
+        t0 := JNum(kf.Find('t')); t1 := JNum(TJSONObject(arr[i + 1]).Find('t'));
+        if (frame >= t0) and (frame < t1) then
+        begin
+          p0 := ShapeAt(kf.Find('s'));
+          p1 := ShapeAt(TJSONObject(arr[i + 1]).Find('s'));
+          if p1 = nil then p1 := p0;
+          if t1 > t0 then lt := (frame - t0) / (t1 - t0) else lt := 0;
+          mix := BezEase(lt,
+            EaseHandle(kf.Find('o'), 'x', 0.667), EaseHandle(kf.Find('o'), 'y', 0.667),
+            EaseHandle(kf.Find('i'), 'x', 0.333), EaseHandle(kf.Find('i'), 'y', 0.333));
+          Break;
+        end;
       end;
+      if p0 = nil then
+      begin p0 := ShapeAt(TJSONObject(arr[arr.Count - 1]).Find('s')); p1 := p0; end;
     end;
-    if (pathObj = nil) and (arr.Count > 0) and (TJSONObject(arr[0]).Find('s') is TJSONArray) then
-      pathObj := TJSONObject(TJSONArray(TJSONObject(arr[0]).Find('s'))[0]);
   end;
-  if pathObj = nil then Exit;
-  v := JArr(pathObj, 'v'); inT := JArr(pathObj, 'i'); outT := JArr(pathObj, 'o');
-  if (v = nil) or (v.Count = 0) then Exit;
-  n := v.Count;
-  ctx.MoveTo(VC(v, 0, 0), VC(v, 0, 1));
+  if p0 = nil then Exit;
+  if p1 = nil then p1 := p0;
+  v0 := JArr(p0, 'v'); i0 := JArr(p0, 'i'); o0 := JArr(p0, 'o');
+  v1 := JArr(p1, 'v'); i1 := JArr(p1, 'i'); o1 := JArr(p1, 'o');
+  if (v0 = nil) or (v0.Count = 0) then Exit;
+  n := v0.Count;
+  if (v1 <> nil) and (v1.Count < n) then n := v1.Count;   // guard mismatched counts
+  closed := JNum(p0.Find('c'), 0) <> 0;
+  ctx.MoveTo(LV(v0, v1, 0, 0), LV(v0, v1, 0, 1));
   for j := 0 to n - 1 do
   begin
     jn := (j + 1) mod n;
-    if (jn = 0) and (JNum(pathObj.Find('c'), 0) = 0) then Break;  // open path: stop
-    vx := VC(v, j, 0);  vy := VC(v, j, 1);
-    nx := VC(v, jn, 0); ny := VC(v, jn, 1);
-    o1x := vx + VC(outT, j, 0);  o1y := vy + VC(outT, j, 1);   // tangents are relative
-    i2x := nx + VC(inT, jn, 0);  i2y := ny + VC(inT, jn, 1);
+    if (jn = 0) and not closed then Break;      // open path: stop at the last vertex
+    vx := LV(v0, v1, j, 0);  vy := LV(v0, v1, j, 1);
+    nx := LV(v0, v1, jn, 0); ny := LV(v0, v1, jn, 1);
+    o1x := vx + LV(o0, o1, j, 0);  o1y := vy + LV(o0, o1, j, 1);   // out tangent (relative)
+    i2x := nx + LV(i0, i1, jn, 0); i2y := ny + LV(i0, i1, jn, 1);  // in tangent (relative)
     ctx.BezierCurveTo(o1x, o1y, i2x, i2y, nx, ny);
   end;
-  if JNum(pathObj.Find('c'), 0) <> 0 then ctx.ClosePath;
+  if closed then ctx.ClosePath;
 end;
 
 procedure TTina4Lottie.RenderShapes(ctx: TTina4Canvas2D; items: TJSONArray;
   frame: Single; parentAlpha: Single);
 var i: Integer; it: TJSONObject; ty: string;
-    fillCol, strokeCol: TTina4Color; hasFill, hasStroke: Boolean;
+    fillCol, strokeCol: TTina4Color; hasFill, hasStroke, fillEvenOdd: Boolean;
     strokeW, a, cr, cg, cb, ca, fo, so: Single; grAlpha: Single;
     trObj: TJSONObject; k: Integer;
 begin
   // one paint pass per group: gather fill/stroke, build the path(s), paint.
-  hasFill := False; hasStroke := False; strokeW := 1;
+  // Items are painted top-of-array first (After Effects order), so iterate in
+  // REVERSE: the last item paints at the bottom, item 0 ends up on top.
+  hasFill := False; hasStroke := False; fillEvenOdd := False; strokeW := 1;
   fillCol := 0; strokeCol := 0; grAlpha := parentAlpha;
   ctx.BeginPath;
-  for i := 0 to items.Count - 1 do
+  for i := items.Count - 1 downto 0 do
   begin
     if not (items[i] is TJSONObject) then Continue;
     it := TJSONObject(items[i]);
@@ -311,6 +341,8 @@ begin
     else if ty = 'fl' then
     begin
       hasFill := True;
+      if (it.Find('r') <> nil) and (it.Find('r').JSONType = jtNumber) then
+        fillEvenOdd := it.Find('r').AsInteger = 2;   // 1 = nonzero, 2 = even-odd
       cr := EvalComp(it.Find('c'), frame, 0, 0) * 255;
       cg := EvalComp(it.Find('c'), frame, 1, 0) * 255;
       cb := EvalComp(it.Find('c'), frame, 2, 0) * 255;
@@ -335,7 +367,7 @@ begin
                 or Round(Max(0, Min(255, cb)));
     end;
   end;
-  if hasFill then begin ctx.SetFillColor(fillCol); ctx.Fill(False); end;
+  if hasFill then begin ctx.SetFillColor(fillCol); ctx.Fill(fillEvenOdd); end;
   if hasStroke then
   begin ctx.SetStrokeColor(strokeCol); ctx.SetLineWidth(strokeW); ctx.Stroke; end;
 end;
