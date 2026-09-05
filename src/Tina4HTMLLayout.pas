@@ -2097,7 +2097,7 @@ var
   var
     i, carrySpacer, spIdx: Integer;
     it: TInlineItem;
-    curW, lineH, spaceW: Single;
+    curW, lineH, spaceW, lineW: Single;
     lineItems: TList<Integer>;
   begin
     if items.Count = 0 then Exit;
@@ -2117,7 +2117,13 @@ var
         spaceW := 0;
         if it.SpaceBefore and (lineItems.Count > 0) then
           spaceW := FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width;
-        if (not noWrapFlow) and (lineItems.Count > 0) and (curW + spaceW + it.W > CW) then
+        // text-indent narrows the FIRST line's usable width by the indent, so
+        // the shifted first line wraps early instead of overflowing the margin.
+        lineW := CW;
+        if firstInlineLine and (ParentStyle.TextIndent <> 0) and
+           (ParentStyle.TextAlign = TTextAlign.Leading) then
+          lineW := CW - ParentStyle.TextIndent;
+        if (not noWrapFlow) and (lineItems.Count > 0) and (curW + spaceW + it.W > lineW) then
         begin
           // A trailing margin-left spacer (synthetic: no box, no text, zero
           // height, positive width) belongs to THIS wrapping item — carry it to
