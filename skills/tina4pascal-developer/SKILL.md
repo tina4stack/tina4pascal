@@ -103,6 +103,16 @@ Do NOT hand-run `xcodebuild` / `devicectl` / `pymobiledevice3` / `adb` — the C
 wraps them so the workflow is one command and downstream devs get the same. One
 verb, five targets (`android · ios · macos · win64 · linux`):
 
+**RULE — tools before hands, and never let the MCP drift.** If you need
+anything from the device/app that `tools/tina4pascal` can't yet do, the fix is
+to **add that capability to the CLI**, then **expose it as an `@mcp_tool` in
+`tools/mcp/src/routes/tina4pascal.py`** — the CLI and the MCP service move in
+lockstep. Never solve it with a one-off raw `xcodebuild`/`devicectl`/`adb`/
+`pymobiledevice3` invocation; that capability belongs in the tools so the next
+person (and the IDE) gets it for free. A one-off is only acceptable to *discover*
+the incantation before you wire it in.
+
+
 ```sh
 tools/tina4pascal deploy <target>      # build + install/open + launch
 tools/tina4pascal debug  <target>      # build → launch → screenshot → tail log
