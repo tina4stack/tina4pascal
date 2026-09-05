@@ -87,6 +87,11 @@ procedure TinaSetPhoto(const Path: string);
   TinaSetHeader('Authorization', 'Bearer ' + token). '' value clears it. }
 procedure TinaSetHeader(const Name, Value: string);
 
+{ Force a relayout on the next frame — the shells call this when an async
+  resource (e.g. a remote image just downloaded to the cache) becomes ready,
+  so the layout re-runs LoadImage and the image drops in. }
+procedure TinaInvalidateLayout;
+
 implementation
 
 uses
@@ -1111,6 +1116,11 @@ end;
 procedure TinaSetHeader(const Name, Value: string);
 begin
   HttpSetHeader(Name, Value);
+end;
+
+procedure TinaInvalidateLayout;
+begin
+  GLayoutDirty := True;
 end;
 
 finalization

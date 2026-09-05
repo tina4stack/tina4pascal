@@ -39,6 +39,7 @@ public class MainActivity extends Activity {
         }
         view = new Tina4View(this);
         setContentView(view);
+        ImageLoader.init(getCacheDir(), view);   // async remote <img> cache + repaint
         // "@demo" = built-in interactive demo; an asset name renders that page.
         view.setHtml(loadAsset("http_demo.html"));
     }

@@ -45,6 +45,13 @@ begin
   AndroidHttpResult(Id, Status, JToStr(Env, Body), JToStr(Env, Error));
 end;
 
+{ Java ImageLoader → native: a remote <img> finished downloading to the cache;
+  relayout so LoadImage decodes it (the Java side also invalidates the view). }
+procedure Java_com_tina4_pascal_ImageLoader_nativeImageReady(Env: PJNIEnv; This: jobject); cdecl;
+begin
+  TinaInvalidateLayout;
+end;
+
 procedure Java_com_tina4_pascal_Tina4View_nativeSetHtml(Env: PJNIEnv; This: jobject;
   Html: jstring); cdecl;
 begin
@@ -134,6 +141,7 @@ exports
   Java_com_tina4_pascal_Tina4View_nativeSetFile,
   Java_com_tina4_pascal_Tina4View_nativeSetPhoto,
   Java_com_tina4_pascal_Http_nativeHttpResult,
+  Java_com_tina4_pascal_ImageLoader_nativeImageReady,
   JNI_OnLoad;
 
 begin

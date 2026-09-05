@@ -63,6 +63,13 @@ begin
   Result := HttpPending;
 end;
 
+{ Called by the Obj-C image loader when a remote image finishes downloading to
+  the cache — relayout so LoadImage decodes it and it appears. Mach-O C symbol. }
+procedure tina4_image_ready; cdecl; public name '_tina4_image_ready';
+begin
+  TinaInvalidateLayout;
+end;
+
 function tina4_wants_keyboard: cint; cdecl;
 begin
   Result := TinaWantsKeyboard;

@@ -26,6 +26,12 @@ uses
   CTFont, CTLine, CTStringAttributes,
   Tina4RenderBackend;
 
+{ Implemented in the app (ios/app/ImageLoader.m): async NSURLSession download of
+  a remote image to `path` (native TLS). On completion it calls tina4_image_ready
+  so the engine relayouts and picks the cached file up. Idempotent per URL. }
+procedure tina4_ios_fetch_image(Url, Path: PAnsiChar); cdecl;
+  external name 'tina4_ios_fetch_image';
+
 type
   TIOSCanvas = class(TTina4Canvas)
   private
@@ -65,7 +71,7 @@ type
 
 implementation
 
-uses SysUtils;
+uses SysUtils, md5;
 
 { ---- helpers ----------------------------------------------------------- }
 
@@ -309,16 +315,43 @@ end;
 
 { ---- images (Core Graphics + Image I/O) -------------------------------- }
 
+{ Where a remote image is cached on disk (app sandbox, survives relaunches). }
+function IOSImageCachePath(const Src: string): string;
+var dir: string;
+begin
+  dir := GetEnvironmentVariable('HOME') + '/Library/Caches/tina4render/';
+  ForceDirectories(dir);
+  Result := dir + MD5Print(MD5String(Src)) + '.img';
+end;
+
 function TIOSCanvas.LoadImage(const Src: string): Integer;
 var
-  i: Integer; url: CFURLRef; isrc: CGImageSourceRef; img: CGImageRef;
+  i: Integer; localPath: string; lower: string;
+  url: CFURLRef; isrc: CGImageSourceRef; img: CGImageRef;
 begin
   Result := -1;
   if Src = '' then Exit;
   for i := 0 to High(FImgSrcs) do
-    if FImgSrcs[i] = Src then Exit(i);       // cached
-  url := CFURLCreateFromFileSystemRepresentation(nil, PAnsiChar(Src),
-    Length(Src), False);
+    if FImgSrcs[i] = Src then Exit(i);       // decoded, in-memory (instant re-render)
+
+  lower := LowerCase(Src);
+  if (Pos('http://', lower) = 1) or (Pos('https://', lower) = 1) then
+  begin
+    localPath := IOSImageCachePath(Src);
+    if not FileExists(localPath) then
+    begin
+      // not downloaded yet — kick off the async native-TLS fetch and bail.
+      // NOT cached as a failure, so the next relayout (after tina4_image_ready)
+      // re-runs this and decodes the now-present file.
+      tina4_ios_fetch_image(PAnsiChar(Src), PAnsiChar(localPath));
+      Exit;
+    end;
+  end
+  else
+    localPath := Src;                        // local file / data path
+
+  url := CFURLCreateFromFileSystemRepresentation(nil, PAnsiChar(localPath),
+    Length(localPath), False);
   if url = nil then Exit;
   isrc := CGImageSourceCreateWithURL(url, nil);
   CFRelease(url);
@@ -332,7 +365,7 @@ begin
   FImgs[i].Img := img;
   FImgs[i].W := CGImageGetWidth(img);
   FImgs[i].H := CGImageGetHeight(img);
-  FImgSrcs[i] := Src;
+  FImgSrcs[i] := Src;                         // key by the ORIGINAL src
   Result := i;
 end;
 

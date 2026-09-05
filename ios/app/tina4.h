@@ -15,6 +15,7 @@ void tina4_frame(void *cgcontext, int w, int h, float density);
 int  tina4_touch(int action, float x, float y);   // action 0=down 1=up 2=move
 int  tina4_tick(void);
 int  tina4_http_pending(void);                     // in-flight HTTP requests
+int  tina4_ios_images_pending(void);               // in-flight <img> downloads (ImageLoader.m)
 int  tina4_wants_keyboard(void);
 void tina4_blur(void);
 int  tina4_blink_caret(void);

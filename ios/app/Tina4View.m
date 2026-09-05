@@ -45,6 +45,9 @@
     CGContextRestoreGState(ctx);
     // autofocus: the engine parses on the first frame, so poll here
     if (tina4_wants_keyboard()) [self showKeyboard];
+    // a frame may have kicked off remote <img> downloads — keep repainting until
+    // they arrive (no touch needed on page load).
+    if (tina4_ios_images_pending() > 0) [self startPump];
 }
 
 // ---- touch → engine ----------------------------------------------------
@@ -81,7 +84,7 @@
 - (void)stopPump { [self.pump invalidate]; self.pump = nil; }
 - (void)pumpTick {
     [self setNeedsDisplay];               // drawRect drains HttpPump + repaints
-    if (tina4_http_pending() == 0) [self stopPump];
+    if (tina4_http_pending() == 0 && tina4_ios_images_pending() == 0) [self stopPump];
 }
 
 - (void)touchesBegan:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { [self stopFling]; [self send:0 touches:t]; }

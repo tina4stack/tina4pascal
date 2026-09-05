@@ -47,12 +47,15 @@ type
     mDecodeFile: jmethodID;                 // BitmapFactory.decodeFile (static)
     mBmpWidth, mBmpHeight: jmethodID;       // Bitmap.getWidth/getHeight
     mRectFInit, mDrawBitmap: jmethodID;
+    clsImageLoader: jclass;                 // com.tina4.pascal.ImageLoader
+    mImgCached: jmethodID;                  // ImageLoader.cached(url) → local path/""
     FImgSrcs: TStringList;                   // src → index into FImgs
     FImgs: array of record Bmp: jobject; W, H: Single; end;
     procedure EnsureImageMethods;
     function MID(cls: jclass; const name, sig: string): jmethodID;
     function EnumVal(const clsName, field, sig: string): jobject;
     function JStr(const S: string): jstring;
+    function JResultStr(S: jobject): string;
     procedure ConfigurePaintText(FontSize: Single; Styles: TTina4FontStyles;
       Color: TTina4Color);
   public
@@ -132,6 +135,17 @@ end;
 function TAndroidCanvas.JStr(const S: string): jstring;
 begin
   Result := FEnv^.NewStringUTF(FEnv, PAnsiChar(S));
+end;
+
+{ Read a Java String (jstring) into a Pascal string. }
+function TAndroidCanvas.JResultStr(S: jobject): string;
+var p: PAnsiChar;
+begin
+  Result := '';
+  if S = nil then Exit;
+  p := FEnv^.GetStringUTFChars(FEnv, S, nil);
+  try Result := string(p);
+  finally FEnv^.ReleaseStringUTFChars(FEnv, S, p); end;
 end;
 
 constructor TAndroidCanvas.Create(Env: PJNIEnv);
@@ -396,23 +410,47 @@ begin
   mRectFInit := MID(clsRectF, '<init>', '(FFFF)V');
   mDrawBitmap := MID(clsCanvas, 'drawBitmap',
     '(Landroid/graphics/Bitmap;Landroid/graphics/Rect;Landroid/graphics/RectF;Landroid/graphics/Paint;)V');
+  lc := FEnv^.FindClass(FEnv, 'com/tina4/pascal/ImageLoader');
+  if lc <> nil then
+  begin
+    clsImageLoader := FEnv^.NewGlobalRef(FEnv, lc);
+    mImgCached := FEnv^.GetStaticMethodID(FEnv, clsImageLoader, 'cached',
+      '(Ljava/lang/String;)Ljava/lang/String;');
+  end;
   FImgSrcs := TStringList.Create;
 end;
 
 function TAndroidCanvas.LoadImage(const Src: string): Integer;
 var
   a: array[0..0] of jvalue;
-  s, bmp, gbmp: jobject;
+  s, js, bmp, gbmp: jobject;
   n: Integer;
+  lower, local: string;
 begin
   Result := -1;
   if Src = '' then Exit;
   EnsureImageMethods;
   n := FImgSrcs.IndexOf(Src);
-  if n >= 0 then Exit(PtrInt(FImgSrcs.Objects[n]));   // cached
-  // only local files are decodable here (the camera writes one); http would
-  // need a fetch on a worker thread, which the shell doesn't own.
-  s := JStr(Src);
+  if n >= 0 then Exit(PtrInt(FImgSrcs.Objects[n]));   // decoded, in-memory cache
+  // http(s): ImageLoader.cached returns the local cache path if downloaded, or
+  // "" while it fetches async on a worker thread (native TLS). We decode the
+  // cached FILE; a not-yet-ready image returns -1 (not cached as a failure) and
+  // reappears after nativeImageReady triggers a relayout.
+  lower := LowerCase(Src);
+  if (Pos('http://', lower) = 1) or (Pos('https://', lower) = 1) then
+  begin
+    if clsImageLoader = nil then Exit;
+    s := JStr(Src);
+    a[0].l := s;
+    js := FEnv^.CallStaticObjectMethodA(FEnv, clsImageLoader, mImgCached, @a[0]);
+    FEnv^.DeleteLocalRef(FEnv, s);
+    local := JResultStr(js);
+    if js <> nil then FEnv^.DeleteLocalRef(FEnv, js);
+    if local = '' then Exit;                          // still downloading
+  end
+  else
+    local := Src;                                     // local file path
+  s := JStr(local);
   a[0].l := s;
   bmp := FEnv^.CallStaticObjectMethodA(FEnv, clsBmpFactory, mDecodeFile, @a[0]);
   FEnv^.DeleteLocalRef(FEnv, s);
