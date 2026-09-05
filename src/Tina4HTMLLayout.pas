@@ -24,6 +24,7 @@ type
     LetterSpacing: Single;
     FontFamily: string;
     FontWeight: Integer;
+    ShadowDX, ShadowDY: Single; ShadowColor: TTina4Color;  // text-shadow
   end;
 
   { Form controls are DRAWN by the renderer (no native widgets); their state
@@ -378,6 +379,8 @@ begin
     run.FontSize := St.FontSize;
     run.Styles := FontStylesOf(St);
     run.Color := St.Color; run.LetterSpacing := 0;
+    run.FontFamily := St.FontFamily; run.FontWeight := St.FontWeight;
+    run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
     Result.Runs.Add(run);
   end;
 end;
@@ -849,6 +852,7 @@ begin
       run.Y := St.BorderWidths.Top + St.Padding.Top;
       run.FontSize := St.FontSize; run.Styles := FontStylesOf(St);
       run.Color := $FF9CA3AF; run.LetterSpacing := 0;
+      run.FontWeight := St.FontWeight; run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
       Result.Runs.Add(run);
       Exit;
     end;
@@ -874,6 +878,7 @@ begin
         run.FontSize := St.FontSize;
         run.Styles := FontStylesOf(St);
         run.Color := St.Color; run.LetterSpacing := 0;
+        run.FontWeight := St.FontWeight; run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
         Result.Runs.Add(run);
       end;
     finally
@@ -903,6 +908,7 @@ begin
     if ph <> '' then run.Color := $FF9CA3AF else run.Color := St.Color; run.LetterSpacing := 0;
     if (kind = ckButton) or St.AppearanceNone then    // centre the caption
       run.X := (Result.W - m.Width) / 2;
+    run.FontWeight := St.FontWeight; run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
     Result.Runs.Add(run);
   end;
 end;
@@ -1563,6 +1569,7 @@ type
     LetterSpacing: Single;
     FontFamily: string;
     FontWeight: Integer;
+    ShadowDX, ShadowDY: Single; ShadowColor: TTina4Color;
     SpaceBefore: Boolean;
     LineBreak: Boolean;    // <br>
   end;
@@ -1605,7 +1612,7 @@ var
     qi.Text := Q; qi.Box := nil; qi.W := qm.Width; qi.H := LineHeightOf(St);
     qi.Ascent := (qi.H - (qm.Ascent + qm.Descent)) / 2 + qm.Ascent;
     qi.FontSize := St.FontSize; qi.Styles := FontStylesOf(St); qi.Color := St.Color;
-    qi.LetterSpacing := St.LetterSpacing; qi.FontFamily := St.FontFamily; qi.FontWeight := St.FontWeight;
+    qi.LetterSpacing := St.LetterSpacing; qi.FontFamily := St.FontFamily; qi.FontWeight := St.FontWeight; qi.ShadowDX := St.TextShadowOffsetX; qi.ShadowDY := St.TextShadowOffsetY; if St.TextShadowActive then qi.ShadowColor := St.TextShadowColor else qi.ShadowColor := 0;
     qi.SpaceBefore := SpaceBefore and (items.Count > 0); qi.LineBreak := False;
     items.Add(qi);
   end;
@@ -1631,7 +1638,7 @@ var
     else if SameText(St.VerticalAlign, 'super') then
     begin ti.Ascent := ti.Ascent + St.FontSize * 0.42; ti.FontAscent := ti.FontAscent + St.FontSize * 0.42; end;
     ti.FontSize := St.FontSize; ti.Styles := FontStylesOf(St); ti.Color := St.Color;
-    ti.LetterSpacing := St.LetterSpacing; ti.FontFamily := St.FontFamily; ti.FontWeight := St.FontWeight;
+    ti.LetterSpacing := St.LetterSpacing; ti.FontFamily := St.FontFamily; ti.FontWeight := St.FontWeight; ti.ShadowDX := St.TextShadowOffsetX; ti.ShadowDY := St.TextShadowOffsetY; if St.TextShadowActive then ti.ShadowColor := St.TextShadowColor else ti.ShadowColor := 0;
     ti.SpaceBefore := SpaceBefore and (items.Count > 0);
     ti.LineBreak := False;
     items.Add(ti);
@@ -1824,6 +1831,7 @@ var
           it.LetterSpacing := St.LetterSpacing;
           it.FontFamily := St.FontFamily;
           it.FontWeight := St.FontWeight;
+          it.ShadowDX := St.TextShadowOffsetX; it.ShadowDY := St.TextShadowOffsetY; if St.TextShadowActive then it.ShadowColor := St.TextShadowColor else it.ShadowColor := 0;
           it.SpaceBefore := (items.Count > 0) and ((i > 0) or leadingSpace);
           items.Add(it);
         end;
@@ -1958,7 +1966,12 @@ var
       it.Box := MakeControl(T, cs, CW);
       it.W := it.Box.W; it.H := it.Box.H;
       it.FontSize := cs.FontSize; it.Styles := [];
-      it.Ascent := it.Box.H;  // baseline at the box bottom (default vertical-align)
+      // checkbox/radio: centre the glyph on the adjacent text's midline instead
+      // of sitting its box-bottom on the baseline (which rides ~6px high).
+      if it.Box.ControlKind in [ckCheckbox, ckRadio] then
+        it.Ascent := it.Box.H / 2 + cs.FontSize * 0.32
+      else
+        it.Ascent := it.Box.H;  // baseline at the box bottom (default vertical-align)
       it.SpaceBefore := (items.Count > 0) and pendingSpace;
       pendingSpace := False;
       Box.Children.Add(it.Box);
@@ -2072,6 +2085,7 @@ var
         run.LetterSpacing := it.LetterSpacing;
         run.FontFamily := it.FontFamily;
         run.FontWeight := it.FontWeight;
+        run.ShadowDX := it.ShadowDX; run.ShadowDY := it.ShadowDY; run.ShadowColor := it.ShadowColor;
         Box.Runs.Add(run);
       end;
       x := x + it.W;
@@ -3155,6 +3169,9 @@ begin
       Canvas.LetterSpacing := r.LetterSpacing;
       Canvas.FontFamily := r.FontFamily;
       Canvas.FontWeight := r.FontWeight;
+      if (r.ShadowColor shr 24) > 0 then
+        Canvas.DrawText(r.X - sx + r.ShadowDX, r.Y - innerOfs + r.ShadowDY, drawTxt,
+          r.FontSize, r.Styles, ScaleAlpha(r.ShadowColor, op));
       Canvas.DrawText(r.X - sx, r.Y - innerOfs, drawTxt, r.FontSize, r.Styles, fg);
       Canvas.LetterSpacing := 0;
       Canvas.FontFamily := '';
