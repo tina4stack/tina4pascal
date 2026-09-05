@@ -268,6 +268,7 @@ type
     TextAlign: TTextAlign;
     LineHeight: Single;
     VerticalAlign: string;
+    CaptionSide: string;        // '' | 'top' | 'bottom' (table <caption> placement)
     Margin: TEdgeValues;
     Padding: TEdgeValues;
     BorderColors: array[0..3] of TAlphaColor;  // Top, Right, Bottom, Left
@@ -2027,6 +2028,7 @@ begin
   Result.TextAlign := TTextAlign.Leading;
   Result.LineHeight := 1.4;
   Result.VerticalAlign := 'baseline';
+  Result.CaptionSide := 'top';
   Result.Margin.Clear;
   Result.Padding.Clear;
   Result.SetBorderColor(TAlphaColors.Black);
@@ -2321,6 +2323,7 @@ begin
   Result.Visibility := ParentStyle.Visibility;
   Result.WordBreak := ParentStyle.WordBreak;
   Result.OverflowWrap := ParentStyle.OverflowWrap;
+  Result.CaptionSide := ParentStyle.CaptionSide;  // inherited
   Result.VerticalAlign := 'baseline';
 
   // Non-inherited defaults
@@ -2513,6 +2516,12 @@ begin
   end
   else if (TN = 'thead') or (TN = 'tbody') or (TN = 'tfoot') then
     Result.Display := 'table-row'  // group — treated as pass-through
+  else if TN = 'caption' then
+  begin
+    Result.Display := 'block';
+    Result.TextAlign := TTextAlign.Center;
+    Result.Padding.SetAll(2);
+  end
   else if TN = 'hr' then
   begin
     Result.Margin.Top := 8;
@@ -2851,6 +2860,8 @@ begin
       end;
     end;
   end;
+  if Decls.TryGetValue('caption-side', Temp) and not ShouldSkip(Temp) then
+    Style.CaptionSide := Temp.Trim.ToLower;
   if Decls.TryGetValue('margin', Temp) and not ShouldSkip(Temp) then
     ParseEdgeShorthand(Temp, Style.Margin, Style.FontSize);
   if Decls.TryGetValue('margin-top', Temp) and not ShouldSkip(Temp) then

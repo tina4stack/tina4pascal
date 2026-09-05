@@ -89,7 +89,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | th | 🟡 | renders as a cell; **no default bold/center** |
 | colspan (attr) | ✅ | both layout passes |
 | rowspan (attr) | ✅ | cell reserves its columns downward; following rows shift correctly |
-| caption | ❌ | dropped by row collection, never painted |
+| caption | ✅ | full-table-width block above (default) or below rows; caption-side honored |
 | col, colgroup | ❌ | ignored (widths from content only) |
 
 ## Forms

@@ -120,7 +120,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | table layout + colspan | ✅ | auto column sizing; colspan both passes |
 | rowspan | ✅ | column-occupancy tracked across rows; spanned height + valign resolved |
 | border-collapse, border-spacing, table-layout | ❌ | not parsed; per-cell borders only |
-| caption-side, empty-cells | ❌ | `<caption>` dropped |
+| caption-side | ✅ | top (default) + bottom; empty-cells ❌ |
 | vertical-align (cells) | ✅ | top/middle/bottom |
 
 ## UI & interaction

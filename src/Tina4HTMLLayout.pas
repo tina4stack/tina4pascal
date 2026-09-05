@@ -2422,6 +2422,11 @@ var
   spanNatH: array of Single;
   spanVA: array of string;
   spanH: Single;
+  capTag: THTMLTag;
+  capBox: TLayoutBox;
+  capCs: TComputedStyle;
+  capH, capUsed: Single;
+  capBottom: Boolean;
 
   procedure CollectRows(T: THTMLTag);
   var c: THTMLTag;
@@ -2514,11 +2519,37 @@ begin
     tbox.Y := Y + Style.Margin.Top;
     tbox.W := tableW;
 
+    // <caption> — a full-table-width block above (default) or below the rows
+    capTag := nil;
+    capH := 0;
+    capBottom := False;
+    for cell in Tag.Children do
+      if SameText(cell.TagName, 'caption') then begin capTag := cell; Break; end;
+    if capTag <> nil then
+    begin
+      capCs := TComputedStyle.ForTag(capTag, Style, FSheet);
+      capBottom := SameText(capCs.CaptionSide, 'bottom');
+      capBox := TLayoutBox.Create;
+      capBox.Tag := capTag;
+      capBox.Style := capCs;
+      tbox.Children.Add(capBox);
+      capBox.X := tbox.X; capBox.Y := tbox.Y; capBox.W := tableW;
+      // laid at the table top for now; a bottom caption is repositioned later
+      LayoutChildren(capBox, capTag, capCs,
+        tbox.X + capCs.BorderWidths.Left + capCs.Padding.Left,
+        tbox.Y + capCs.BorderWidths.Top + capCs.Padding.Top,
+        tableW - capCs.Padding.Horz - capCs.BorderWidths.Horz, capUsed);
+      capH := capUsed + capCs.Padding.Vert + capCs.BorderWidths.Vert;
+      capBox.H := capH;
+    end;
+
     for i := 0 to ncols - 1 do blocked[i] := 0;
     SetLength(rowTop, rows.Count);
     SetLength(rowHeight, rows.Count);
     nspan := 0;
-    rowY := tbox.Y;
+    // a top caption pushes the first row (and everything measured off rowY) down
+    if (capTag <> nil) and not capBottom then rowY := tbox.Y + capH
+    else rowY := tbox.Y;
     for ri := 0 to rows.Count - 1 do
     begin
       r := rows[ri];
@@ -2629,6 +2660,12 @@ begin
         end;
       end;
       cbox.H := Max(cbox.H, spanH);
+    end;
+    // a bottom caption sits just under the last row
+    if (capTag <> nil) and capBottom then
+    begin
+      ShiftBoxTree(capBox, 0, rowY - capBox.Y);
+      rowY := rowY + capH;
     end;
     tbox.H := rowY - tbox.Y;
     Result := tbox.H + Style.Margin.Vert;
