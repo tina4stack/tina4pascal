@@ -772,6 +772,29 @@ begin
   GOpenSelect := nil; GOptCount := 0; GLayoutDirty := True;
 end;
 
+{ Flatten a <select> into overlay rows in document order: each <optgroup>
+  contributes a non-selectable label row followed by its <option> children;
+  loose <option>s contribute themselves. The paint and tap handlers walk the
+  identical list so row indices line up. }
+procedure CollectSelectRows(sel: THTMLTag; list: Classes.TList);
+var c, gc: THTMLTag;
+begin
+  for c in sel.Children do
+    if SameText(c.TagName, 'option') then list.Add(c)
+    else if SameText(c.TagName, 'optgroup') then
+    begin
+      list.Add(c);                       // group label row
+      for gc in c.Children do
+        if SameText(gc.TagName, 'option') then list.Add(gc);
+    end;
+end;
+
+{ True if this row is a group label (not selectable). }
+function IsOptGroupRow(c: THTMLTag): Boolean;
+begin
+  Result := SameText(c.TagName, 'optgroup');
+end;
+
 { Paint the open <select>'s option list on top of the page. Selected row gets a
   ✓ + indigo label on a tinted panel, matching a native picker. }
 procedure PaintSelectOverlay(cssW, cssH: Single);
@@ -788,8 +811,7 @@ begin
   if box = nil then begin CloseSelect; Exit; end;
   opts := Classes.TList.Create;
   try
-    for c in GOpenSelect.Children do
-      if SameText(c.TagName, 'option') then opts.Add(c);
+    CollectSelectRows(GOpenSelect, opts);
     if opts.Count = 0 then begin CloseSelect; Exit; end;
     GOptCount := opts.Count;
     bx := box.X; by := box.Y - GScrollY + box.H + 6; bw := box.W;
@@ -798,7 +820,11 @@ begin
     if by < 6 then by := 6;
     GOverX := bx; GOverY := by; GOverW := bw;
     cur := GOpenSelect.GetAttribute('value');
-    if cur = '' then cur := InnerText(THTMLTag(opts[0]));   // default = first
+    // default = first actual option (skip any leading group label)
+    if cur = '' then
+      for i := 0 to opts.Count - 1 do
+        if not IsOptGroupRow(THTMLTag(opts[i])) then
+        begin cur := InnerText(THTMLTag(opts[i])); Break; end;
     lblX := bx + 42;
     // soft drop shadow (a couple of translucent, offset rounded rects)
     GCanvas.FillRoundRect(bx - 1, by + 7, bw + 2, panelH, 16, $14000000);
@@ -808,10 +834,16 @@ begin
     for i := 0 to opts.Count - 1 do
     begin
       c := THTMLTag(opts[i]);
-      txt := InnerText(c);
       rowY := by + 6 + i * GOptRowH;
       GOptTop[i] := rowY;
       textY := rowY + (GOptRowH - 17) / 2;
+      if IsOptGroupRow(c) then
+      begin
+        // non-selectable group label: bold, muted, no ✓
+        GCanvas.DrawText(bx + 14, textY, c.GetAttribute('label'), 14, [tfsBold], BORDER);
+        Continue;
+      end;
+      txt := InnerText(c);
       sel := (c.GetAttribute('value') = cur) or (txt = cur);
       if sel then
       begin
@@ -820,7 +852,11 @@ begin
         GCanvas.DrawText(lblX, textY, txt, 17, [tfsBold], BLUE);
       end
       else
-        GCanvas.DrawText(lblX, textY, txt, 17, [], INK);
+        // indent options that live inside an <optgroup>
+        if (c.Parent <> nil) and SameText(c.Parent.TagName, 'optgroup') then
+          GCanvas.DrawText(lblX + 14, textY, txt, 17, [], INK)
+        else
+          GCanvas.DrawText(lblX, textY, txt, 17, [], INK);
     end;
   finally
     opts.Free;
@@ -837,14 +873,16 @@ begin
       begin
         opts := Classes.TList.Create;
         try
-          for c in GOpenSelect.Children do
-            if SameText(c.TagName, 'option') then opts.Add(c);
+          CollectSelectRows(GOpenSelect, opts);
           if i < opts.Count then
           begin
             c := THTMLTag(opts[i]);
-            if c.HasAttribute('value') then v := c.GetAttribute('value')
-            else v := InnerText(c);
-            SetAttr(GOpenSelect, 'value', v);
+            if not IsOptGroupRow(c) then   // group labels are not selectable
+            begin
+              if c.HasAttribute('value') then v := c.GetAttribute('value')
+              else v := InnerText(c);
+              SetAttr(GOpenSelect, 'value', v);
+            end;
           end;
         finally opts.Free; end;
         Break;

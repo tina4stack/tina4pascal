@@ -2537,6 +2537,21 @@ begin
     Result.Display := 'block';
     Result.Italic := True;                         // UA: font-style italic
   end
+  else if TN = 'dialog' then
+  begin
+    // UA: dialog:not([open]) { display:none }. An open dialog is a bordered,
+    // padded box on a white ground (modal backdrop/centering needs scripting).
+    if Tag.HasAttribute('open') then
+    begin
+      Result.Display := 'block';
+      Result.SetBorderWidth(2);
+      Result.SetBorderColor($FF000000);
+      Result.Padding.SetAll(12);
+      Result.BackgroundColor := $FFFFFFFF;
+    end
+    else
+      Result.Display := 'none';
+  end
   else if TN = 'hr' then
   begin
     Result.Margin.Top := 8;

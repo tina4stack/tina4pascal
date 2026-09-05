@@ -699,6 +699,30 @@ begin
   end;
 end;
 
+{ The text a closed <select> shows: the option whose value (or text) matches the
+  select's 'value', else the first option. Options may be nested in <optgroup>. }
+function SelectedOptionText(Sel: THTMLTag): string;
+var firstTxt, selTxt, vv, t: string; hasV: Boolean;
+
+  procedure Consider(opt: THTMLTag);
+  begin
+    t := InnerText(opt);
+    if firstTxt = '' then firstTxt := t;
+    if hasV and ((opt.GetAttribute('value') = vv) or (t = vv)) then selTxt := t;
+  end;
+
+var c, gc: THTMLTag;
+begin
+  firstTxt := ''; selTxt := '';
+  hasV := Sel.HasAttribute('value'); vv := Sel.GetAttribute('value');
+  for c in Sel.Children do
+    if SameText(c.TagName, 'option') then Consider(c)
+    else if SameText(c.TagName, 'optgroup') then
+      for gc in c.Children do
+        if SameText(gc.TagName, 'option') then Consider(gc);
+  if selTxt <> '' then Result := selTxt else Result := firstTxt;
+end;
+
 { Build a layout box for a form control. Runs are stored relative to the
   box origin (FlushLine shifts them to absolute, same as inline-blocks). }
 function TLayoutEngine.MakeControl(Tag: THTMLTag; St: TComputedStyle; AvailW: Single): TLayoutBox;
@@ -758,20 +782,9 @@ begin
       end;
     ckSelect:
       begin
-        txt := '';
-        // show the option matching 'value', else the first option's text
-        for opt in Tag.Children do
-          if SameText(opt.TagName, 'option') then
-          begin
-            if txt = '' then txt := InnerText(opt);
-            if Tag.HasAttribute('value') and
-               ((opt.GetAttribute('value') = Tag.GetAttribute('value')) or
-                (InnerText(opt) = Tag.GetAttribute('value'))) then
-            begin
-              txt := InnerText(opt);
-              Break;
-            end;
-          end;
+        // show the option matching 'value', else the first option's text;
+        // options may be nested inside <optgroup>
+        txt := SelectedOptionText(Tag);
       end;
     ckTextarea:
       txt := Tag.GetAttribute('value', InnerText(Tag));

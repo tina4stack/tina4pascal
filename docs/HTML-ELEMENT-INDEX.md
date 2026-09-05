@@ -106,7 +106,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | input[color/range/tel/url/…] | ✅/🟡 | color swatch + range slider drawn; tel/url as text |
 | textarea | 🟡 | multi-line + line-aware caret; **append/backspace-at-end only** (no mid-text edit) |
 | select, option | ✅ | drawn dropdown overlay with ✓ |
-| optgroup | ❌ | grouped options **not shown** (only direct `<option>` read) |
+| optgroup | ✅ | label row + indented options in the dropdown; nested options selectable and resolved when closed |
 | button | ✅ | drawn; submit |
 | label | ✅ | `for=`/wrapping/sibling all wired to focus+toggle |
 | fieldset, legend | 🟡 | border + bold legend (not notched) |
@@ -119,7 +119,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | Element | Status | Note |
 |---|---|---|
 | details, summary | 🟡 | honors `open` statically + draws ▸/▾; **tapping does not toggle** |
-| dialog | 🟡 | renders as a block **always visible** — no `open`/modal/backdrop |
+| dialog | 🟡 | hidden unless `open`; open = bordered box in flow; no modal backdrop/centering (needs scripting) |
 | script | ✅ | content skipped (not rendered) |
 | noscript | 🟡 | children render (non-spec, harmless) |
 | template | ✅ | inert (display:none UA); content never painted |
