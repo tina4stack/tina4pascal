@@ -20,10 +20,10 @@ unit Tina4ShellIOS;
 interface
 
 uses
-  CFBase, CFString, CFAttributedString, CFDictionary, CFURL,
+  CFBase, CFString, CFAttributedString, CFDictionary, CFURL, CFError,
   CGBase, CGContext, CGColor, CGColorSpace, CGGeometry, CGPath,
-  CGImage, CGImageSource, CGAffineTransforms,
-  CTFont, CTFontTraits, CTLine, CTStringAttributes,
+  CGImage, CGImageSource, CGAffineTransforms, CGFont, CGDataProvider,
+  CTFont, CTFontTraits, CTFontManager, CTLine, CTStringAttributes,
   Tina4RenderBackend;
 
 { Implemented in the app (ios/app/ImageLoader.m): async NSURLSession download of
@@ -65,13 +65,30 @@ type
     procedure RestoreState; override;
     procedure Scale(SX, SY: Single); override;
     function LoadImage(const Src: string): Integer; override;
+    function RegisterFont(const Family, Src: string): Boolean; override;
     function ImageSize(Handle: Integer; out W, H: Single): Boolean; override;
     procedure DrawImage(Handle: Integer; X, Y, W, H: Single); override;
   end;
 
 implementation
 
-uses SysUtils, md5;
+uses SysUtils, Classes, md5;
+
+var
+  { @font-face aliases: CSS family (lowercased) -> the font's real registered
+    name. Process-global; registration is process-wide on iOS too. }
+  GFontAlias: TStringList = nil;
+
+function FontAliasMap: TStringList;
+begin
+  if GFontAlias = nil then
+  begin
+    GFontAlias := TStringList.Create;
+    GFontAlias.Sorted := True;
+    GFontAlias.Duplicates := dupIgnore;
+  end;
+  Result := GFontAlias;
+end;
 
 { ---- helpers ----------------------------------------------------------- }
 
@@ -220,6 +237,9 @@ begin
     cand := Trim(parts[k]).DeQuotedString('"').DeQuotedString('''');
     cand := Trim(cand);
     if cand = '' then Continue;
+    // @font-face: map the CSS family to the font's real registered name.
+    if FontAliasMap.IndexOfName(LowerCase(cand)) >= 0 then
+      Exit(FontAliasMap.Values[LowerCase(cand)]);
     if SameText(cand, 'system-ui') or SameText(cand, '-apple-system')
        or SameText(cand, 'sans-serif') then Exit('')        // system Helvetica
     else if SameText(cand, 'serif') then Exit('Georgia')
@@ -409,6 +429,75 @@ begin
   Result := i;
 end;
 
+{ Where a downloaded font is cached on disk (app sandbox, survives relaunches). }
+function IOSFontCachePath(const Src: string): string;
+var dir: string;
+begin
+  dir := GetEnvironmentVariable('HOME') + '/Library/Caches/tina4render/';
+  ForceDirectories(dir);
+  Result := dir + MD5Print(MD5String(Src)) + '.font';
+end;
+
+{ @font-face: register a font under the CSS `Family`. `Src` is a local path or
+  an http(s) URL. A URL is fetched async (reusing the native-TLS image loader,
+  which relayouts on completion); until the file lands we return False, and the
+  next relayout re-runs this with the file present. Once local we register the
+  face via the CoreGraphics font path (the URL/descriptor APIs are macOS-only —
+  __IPHONE_NA), then alias the CSS family to its PostScript name so
+  CTFontCreateWithName resolves it. }
+function TIOSCanvas.RegisterFont(const Family, Src: string): Boolean;
+var
+  localPath, lower, actual: string;
+  provider: CGDataProviderRef;
+  cgFont: CGFontRef;
+  err: CFErrorRef;
+  nameRef: CFStringRef;
+  buf: array[0..255] of AnsiChar;
+begin
+  Result := False;
+  if (Trim(Family) = '') or (Trim(Src) = '') then Exit;
+  lower := LowerCase(Src);
+  if (Pos('http://', lower) = 1) or (Pos('https://', lower) = 1) then
+  begin
+    localPath := IOSFontCachePath(Src);
+    if not FileExists(localPath) then
+    begin
+      tina4_ios_fetch_image(PAnsiChar(Src), PAnsiChar(localPath)); // async fetch
+      Exit;                                    // not ready — relayout will retry
+    end;
+  end
+  else if FileExists(Src) then
+    localPath := Src
+  else
+    Exit;
+
+  provider := CGDataProviderCreateWithFilename(PAnsiChar(localPath));
+  if provider = nil then Exit;
+  cgFont := CGFontCreateWithDataProvider(provider);
+  CGDataProviderRelease(provider);
+  if cgFont = nil then Exit;
+  try
+    err := nil;
+    CTFontManagerRegisterGraphicsFont(cgFont, err);   // process-wide
+
+    actual := '';
+    nameRef := CGFontCopyPostScriptName(cgFont);
+    if nameRef <> nil then
+    begin
+      if CFStringGetCString(nameRef, buf, SizeOf(buf), kCFStringEncodingUTF8) then
+        actual := string(buf);
+      CFRelease(nameRef);
+    end;
+    if actual <> '' then
+    begin
+      FontAliasMap.Values[LowerCase(Trim(Family))] := actual;
+      Result := True;
+    end;
+  finally
+    CGFontRelease(cgFont);
+  end;
+end;
+
 function TIOSCanvas.ImageSize(Handle: Integer; out W, H: Single): Boolean;
 begin
   Result := (Handle >= 0) and (Handle < Length(FImgs));
@@ -427,4 +516,6 @@ begin
   CGContextRestoreGState(FCtx);
 end;
 
+finalization
+  GFontAlias.Free;
 end.

@@ -86,7 +86,7 @@ type
     function LoadImage(const Src: string): Integer; override;
     function ImageSize(Handle: Integer; out W, H: Single): Boolean; override;
     procedure DrawImage(Handle: Integer; X, Y, W, H: Single); override;
-    function RegisterFont(const Family, Path: string): Boolean; override;
+    function RegisterFont(const Family, Src: string): Boolean; override;
     destructor Destroy; override;
   end;
 
@@ -535,13 +535,32 @@ begin
   FEnv^.DeleteLocalRef(FEnv, dst);
 end;
 
-function TAndroidCanvas.RegisterFont(const Family, Path: string): Boolean;
-var a: array[0..0] of jvalue; s, tf, gtf: jobject; idx: Integer;
+function TAndroidCanvas.RegisterFont(const Family, Src: string): Boolean;
+var a: array[0..0] of jvalue; s, js, tf, gtf: jobject; idx: Integer;
+    local, lower: string;
 begin
   Result := False;
-  if (Trim(Family) = '') or (Trim(Path) = '') or (clsTypeface = nil)
+  if (Trim(Family) = '') or (Trim(Src) = '') or (clsTypeface = nil)
      or (FRegFonts = nil) then Exit;
-  s := JStr(Path);
+  // http(s): reuse the async ImageLoader (native-TLS worker + disk cache). It
+  // returns the local path once fetched, or "" while downloading — in which
+  // case we bail and the post-fetch relayout re-runs this with the file present.
+  lower := LowerCase(Src);
+  if (Pos('http://', lower) = 1) or (Pos('https://', lower) = 1) then
+  begin
+    EnsureImageMethods;
+    if clsImageLoader = nil then Exit;
+    s := JStr(Src);
+    a[0].l := s;
+    js := FEnv^.CallStaticObjectMethodA(FEnv, clsImageLoader, mImgCached, @a[0]);
+    FEnv^.DeleteLocalRef(FEnv, s);
+    local := JResultStr(js);
+    if js <> nil then FEnv^.DeleteLocalRef(FEnv, js);
+    if local = '' then Exit;                  // still downloading — retry later
+  end
+  else
+    local := Src;                             // local file path
+  s := JStr(local);
   a[0].l := s;
   tf := FEnv^.CallStaticObjectMethodA(FEnv, clsTypeface, mTypefaceFromFile, @a[0]);
   FEnv^.DeleteLocalRef(FEnv, s);

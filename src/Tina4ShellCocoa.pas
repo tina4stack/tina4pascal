@@ -13,7 +13,8 @@ uses
   { NOTE: do not instantiate generics (TList<>/TDictionary<>) with objcclass
     types — FPC 3.2.2/aarch64 dies with Internal error 2009092303. Plain
     TList/TStringList are used for the image store instead. }
-  SysUtils, Classes, MD5, CocoaAll, Tina4RenderBackend;
+  SysUtils, Classes, MD5, CocoaAll, CTFontManager, CTFontDescriptor,
+  CFBase, CFURL, CFArray, CFString, CFError, Tina4RenderBackend;
 
 type
   TCocoaShell = class;
@@ -29,6 +30,7 @@ type
     constructor Create;
     destructor Destroy; override;
     function LoadImage(const Src: string): Integer; override;
+    function RegisterFont(const Family, Src: string): Boolean; override;
     function ImageSize(Handle: Integer; out W, H: Single): Boolean; override;
     procedure DrawImage(Handle: Integer; X, Y, W, H: Single); override;
     procedure FillRect(X, Y, W, H: Single; Color: TTina4Color); override;
@@ -104,6 +106,23 @@ type
 
 implementation
 
+var
+  { @font-face aliases: CSS family (lowercased) -> the font's real registered
+    name. Process-global because CoreText registration is process-wide and the
+    measuring + paint canvases are distinct instances. }
+  GFontAlias: TStringList = nil;
+
+function FontAliasMap: TStringList;
+begin
+  if GFontAlias = nil then
+  begin
+    GFontAlias := TStringList.Create;
+    GFontAlias.Sorted := True;
+    GFontAlias.Duplicates := dupIgnore;
+  end;
+  Result := GFontAlias;
+end;
+
 function NSColorOf(C: TTina4Color): NSColor;
 begin
   { sRGB, NOT calibrated/generic RGB — calibrated maps e.g. 128 to ~146 when
@@ -140,6 +159,76 @@ begin
   FImages.Free;
   FImageBySrc.Free;
   inherited;
+end;
+
+{ Register a font for @font-face. Src may be a local path or an http(s) URL
+  (fetched + disk-cached exactly like an <img>). After CoreText registers the
+  file we read back the font's real family name and alias the CSS `Family` to
+  it, since the two frequently differ (e.g. "Inter" vs "Inter 18pt"). }
+function TCocoaCanvas.RegisterFont(const Family, Src: string): Boolean;
+var
+  data: NSData;
+  cacheDir, cacheFile, path: string;
+  url: CFURLRef;
+  err: CFErrorRef;
+  descs: CFArrayRef;
+  desc: CTFontDescriptorRef;
+  nameRef: CFTypeRef;
+  actual: string;
+begin
+  Result := False;
+  path := '';
+  if (Pos('http://', LowerCase(Src)) = 1) or (Pos('https://', LowerCase(Src)) = 1) then
+  begin
+    cacheDir := GetEnvironmentVariable('HOME') + '/.cache/tina4render/';
+    ForceDirectories(cacheDir);
+    cacheFile := cacheDir + MD5Print(MD5String(Src)) + '.font';
+    if not FileExists(cacheFile) then
+    begin
+      data := NSData.dataWithContentsOfURL(NSURL.URLWithString(NSStr(Src)));
+      if (data <> nil) and (data.length > 0) then
+        data.writeToFile_atomically(NSStr(cacheFile), True);
+    end;
+    if FileExists(cacheFile) then path := cacheFile;
+  end
+  else if FileExists(Src) then
+    path := Src;
+  if path = '' then Exit;
+
+  url := CFURLCreateWithFileSystemPath(nil, CFStringRef(NSStr(path)),
+    kCFURLPOSIXPathStyle, False);
+  if url = nil then Exit;
+  try
+    err := nil;
+    // Idempotent enough for our use: a re-register of the same URL just fails
+    // harmlessly; we still resolve the actual family name below.
+    CTFontManagerRegisterFontsForURL(url, kCTFontManagerScopeProcess, err);
+
+    // Read the font's real family name so FontFor can map the CSS name to it.
+    actual := '';
+    descs := CTFontManagerCreateFontDescriptorsFromURL(url);
+    if descs <> nil then
+    begin
+      if CFArrayGetCount(descs) > 0 then
+      begin
+        desc := CTFontDescriptorRef(CFArrayGetValueAtIndex(descs, 0));
+        nameRef := CTFontDescriptorCopyAttribute(desc, kCTFontFamilyNameAttribute);
+        if nameRef <> nil then
+        begin
+          actual := string(NSString(nameRef).UTF8String);
+          CFRelease(nameRef);
+        end;
+      end;
+      CFRelease(descs);
+    end;
+    if actual <> '' then
+    begin
+      FontAliasMap.Values[LowerCase(Trim(Family))] := actual;
+      Result := True;
+    end;
+  finally
+    CFRelease(url);
+  end;
 end;
 
 function TCocoaCanvas.LoadImage(const Src: string): Integer;
@@ -223,6 +312,9 @@ begin
       cand := Trim(parts[k]).DeQuotedString('"').DeQuotedString('''');
       cand := Trim(cand);
       if cand = '' then Continue;
+      // @font-face: map the CSS family to the font's real registered name.
+      if FontAliasMap.IndexOfName(LowerCase(cand)) >= 0 then
+        cand := FontAliasMap.Values[LowerCase(cand)];
       if SameText(cand, 'system-ui') or SameText(cand, '-apple-system')
          or SameText(cand, 'sans-serif') then
         Break   // fall through to the system font below
@@ -669,4 +761,6 @@ begin
   Result := FCanvas;
 end;
 
+finalization
+  GFontAlias.Free;
 end.
