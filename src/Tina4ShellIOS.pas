@@ -23,7 +23,7 @@ uses
   CFBase, CFString, CFAttributedString, CFDictionary, CFURL,
   CGBase, CGContext, CGColor, CGColorSpace, CGGeometry, CGPath,
   CGImage, CGImageSource, CGAffineTransforms,
-  CTFont, CTLine, CTStringAttributes,
+  CTFont, CTFontTraits, CTLine, CTStringAttributes,
   Tina4RenderBackend;
 
 { Implemented in the app (ios/app/ImageLoader.m): async NSURLSession download of
@@ -208,16 +208,56 @@ end;
 
 { ---- text (Core Text) -------------------------------------------------- }
 
-function TIOSCanvas.MakeFont(FontSize: Single; Styles: TTina4FontStyles): CTFontRef;
-var name: string; cf: CFStringRef;
+{ Resolve the CSS font-family stack to a concrete base face name. }
+function IOSBaseFontName(const Family: string): string;
+var cand: string; parts: TStringArray; k: Integer;
 begin
-  if (tfsBold in Styles) and (tfsItalic in Styles) then name := 'Helvetica-BoldOblique'
-  else if tfsBold in Styles then name := 'Helvetica-Bold'
-  else if tfsItalic in Styles then name := 'Helvetica-Oblique'
-  else name := 'Helvetica';
+  Result := '';
+  if Trim(Family) = '' then Exit;
+  parts := Family.Split([',']);
+  for k := 0 to High(parts) do
+  begin
+    cand := Trim(parts[k]).DeQuotedString('"').DeQuotedString('''');
+    cand := Trim(cand);
+    if cand = '' then Continue;
+    if SameText(cand, 'system-ui') or SameText(cand, '-apple-system')
+       or SameText(cand, 'sans-serif') then Exit('')        // system Helvetica
+    else if SameText(cand, 'serif') then Exit('Georgia')
+    else if SameText(cand, 'monospace') then Exit('Menlo')
+    else Exit(cand);                                        // named/registered font
+  end;
+end;
+
+function TIOSCanvas.MakeFont(FontSize: Single; Styles: TTina4FontStyles): CTFontRef;
+var name: string; cf: CFStringRef; base, styled: CTFontRef; mask: CTFontSymbolicTraits;
+begin
+  name := IOSBaseFontName(FontFamily);
+  if name = '' then
+  begin
+    // system Helvetica with the exact style variant (fast path)
+    if (tfsBold in Styles) and (tfsItalic in Styles) then name := 'Helvetica-BoldOblique'
+    else if tfsBold in Styles then name := 'Helvetica-Bold'
+    else if tfsItalic in Styles then name := 'Helvetica-Oblique'
+    else name := 'Helvetica';
+    cf := CFStr(name);
+    Result := CTFontCreateWithName(cf, FontSize, nil);
+    CFRelease(cf);
+    Exit;
+  end;
+  // named/generic face: create then layer bold/italic via symbolic traits
   cf := CFStr(name);
-  Result := CTFontCreateWithName(cf, FontSize, nil);
+  base := CTFontCreateWithName(cf, FontSize, nil);
   CFRelease(cf);
+  mask := 0;
+  if tfsBold in Styles then mask := mask or kCTFontTraitBold;
+  if tfsItalic in Styles then mask := mask or kCTFontTraitItalic;
+  if mask <> 0 then
+  begin
+    styled := CTFontCreateCopyWithSymbolicTraits(base, FontSize, nil, mask, mask);
+    if styled <> nil then begin CFRelease(base); Result := styled; end
+    else Result := base;   // trait unavailable in this face — keep the base
+  end
+  else Result := base;
 end;
 
 function TIOSCanvas.MakeLine(const Text: string; FontSize: Single;

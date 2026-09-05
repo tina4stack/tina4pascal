@@ -30,6 +30,11 @@ type
     { Extra spacing between characters (CSS letter-spacing), applied by
       DrawText/MeasureText. Set around a run, reset to 0 after. }
     LetterSpacing: Single;
+    { CSS font-family for the next DrawText/MeasureText — a family stack like
+      "Gabarito, system-ui, sans-serif" or a registered @font-face name. Set
+      around a run, reset to '' (system) after. Backends resolve the first
+      family they can, incl. fonts registered via RegisterFont. }
+    FontFamily: string;
     procedure FillRect(X, Y, W, H: Single; Color: TTina4Color); virtual; abstract;
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); virtual; abstract;
     { Rounded variants; default falls back to square corners so simple
@@ -49,6 +54,10 @@ type
       Styles: TTina4FontStyles; Color: TTina4Color); virtual; abstract;
     function MeasureText(const Text: string; FontSize: Single;
       Styles: TTina4FontStyles): TTina4TextMetrics; virtual; abstract;
+    { Register a downloaded font file (ttf/otf/woff) under `Family` so
+      FontFamily can resolve it (for @font-face). Default: no-op (returns
+      False); shells that can load fonts override. }
+    function RegisterFont(const Family, Path: string): Boolean; virtual;
     procedure SetClip(X, Y, W, H: Single); virtual; abstract;
     procedure ClearClip; virtual; abstract;
     { Transform stack for CSS transforms (rotate/scale). Default no-ops so
@@ -235,6 +244,11 @@ function TTina4Canvas.ImageSize(Handle: Integer; out W, H: Single): Boolean;
 begin
   W := 0; H := 0;
   Result := False;
+end;
+
+function TTina4Canvas.RegisterFont(const Family, Path: string): Boolean;
+begin
+  Result := False;   // backends that can load fonts override this
 end;
 
 procedure TTina4Canvas.DrawImage(Handle: Integer; X, Y, W, H: Single);

@@ -207,13 +207,44 @@ end;
 function TCocoaCanvas.FontFor(FontSize: Single; Styles: TTina4FontStyles): NSFont;
 var
   fm: NSFontManager;
+  fam, cand: string; parts: TStringArray; k: Integer; f: NSFont;
 begin
-  { San Francisco system font — what browsers resolve -apple-system /
-    system-ui to on macOS, so metrics track Chrome closely. }
-  if tfsBold in Styles then
-    Result := NSFont.boldSystemFontOfSize(FontSize)
-  else
-    Result := NSFont.systemFontOfSize(FontSize);
+  Result := nil;
+  // Resolve the CSS font-family stack: first candidate that names a real font
+  // (a system generic, or a face installed / registered via @font-face) wins.
+  fam := Trim(FontFamily);
+  if fam <> '' then
+  begin
+    parts := fam.Split([',']);
+    for k := 0 to High(parts) do
+    begin
+      cand := Trim(parts[k]).DeQuotedString('"').DeQuotedString('''');
+      cand := Trim(cand);
+      if cand = '' then Continue;
+      if SameText(cand, 'system-ui') or SameText(cand, '-apple-system')
+         or SameText(cand, 'sans-serif') then
+        Break   // fall through to the system font below
+      else if SameText(cand, 'serif') then
+        f := NSFont.fontWithName_size(NSStr('Times New Roman'), FontSize)
+      else if SameText(cand, 'monospace') then
+        f := NSFont.fontWithName_size(NSStr('Menlo'), FontSize)
+      else
+        f := NSFont.fontWithName_size(NSStr(cand), FontSize);   // named/registered
+      if f <> nil then begin Result := f; Break; end;
+    end;
+  end;
+  // San Francisco system font — what browsers resolve -apple-system / system-ui
+  // to on macOS, so metrics track Chrome closely.
+  if Result = nil then
+  begin
+    if tfsBold in Styles then Result := NSFont.boldSystemFontOfSize(FontSize)
+    else Result := NSFont.systemFontOfSize(FontSize);
+  end
+  else if tfsBold in Styles then
+  begin
+    fm := NSFontManager.sharedFontManager;
+    Result := fm.convertFont_toHaveTrait(Result, NSBoldFontMask);
+  end;
   if tfsItalic in Styles then
   begin
     fm := NSFontManager.sharedFontManager;

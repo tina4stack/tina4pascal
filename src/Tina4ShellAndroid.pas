@@ -40,6 +40,11 @@ type
     mPaintInit, mSetColor, mSetStyle, mSetStrokeWidth, mSetAntiAlias,
     mSetTextSize, mMeasureText, mAscent, mDescent, mSetFakeBold,
     mSetSkewX, mSetUnderline, mSetStrike, mSetFillType: jmethodID;
+    // Typeface / font-family
+    clsTypeface: jclass;
+    mSetTypeface, mTypefaceFromFile: jmethodID;
+    tfSerif, tfMono, tfSans: jobject;        // static generic typefaces (global refs)
+    FRegFonts: TStringList;                  // @font-face: family(lower) → Typeface global ref
     // Path methods
     mPathInit, mMoveTo, mLineTo, mClose: jmethodID;
     // image decode/draw
@@ -56,6 +61,7 @@ type
     function EnumVal(const clsName, field, sig: string): jobject;
     function JStr(const S: string): jstring;
     function JResultStr(S: jobject): string;
+    function TypefaceFor(const Family: string): jobject;
     procedure ConfigurePaintText(FontSize: Single; Styles: TTina4FontStyles;
       Color: TTina4Color);
   public
@@ -80,6 +86,7 @@ type
     function LoadImage(const Src: string): Integer; override;
     function ImageSize(Handle: Integer; out W, H: Single): Boolean; override;
     procedure DrawImage(Handle: Integer; X, Y, W, H: Single); override;
+    function RegisterFont(const Family, Path: string): Boolean; override;
     destructor Destroy; override;
   end;
 
@@ -191,6 +198,23 @@ begin
   mSetStrike := MID(clsPaint, 'setStrikeThruText', '(Z)V');
   mSetFillType := MID(clsPath, 'setFillType', '(' + PATH_FILLTYPE_SIG + ')V');
 
+  // Typeface — for font-family (generic families + @font-face registered fonts)
+  lc := FEnv^.FindClass(FEnv, 'android/graphics/Typeface');
+  clsTypeface := FEnv^.NewGlobalRef(FEnv, lc);
+  mSetTypeface := MID(clsPaint, 'setTypeface',
+    '(Landroid/graphics/Typeface;)Landroid/graphics/Typeface;');
+  mTypefaceFromFile := FEnv^.GetStaticMethodID(FEnv, clsTypeface, 'createFromFile',
+    '(Ljava/lang/String;)Landroid/graphics/Typeface;');
+  tfSerif := FEnv^.NewGlobalRef(FEnv, FEnv^.GetStaticObjectField(FEnv, clsTypeface,
+    FEnv^.GetStaticFieldID(FEnv, clsTypeface, 'SERIF', 'Landroid/graphics/Typeface;')));
+  tfMono := FEnv^.NewGlobalRef(FEnv, FEnv^.GetStaticObjectField(FEnv, clsTypeface,
+    FEnv^.GetStaticFieldID(FEnv, clsTypeface, 'MONOSPACE', 'Landroid/graphics/Typeface;')));
+  tfSans := FEnv^.NewGlobalRef(FEnv, FEnv^.GetStaticObjectField(FEnv, clsTypeface,
+    FEnv^.GetStaticFieldID(FEnv, clsTypeface, 'SANS_SERIF', 'Landroid/graphics/Typeface;')));
+  FRegFonts := TStringList.Create;
+  FRegFonts.CaseSensitive := False;
+  FRegFonts.Sorted := True;   // enables Find()
+
   // Path
   mPathInit := MID(clsPath, '<init>', '()V');
   mMoveTo := MID(clsPath, 'moveTo', '(FF)V');
@@ -218,10 +242,37 @@ end;
 
 { ---- paint config ------------------------------------------------------ }
 
+{ Resolve the CSS font-family stack to an android.graphics.Typeface (or nil for
+  the default). Registered @font-face faces win; then serif/monospace/sans-serif
+  generics; a named face falls through to the default. }
+function TAndroidCanvas.TypefaceFor(const Family: string): jobject;
+var cand: string; parts: TStringArray; k, idx: Integer;
+begin
+  Result := nil;
+  if Trim(Family) = '' then Exit;
+  parts := Family.Split([',']);
+  for k := 0 to High(parts) do
+  begin
+    cand := Trim(parts[k]).DeQuotedString('"').DeQuotedString('''');
+    cand := Trim(cand);
+    if cand = '' then Continue;
+    if (FRegFonts <> nil) and FRegFonts.Find(cand, idx) then
+      Exit(FRegFonts.Objects[idx]);                       // @font-face registered
+    if SameText(cand, 'serif') then Exit(tfSerif)
+    else if SameText(cand, 'monospace') then Exit(tfMono)
+    else if SameText(cand, 'sans-serif') or SameText(cand, 'system-ui')
+         or SameText(cand, '-apple-system') then Exit(tfSans);
+    // a named face we don't have registered — keep looking down the stack
+  end;
+end;
+
 procedure TAndroidCanvas.ConfigurePaintText(FontSize: Single;
   Styles: TTina4FontStyles; Color: TTina4Color);
-var a: array[0..0] of jvalue;
+var a: array[0..0] of jvalue; tf: jobject;
 begin
+  tf := TypefaceFor(FontFamily);
+  a[0].l := tf;   // nil => default typeface
+  FEnv^.CallObjectMethodA(FEnv, FPaint, mSetTypeface, @a[0]);
   a[0].i := jint(Color); FEnv^.CallVoidMethodA(FEnv, FPaint, mSetColor, @a[0]);
   a[0].l := styleFill;   FEnv^.CallVoidMethodA(FEnv, FPaint, mSetStyle, @a[0]);
   a[0].f := FontSize;    FEnv^.CallVoidMethodA(FEnv, FPaint, mSetTextSize, @a[0]);
@@ -484,12 +535,37 @@ begin
   FEnv^.DeleteLocalRef(FEnv, dst);
 end;
 
+function TAndroidCanvas.RegisterFont(const Family, Path: string): Boolean;
+var a: array[0..0] of jvalue; s, tf, gtf: jobject; idx: Integer;
+begin
+  Result := False;
+  if (Trim(Family) = '') or (Trim(Path) = '') or (clsTypeface = nil)
+     or (FRegFonts = nil) then Exit;
+  s := JStr(Path);
+  a[0].l := s;
+  tf := FEnv^.CallStaticObjectMethodA(FEnv, clsTypeface, mTypefaceFromFile, @a[0]);
+  FEnv^.DeleteLocalRef(FEnv, s);
+  if tf = nil then Exit;                    // unreadable / bad font file
+  gtf := FEnv^.NewGlobalRef(FEnv, tf);
+  FEnv^.DeleteLocalRef(FEnv, tf);
+  if FRegFonts.Find(Family, idx) then FRegFonts.Objects[idx] := gtf
+  else FRegFonts.AddObject(Family, gtf);
+  Result := True;
+end;
+
 destructor TAndroidCanvas.Destroy;
 var i: Integer;
 begin
   for i := 0 to High(FImgs) do
     if FImgs[i].Bmp <> nil then FEnv^.DeleteGlobalRef(FEnv, FImgs[i].Bmp);
   FImgSrcs.Free;
+  if FRegFonts <> nil then
+  begin
+    for i := 0 to FRegFonts.Count - 1 do
+      if FRegFonts.Objects[i] <> nil then
+        FEnv^.DeleteGlobalRef(FEnv, jobject(FRegFonts.Objects[i]));
+    FRegFonts.Free;
+  end;
   inherited Destroy;
 end;
 
