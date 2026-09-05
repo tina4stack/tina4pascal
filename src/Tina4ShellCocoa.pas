@@ -13,8 +13,8 @@ uses
   { NOTE: do not instantiate generics (TList<>/TDictionary<>) with objcclass
     types — FPC 3.2.2/aarch64 dies with Internal error 2009092303. Plain
     TList/TStringList are used for the image store instead. }
-  SysUtils, Classes, MD5, CocoaAll, CTFontManager, CTFontDescriptor,
-  CFBase, CFURL, CFArray, CFString, CFError, Tina4RenderBackend;
+  SysUtils, Classes, MD5, CocoaAll, AVKit, AVFoundation, CTFontManager,
+  CTFontDescriptor, CFBase, CFURL, CFArray, CFString, CFError, Tina4RenderBackend;
 
 type
   TCocoaShell = class;
@@ -111,11 +111,16 @@ type
 
 implementation
 
+uses
+  Tina4Interact;   // native media embeds (<video>) query — TinaEmbed*
+
 var
   { @font-face aliases: CSS family (lowercased) -> the font's real registered
     name. Process-global because CoreText registration is process-wide and the
     measuring + paint canvases are distinct instances. }
   GFontAlias: TStringList = nil;
+  { native <video> overlays, keyed by source URL (NSString -> AVPlayerView) }
+  GVideoViews: NSMutableDictionary = nil;
 
 function FontAliasMap: TStringList;
 begin
@@ -670,6 +675,61 @@ begin
   Result := True;
 end;
 
+{ Overlay a native AVPlayerView over each <video> box the engine laid out, and
+  position it (screen points, scroll already applied). Reused across frames and
+  torn down when the box is gone — the macOS twin of the iOS Tina4View path. }
+procedure SyncCocoaVideos(host: NSView);
+var
+  n, i: LongInt; x, y, w, h: Single; src: string;
+  key: NSString; url: NSURL; player: AVPlayer; pv: AVPlayerView;
+  live: NSMutableSet; keys: NSArray; k: LongWord;
+begin
+  if GVideoViews = nil then GVideoViews := NSMutableDictionary.alloc.init;
+  n := TinaEmbedCount;
+  live := NSMutableSet.setWithCapacity(8);
+  for i := 0 to n - 1 do
+  begin
+    TinaEmbedRect(i, x, y, w, h);
+    src := TinaEmbedSrc(i);
+    if (w <= 0) or (h <= 0) or (src = '') then Continue;
+    key := NSString.stringWithUTF8String(PChar(src));
+    live.addObject(key);
+    pv := AVPlayerView(GVideoViews.objectForKey(key));
+    if pv = nil then
+    begin
+      url := NSURL.URLWithString(key);
+      if url = nil then Continue;
+      player := AVPlayer.playerWithURL(url);
+      player.setMuted(True);
+      pv := AVPlayerView(AVPlayerView.alloc).initWithFrame(NSMakeRect(x, y, w, h));
+      pv.setPlayer(player);
+      pv.setControlsStyle(AVPlayerViewControlsStyleInline);   // native play/pause/scrub
+      pv.setVideoGravity(AVLayerVideoGravityResizeAspect);
+      host.addSubview(pv);
+      GVideoViews.setObject_forKey(pv, key);
+      player.play;
+    end
+    else
+      pv.setFrame(NSMakeRect(x, y, w, h));   // track scroll
+  end;
+  // remove players whose <video> is no longer laid out
+  keys := GVideoViews.allKeys;
+  for k := 0 to keys.count - 1 do
+  begin
+    key := NSString(keys.objectAtIndex(k));
+    if not live.containsObject(key) then
+    begin
+      pv := AVPlayerView(GVideoViews.objectForKey(key));
+      if pv <> nil then
+      begin
+        if pv.player <> nil then pv.player.pause;
+        pv.removeFromSuperview;
+      end;
+      GVideoViews.removeObjectForKey(key);
+    end;
+  end;
+end;
+
 procedure TTina4View.drawRect(dirtyRect: NSRect);
 var path: string;
 begin
@@ -683,6 +743,8 @@ begin
     shell.SnapshotPath := '';
     shell.Snapshot(path);
   end;
+  // native <video> overlays — only in a real window (skip headless snapshots)
+  if window <> nil then SyncCocoaVideos(self);
 end;
 
 procedure TTina4View.mouseDown(event: NSEvent);
