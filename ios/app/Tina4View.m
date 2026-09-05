@@ -26,6 +26,10 @@
         self.clipsToBounds = YES;                      // keep video views inside the view
         _videoControllers = [NSMutableDictionary dictionary];
         _videoLoopObservers = [NSMutableDictionary dictionary];
+        // a playback audio session so <video> actually starts (even muted)
+        [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback
+                                                error:nil];
+        [[AVAudioSession sharedInstance] setActive:YES error:nil];
         // the engine paints the safe area; the status-bar / home-indicator strips
         // outside it show this colour — match the page background (--paper)
         self.backgroundColor = [UIColor colorWithRed:0.984 green:0.980 blue:0.969 alpha:1.0];
@@ -70,6 +74,24 @@
 // the poster (offset into the safe area like the engine's content), and reuse
 // it across frames so scrolling just repositions — no reload.
 
+// AVPlayerItem became ready (or failed) — start playback for its controller.
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
+                        change:(NSDictionary *)change context:(void *)context {
+    if (![keyPath isEqualToString:@"status"] || ![object isKindOfClass:[AVPlayerItem class]]) {
+        [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+        return;
+    }
+    AVPlayerItem *item = (AVPlayerItem *)object;
+    if (item.status == AVPlayerItemStatusReadyToPlay) {
+        for (NSString *src in self.videoControllers) {
+            AVPlayerViewController *vc = self.videoControllers[src];
+            if (vc.player.currentItem == item) { [vc.player play]; break; }
+        }
+    } else if (item.status == AVPlayerItemStatusFailed) {
+        NSLog(@"[tina4] video item failed: %@", item.error);
+    }
+}
+
 - (void)syncVideos:(UIEdgeInsets)s {
     int n = tina4_embed_count();
     NSMutableSet<NSString *> *live = [NSMutableSet set];
@@ -89,6 +111,7 @@
             if (!url) continue;
             AVPlayer *player = [AVPlayer playerWithURL:url];
             player.muted = YES;                 // muted so autoplay is allowed; user can unmute
+            player.allowsExternalPlayback = NO; // keep video on-device (don't AirPlay it away)
             vc = [[AVPlayerViewController alloc] init];
             vc.player = player;
             vc.showsPlaybackControls = YES;     // native play / pause / scrubber (scan)
@@ -98,6 +121,10 @@
             [self addSubview:vc.view];
             if (self.host) [vc didMoveToParentViewController:self.host];
             self.videoControllers[src] = vc;
+            // autoplay the moment the item is ready (calling play() before it
+            // loads is a no-op, which is why it sat on the play button)
+            [player.currentItem addObserver:self forKeyPath:@"status"
+                                    options:NSKeyValueObservingOptionNew context:NULL];
             // loop: on end, rewind and keep playing
             __weak AVPlayer *wplayer = player;
             id obs = [[NSNotificationCenter defaultCenter]
@@ -124,6 +151,7 @@
     for (NSString *src in dead) {
         AVPlayerViewController *vc = self.videoControllers[src];
         [vc.player pause];
+        @try { [vc.player.currentItem removeObserver:self forKeyPath:@"status"]; } @catch (__unused id e) {}
         [vc willMoveToParentViewController:nil];
         [vc.view removeFromSuperview];
         [vc removeFromParentViewController];
