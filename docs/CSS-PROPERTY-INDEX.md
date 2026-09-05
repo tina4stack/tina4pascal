@@ -81,7 +81,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | text-overflow | ✅ | ellipsis truncation (single nowrap line): truncates the crossing run + drops the rest |
 | text-shadow | 📦 | fully parsed, never rendered |
 | white-space | ✅ | normal/nowrap/pre/pre-wrap/pre-line; pre* preserve newlines (+ spaces for pre/pre-wrap) — parser keeps raw text for <pre> and inline white-space:pre* |
-| word-break, overflow-wrap | 📦 | parsed, long words never force-break |
+| word-break, overflow-wrap | ✅ | break-word/break-all/anywhere: over-long words break between characters (UTF-8 aware) |
 | vertical-align | 🟡 | sub/super/top/middle; no text-top/bottom/length |
 | list-style-type | ✅ | disc/circle/square/decimal/alpha/roman/none |
 | list-style-position/image, list-style shorthand | 🟡/❌ | shorthand mis-parses multi-token; position/image absent |

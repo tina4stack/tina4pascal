@@ -1368,6 +1368,42 @@ var
     items.Add(ti);
   end;
 
+  { Break an over-long word (a URL/hash with no spaces) into character-sized
+    pieces that each fit AvailW, for overflow-wrap:break-word / word-break:
+    break-all. UTF-8 aware so multibyte glyphs are not split mid-sequence. }
+  procedure EmitBrokenWord(const W: string; const St: TComputedStyle;
+    SpaceBefore: Boolean; AvailW: Single);
+  var
+    piece, ch: string;
+    p, chLen: Integer;
+    sp: Boolean;
+  begin
+    piece := ''; p := 1; sp := SpaceBefore;
+    FCanvas.FontFamily := St.FontFamily; FCanvas.LetterSpacing := St.LetterSpacing;
+    while p <= Length(W) do
+    begin
+      case Ord(W[p]) of
+        $00..$7F: chLen := 1;
+        $C0..$DF: chLen := 2;
+        $E0..$EF: chLen := 3;
+      else chLen := 4;
+      end;
+      ch := Copy(W, p, chLen);
+      if (piece <> '') and
+         (FCanvas.MeasureText(piece + ch, St.FontSize, FontStylesOf(St)).Width > AvailW) then
+      begin
+        FCanvas.FontFamily := ''; FCanvas.LetterSpacing := 0;
+        AddTextItem(piece, St, sp);
+        FCanvas.FontFamily := St.FontFamily; FCanvas.LetterSpacing := St.LetterSpacing;
+        sp := False; piece := '';
+      end;
+      piece := piece + ch;
+      p := p + chLen;
+    end;
+    FCanvas.FontFamily := ''; FCanvas.LetterSpacing := 0;
+    if piece <> '' then AddTextItem(piece, St, sp);
+  end;
+
   { Emit a hard line break (\n in preformatted text, or <br>). }
   procedure AddHardBreak(const St: TComputedStyle);
   var bi: TInlineItem;
@@ -1483,6 +1519,17 @@ var
         begin
           if words[i] = '' then Continue;
           m := FCanvas.MeasureText(words[i], St.FontSize, FontStylesOf(St));
+          // overflow-wrap / word-break: a single word wider than the line is
+          // broken between characters instead of overflowing the box.
+          if (m.Width > CW) and (CW > 0) and
+             (SameText(St.OverflowWrap, 'break-word') or SameText(St.OverflowWrap, 'anywhere') or
+              SameText(St.WordBreak, 'break-all') or SameText(St.WordBreak, 'break-word')) then
+          begin
+            EmitBrokenWord(words[i], St, (items.Count > 0) and ((i > 0) or leadingSpace), CW);
+            FCanvas.LetterSpacing := St.LetterSpacing;   // restore loop measure context
+            FCanvas.FontFamily := St.FontFamily;
+            Continue;
+          end;
           it.Text := words[i];
           it.Box := nil;
           it.W := m.Width;
