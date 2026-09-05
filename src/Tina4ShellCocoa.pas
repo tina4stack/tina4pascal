@@ -108,6 +108,7 @@ type
     procedure Quit; override;
     procedure SetTitle(const Title: string); override;
     procedure SetCursor(C: TTina4Cursor); override;
+    function FetchToFile(const Url, DestPath: string): Boolean; override;
     procedure StartTicker(IntervalMs: Integer); override;
     function PickFile: string; override;
     function CaptureCamera: string; override;
@@ -971,6 +972,16 @@ begin
     cur := NSCursor.arrowCursor;          // default / wait / help
   end;
   if cur <> nil then cur.set_;
+end;
+
+function TCocoaShell.FetchToFile(const Url, DestPath: string): Boolean;
+var data: NSData;
+begin
+  Result := False;
+  // Foundation handles TLS + redirects via its synchronous convenience API.
+  data := NSData.dataWithContentsOfURL(NSURL.URLWithString(NSStr(Url)));
+  if (data <> nil) and (data.length > 0) then
+    Result := data.writeToFile_atomically(NSStr(DestPath), True);
 end;
 
 function TCocoaShell.PickFile: string;

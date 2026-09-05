@@ -145,6 +145,10 @@ type
     procedure SetTitle(const Title: string); virtual;
     { Set the OS pointer shape (CSS `cursor`). Default: no-op (touch shells). }
     procedure SetCursor(C: TTina4Cursor); virtual;
+    { Fetch a URL synchronously and write the bytes to DestPath. Used to pull an
+      external <link rel=stylesheet href> before the first layout (same idea as
+      the font fetch). Returns True on success. Default: False (no network). }
+    function FetchToFile(const Url, DestPath: string): Boolean; virtual;
     { Open the OS file picker; returns the chosen path or '' if cancelled.
       Default '' (no picker); backends override with the native dialog. }
     function PickFile: string; virtual;
@@ -165,6 +169,11 @@ end;
 procedure TTina4Shell.SetCursor(C: TTina4Cursor);
 begin
   // optional per shell (desktop shells override with native cursors)
+end;
+
+function TTina4Shell.FetchToFile(const Url, DestPath: string): Boolean;
+begin
+  Result := False;   // no network by default; desktop shells override
 end;
 
 procedure TTina4Shell.StartTicker(IntervalMs: Integer);

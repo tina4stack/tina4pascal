@@ -812,7 +812,7 @@ begin
 end;
 
 var
-  FileName, SnapPath, HTML, CSSFile, ScriptPath, FontFam, FontUrl: string;
+  FileName, SnapPath, HTML, CSSFile, CSSCacheDir, ScriptPath, FontFam, FontUrl: string;
   SL: TStringList;
   i, WinW, WinH: Integer;
   autof: TList<THTMLTag>;
@@ -863,23 +863,29 @@ begin
   Viewer.Parser := THTMLParser.Create;
   Viewer.Parser.Parse(HTML);
   Viewer.Sheet := TCSSStyleSheet.Create;
+  Viewer.Shell := TCocoaShell.Create;            // created early: fetches remote <link> CSS
   RegisterCanvasPainter('demo', @CanvasDemo);   // <canvas id="demo"> → the Pascal painter
   RegisterCanvasPainter('lottie', @LottiePainter);
 
-  { Linked stylesheets: remote URLs from the local cache dir (prefetched),
-    relative hrefs from beside the HTML file. }
+  { Linked stylesheets: relative hrefs from beside the HTML file; remote URLs
+    fetched (once) into a local cache via the shell, then loaded from there. }
   for i := 0 to Viewer.Parser.LinkHrefs.Count - 1 do
   begin
     CSSFile := Viewer.Parser.LinkHrefs[i];
     if (Pos('http://', LowerCase(CSSFile)) = 1) or (Pos('https://', LowerCase(CSSFile)) = 1) then
     begin
-      CSSFile := ExtractFilePath(ParamStr(0)) + 'csscache/' +
-        ExtractFileName(StringReplace(CSSFile, '?', '_', [rfReplaceAll]));
+      CSSCacheDir := ExtractFilePath(ParamStr(0)) + 'csscache/';
+      ForceDirectories(CSSCacheDir);
+      CSSFile := CSSCacheDir +
+        ExtractFileName(StringReplace(Viewer.Parser.LinkHrefs[i], '?', '_', [rfReplaceAll]));
       if not FileExists(CSSFile) then
-      begin
-        WriteLn('[css] not cached, skipping: ', Viewer.Parser.LinkHrefs[i]);
-        Continue;
-      end;
+        if Viewer.Shell.FetchToFile(Viewer.Parser.LinkHrefs[i], CSSFile) then
+          WriteLn('[css] fetched ', Viewer.Parser.LinkHrefs[i])
+        else
+        begin
+          WriteLn('[css] fetch failed, skipping: ', Viewer.Parser.LinkHrefs[i]);
+          Continue;
+        end;
     end
     else if not FileExists(CSSFile) then
       CSSFile := ExtractFilePath(FileName) + CSSFile;
@@ -896,7 +902,6 @@ begin
     Viewer.Sheet.AddCSS(Viewer.Parser.StyleBlocks[i]);
 
   WriteLn('Loaded ', FileName);
-  Viewer.Shell := TCocoaShell.Create;
 
   { @font-face: register downloadable fonts before the first layout so text
     measurement uses the real face. RegisterFont fetches + disk-caches URLs. }

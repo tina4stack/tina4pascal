@@ -18,7 +18,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | html, body | ✅ | layout roots |
 | head, meta, base | ⬜ | not rendered |
 | title | ⬜ | ignored (inner text can leak as a stray node — minor) |
-| link[rel=stylesheet] | 🟡 | href captured into `LinkHrefs`; **inline `<style>` is applied, external `<link href>` is not fetched yet** (remote-CSS roadmap) |
+| link[rel=stylesheet] | ✅ | inline `<style>` and external `<link href>` both applied. Relative hrefs load from beside the HTML; remote URLs are fetched once through the shell (`FetchToFile`) into a local `csscache/` and reused. Cascade order preserved (links before inline `<style>`) |
 | style | ✅ | parsed into the stylesheet |
 
 ## Content sectioning
@@ -145,13 +145,14 @@ in the same commit that changes its behaviour — this list is the truth, not a
 wishlist.
 
 **Core-renderable, still open (in priority order):**
-1. **external `<link href>` CSS fetch** — theme/look distribution from a URL
-   (reuses the `<img>` HTTP+cache path). `link` row is 🟡 for this reason.
-2. **Forms polish** — done: `input[number]` steppers, `<fieldset>`/`<legend>`
+1. **Forms polish** — done: `input[number]` steppers, `<fieldset>`/`<legend>`
    notch. Remaining: `<output>` form-binding (needs the scripting model);
    `<textarea>` mid-text editing (append/backspace-at-end today).
-3. **`<dialog>` modal** — backdrop + centering (`showModal`); needs the scripting
+2. **`<dialog>` modal** — backdrop + centering (`showModal`); needs the scripting
    model. Non-modal open/closed already works.
+
+**Done since:** external `<link href>` CSS fetch (shell `FetchToFile` → local
+`csscache/`, cascade order preserved).
 
 **Media — status:**
 4. **`video`** ✅ done — iOS `AVPlayerViewController` + Android `VideoView` overlays
