@@ -2244,6 +2244,76 @@ begin
       end;
 end;
 
+{ Draw one border edge as a rectangle of the given style. `horiz` = the edge
+  runs horizontally (top/bottom); its thickness is rh, length rw. For a vertical
+  edge (left/right) thickness is rw, length rh. solid fills; double draws two
+  parallel lines with a gap; dashed/dotted step segments along the length. }
+procedure PaintBorderEdge(Canvas: TTina4Canvas; rx, ry, rw, rh: Single;
+  horiz: Boolean; const style: string; color: TTina4Color);
+var
+  t, seg, gap, pos, len, endp, dash: Single;
+begin
+  if (rw <= 0) or (rh <= 0) or ((color shr 24) = 0) then Exit;
+  if style = 'double' then
+  begin
+    if horiz then t := rh else t := rw;
+    seg := t / 3;
+    if seg < 1 then begin Canvas.FillRect(rx, ry, rw, rh, color); Exit; end;
+    if horiz then
+    begin
+      Canvas.FillRect(rx, ry, rw, seg, color);
+      Canvas.FillRect(rx, ry + 2 * seg, rw, seg, color);
+    end
+    else
+    begin
+      Canvas.FillRect(rx, ry, seg, rh, color);
+      Canvas.FillRect(rx + 2 * seg, ry, seg, rh, color);
+    end;
+    Exit;
+  end;
+  if (style = 'dashed') or (style = 'dotted') then
+  begin
+    if horiz then t := rh else t := rw;
+    if style = 'dotted' then begin dash := t; gap := t; end
+    else begin dash := t * 2.5; gap := t * 1.5; end;
+    if dash < 1 then dash := 1;
+    if horiz then begin pos := rx; len := rw; endp := rx + rw; end
+    else begin pos := ry; len := rh; endp := ry + rh; end;
+    while pos < endp do
+    begin
+      seg := dash; if pos + seg > endp then seg := endp - pos;
+      if horiz then Canvas.FillRect(pos, ry, seg, rh, color)
+      else Canvas.FillRect(rx, pos, rw, seg, color);
+      pos := pos + dash + gap;
+    end;
+    Exit;
+  end;
+  Canvas.FillRect(rx, ry, rw, rh, color);   // solid (and any unhandled style)
+end;
+
+{ Paint a rectangular box's four border edges, each with its own width and
+  colour (per-side borders) in the box's border-style. Fixes the old behaviour
+  where only the top edge's width/colour was used for the whole perimeter. }
+procedure PaintBorders(Canvas: TTina4Canvas; Box: TLayoutBox;
+  const st: TComputedStyle; y, op: Single);
+var
+  wT, wR, wB, wL: Single;
+  style: string;
+begin
+  wT := st.BorderWidths.Top;    wR := st.BorderWidths.Right;
+  wB := st.BorderWidths.Bottom; wL := st.BorderWidths.Left;
+  style := LowerCase(st.BorderStyle);
+  if style = 'none' then Exit;
+  if wT > 0 then PaintBorderEdge(Canvas, Box.X, y, Box.W, wT, True, style,
+    ScaleAlpha(st.BorderColors[0], op));
+  if wB > 0 then PaintBorderEdge(Canvas, Box.X, y + Box.H - wB, Box.W, wB, True, style,
+    ScaleAlpha(st.BorderColors[2], op));
+  if wL > 0 then PaintBorderEdge(Canvas, Box.X, y, wL, Box.H, False, style,
+    ScaleAlpha(st.BorderColors[3], op));
+  if wR > 0 then PaintBorderEdge(Canvas, Box.X + Box.W - wR, y, wR, Box.H, False, style,
+    ScaleAlpha(st.BorderColors[1], op));
+end;
+
 { Paint a box's background-image. Handles background-size cover/contain/auto,
   background-position (px or the left/center/right · top/center/bottom
   percentage sentinels), and background-repeat (default tile vs no-repeat).
@@ -2436,13 +2506,16 @@ begin
   // tiled per background-repeat, and clipped to the box.
   if (not Hidden) and (st.BackgroundImage <> '') and (Box.W > 0) and (Box.H > 0) then
     PaintBackgroundImage(Canvas, Box, st, y);
-  if (not Hidden) and (st.BorderWidths.Top > 0) then
+  if (not Hidden) and ((st.BorderWidths.Top > 0) or (st.BorderWidths.Right > 0) or
+     (st.BorderWidths.Bottom > 0) or (st.BorderWidths.Left > 0)) then
   begin
     if st.MaxCornerRadius > 0 then
+      // rounded: uniform stroke (per-side / dashed on a rounded box is out of scope)
       Canvas.StrokeRoundRect(Box.X, y, Box.W, Box.H, st.MaxCornerRadius,
         st.BorderWidths.Top, bd)
     else
-      Canvas.StrokeRect(Box.X, y, Box.W, Box.H, st.BorderWidths.Top, bd);
+      // rectangular: each side with its own width, colour and style
+      PaintBorders(Canvas, Box, st, y, op);
   end;
   // outline: a stroke OUTSIDE the border box, offset by outline-offset. Sits in
   // the margin, doesn't affect layout. (dashed/dotted fall back to solid.)

@@ -271,6 +271,7 @@ type
     Padding: TEdgeValues;
     BorderColors: array[0..3] of TAlphaColor;  // Top, Right, Bottom, Left
     BorderWidths: TEdgeValues;
+    BorderStyle: string;   // solid (default) / dashed / dotted / double
     BorderRadius: Single;
     BorderRadii: array[0..3] of Single;  // TL, TR, BR, BL — -1 means inherit from BorderRadius
     ExplicitWidth: Single;
@@ -2010,6 +2011,7 @@ begin
   Result.Padding.Clear;
   Result.SetBorderColor(TAlphaColors.Black);
   Result.BorderWidths.Clear;
+  Result.BorderStyle := 'solid';
   Result.BorderRadius := -1;
   Result.BorderRadii[0] := -1;
   Result.BorderRadii[1] := -1;
@@ -2300,6 +2302,7 @@ begin
   Result.Padding.Clear;
   Result.SetBorderColor(TAlphaColors.Black);
   Result.BorderWidths.Clear;
+  Result.BorderStyle := 'solid';
   Result.BorderRadius := -1;
   Result.BorderRadii[0] := -1;
   Result.BorderRadii[1] := -1;
@@ -2763,11 +2766,13 @@ begin
       else if (BT = 'solid') or (BT = 'dashed') or (BT = 'dotted') or
               (BT = 'double') or (BT = 'groove') or (BT = 'ridge') or
               (BT = 'inset') or (BT = 'outset') then
-        // border style — we only support solid rendering
+        Style.BorderStyle := BT   // dashed/dotted/double rendered; others → solid
       else
         Style.SetBorderColor(ParseColor(BT));
     end;
   end;
+  if Decls.TryGetValue('border-style', Temp) and not ShouldSkip(Temp) then
+    Style.BorderStyle := Temp.Trim.ToLower;
   // Per-side border shorthands: border-top, border-right, border-bottom, border-left
   if Decls.TryGetValue('border-top', Temp) and not ShouldSkip(Temp) then
   begin
@@ -2782,7 +2787,7 @@ begin
       else if (BT = 'solid') or (BT = 'dashed') or (BT = 'dotted') or
               (BT = 'double') or (BT = 'groove') or (BT = 'ridge') or
               (BT = 'inset') or (BT = 'outset') then
-        // border style
+        Style.BorderStyle := BT
       else
         Style.BorderColors[0] := ParseColor(BT);
     end;
@@ -2800,7 +2805,7 @@ begin
       else if (BT = 'solid') or (BT = 'dashed') or (BT = 'dotted') or
               (BT = 'double') or (BT = 'groove') or (BT = 'ridge') or
               (BT = 'inset') or (BT = 'outset') then
-        // border style
+        Style.BorderStyle := BT
       else
         Style.BorderColors[1] := ParseColor(BT);
     end;
@@ -2818,7 +2823,7 @@ begin
       else if (BT = 'solid') or (BT = 'dashed') or (BT = 'dotted') or
               (BT = 'double') or (BT = 'groove') or (BT = 'ridge') or
               (BT = 'inset') or (BT = 'outset') then
-        // border style
+        Style.BorderStyle := BT
       else
         Style.BorderColors[2] := ParseColor(BT);
     end;
@@ -2836,7 +2841,7 @@ begin
       else if (BT = 'solid') or (BT = 'dashed') or (BT = 'dotted') or
               (BT = 'double') or (BT = 'groove') or (BT = 'ridge') or
               (BT = 'inset') or (BT = 'outset') then
-        // border style
+        Style.BorderStyle := BT
       else
         Style.BorderColors[3] := ParseColor(BT);
     end;
