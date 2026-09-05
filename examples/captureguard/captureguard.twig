@@ -76,7 +76,7 @@ tr:nth-child(even) td{background:#fbfcfd}
         <tr>
           <td class="text-muted">{{ r.n }}</td>
           <td class="mono">{{ r.stock }}</td>
-          <td class="mono">{% if captured %}<span class="redacted">REDACTED-VIN-00</span>{% else %}{{ r.vin }}{% endif %}</td>
+          <td class="mono sensitive">{{ r.vin }}</td>
           <td>{{ r.owner }}</td>
           <td>{{ r.title }}</td>
         </tr>
@@ -89,7 +89,7 @@ tr:nth-child(even) td{background:#fbfcfd}
     <div class="card-header">Account panel — also sensitive (shows it isn't just tables)</div>
     <div class="card-body">
       <div class="lead">Balance:
-        {% if captured %}<span class="redacted mono">$ ••••••</span>{% else %}<span class="mono">$ 48,215.90</span>{% endif %}
+        <span class="mono sensitive" style="display:inline-block">$ 48,215.90</span>
       </div>
       <div class="text-muted small mt-2">A modal or popup would be sensitive the same way — it's just DOM in the same canvas, so there's no separate window to protect.</div>
     </div>

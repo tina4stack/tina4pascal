@@ -113,6 +113,12 @@ function IsFormControlTag(const Name: string): Boolean;
 { Classify a tag as a form control kind (ckNone if not a control). }
 function ControlKindOf(Tag: THTMLTag): TControlKind;
 
+{ Capture-protection: when on, any element with class="sensitive" (or a <secure>
+  tag) is redacted at paint time — its content and subtree are not drawn. Paint-
+  time only, so nothing reflows and the live user is unaffected until the shell
+  flips this on a real screen-capture. }
+procedure SetCaptureProtected(B: Boolean);
+
 { Responsive-image selection (exposed for testing). PickFromSrcset chooses the
   best URL from a srcset for a target width; EvalMediaQuery evaluates a source's
   media against the viewport; ResolveImgSrc resolves an <img>'s effective src
@@ -2046,6 +2052,27 @@ end;
 { painting }
 
 { Midpoint of two ARGB colours (opaque result) — gradient approximation. }
+var
+  GCaptureProtected: Boolean = False;   // redact class="sensitive" while capturing
+
+const
+  TC_REDACT = TTina4Color($FF212529);   // solid slate bar over redacted content
+
+procedure SetCaptureProtected(B: Boolean);
+begin
+  GCaptureProtected := B;
+end;
+
+{ True if this box opts into capture redaction — class="sensitive" or <secure>. }
+function IsSensitive(Box: TLayoutBox): Boolean;
+begin
+  Result := False;
+  if (Box = nil) or (Box.Tag = nil) then Exit;
+  if SameText(Box.Tag.TagName, 'secure') then Exit(True);
+  Result := Pos(' sensitive ',
+    ' ' + LowerCase(Box.Tag.GetAttribute('class')) + ' ') > 0;
+end;
+
 function AvgColor(A, B: TTina4Color): TTina4Color;
 begin
   Result := $FF000000
@@ -2156,6 +2183,16 @@ begin
   op := Opacity;
   if (st.Opacity >= 0) and (st.Opacity < 1) then op := op * st.Opacity;
   if SameText(st.Visibility, 'hidden') then Hidden := True;
+  // capture protection: redact a sensitive element (content + subtree) with a
+  // solid bar and stop — no relayout, so the on-screen layout is unchanged.
+  if GCaptureProtected and (not Hidden) and IsSensitive(Box) then
+  begin
+    if st.MaxCornerRadius > 0 then
+      Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, st.MaxCornerRadius, TC_REDACT)
+    else
+      Canvas.FillRect(Box.X, y, Box.W, Box.H, TC_REDACT);
+    Exit;
+  end;
   if Box.IsQRCode then
   begin
     PaintQR(Canvas, Box, y);

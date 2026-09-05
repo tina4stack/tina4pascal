@@ -56,6 +56,7 @@ procedure Rerender; begin TinaRenderContext(BuildContext); end;
 procedure ActCapture(const Args: string);
 begin
   GCaptured := not GCaptured;
+  TinaSetCaptureProtected(GCaptured);   // engine redacts class="sensitive" at paint
   if GCaptured then AddLog('12:28:2' + IntToStr(Random(9)) + '  capture detected → sensitive elements redacted')
   else AddLog('12:28:3' + IntToStr(Random(9)) + '  capture ended → content restored');
   Rerender;
@@ -88,8 +89,8 @@ begin
     if Step = 1 then begin TinaFrame(780, 900, 1); Shell.Snapshot('cg-live.png'); end
     else if Step = 2 then
     begin
-      GCaptured := True; AddLog('12:28:24  capture detected -> sensitive elements redacted');
-      Rerender; TinaFrame(780, 900, 1); Shell.Snapshot('cg-captured.png'); Shell.Quit;
+      ActCapture('');   // engine capture-protect + log + re-render
+      TinaFrame(780, 900, 1); Shell.Snapshot('cg-captured.png'); Shell.Quit;
     end;
     Exit;
   end;
@@ -102,8 +103,7 @@ begin
   end;
   if Mode = 2 then                 // a looping demo: live → capture → restore
   begin
-    if Step = 14 then begin GCaptured := True;  AddLog('12:28:24  capture detected -> sensitive redacted'); Rerender; end
-    else if Step = 40 then begin GCaptured := False; AddLog('12:28:31  capture ended -> content restored'); Rerender; end;
+    if (Step = 14) or (Step = 40) then ActCapture('');   // toggle engine capture-protect
     TinaFrame(780, 900, 1);
     Shell.Snapshot(FramesDir + '/f_' + Format('%.3d', [Step]) + '.png');
     if Step >= 54 then Shell.Quit;

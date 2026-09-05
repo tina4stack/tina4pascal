@@ -92,6 +92,14 @@ procedure TinaSetHeader(const Name, Value: string);
   so the layout re-runs LoadImage and the image drops in. }
 procedure TinaInvalidateLayout;
 
+{ Capture protection: while ON, every element marked class="sensitive" (or a
+  <secure> tag) paints as a solid redaction bar — its content is never drawn.
+  The shell calls this the instant the OS reports a screen capture / recording
+  starts (SetWindowDisplayAffinity, NSWindowSharingType, FLAG_SECURE), and clears
+  it when capture ends. Paint-time only: no reflow, and the live user is
+  unaffected. Repaint after calling. }
+procedure TinaSetCaptureProtected(Protect: Boolean);
+
 implementation
 
 uses
@@ -1121,6 +1129,11 @@ end;
 procedure TinaInvalidateLayout;
 begin
   GLayoutDirty := True;
+end;
+
+procedure TinaSetCaptureProtected(Protect: Boolean);
+begin
+  SetCaptureProtected(Protect);   // paint-time redaction of class="sensitive"
 end;
 
 finalization
