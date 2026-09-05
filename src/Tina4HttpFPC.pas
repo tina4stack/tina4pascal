@@ -89,36 +89,14 @@ begin
   THttpThread.Create(Req);       // starts immediately; frees itself
 end;
 
-{ macOS ships Secure Transport, not OpenSSL, so FPC's loader finds no libssl on
-  the default path. Point it at a Homebrew/local build if one is present (this
-  is desktop-only; the mobile shells use native TLS, no OpenSSL to ship). }
-function FirstExisting(const Paths: array of string): string;
-var i: Integer;
-begin
-  Result := '';
-  for i := Low(Paths) to High(Paths) do
-    if FileExists(Paths[i]) then Exit(Paths[i]);
-end;
-
-procedure PointOpenSSL;
-begin
-{$IFDEF DARWIN}
-  if SSLLibFile = '' then
-    SSLLibFile := FirstExisting([
-      '/opt/homebrew/lib/libssl.dylib',
-      '/opt/homebrew/opt/openssl/lib/libssl.dylib',
-      '/usr/local/opt/openssl/lib/libssl.dylib']);
-  if SSLUtilFile = '' then
-    SSLUtilFile := FirstExisting([
-      '/opt/homebrew/lib/libcrypto.dylib',
-      '/opt/homebrew/opt/openssl/lib/libcrypto.dylib',
-      '/usr/local/opt/openssl/lib/libcrypto.dylib']);
-{$ENDIF}
-end;
-
+{ This OpenSSL-backed path is the FALLBACK for platforms without a native TLS
+  backend (Linux, Windows) — there FPC's loader finds the system libssl on the
+  default search path with no help. On macOS/iOS/Android use the native OS-TLS
+  backends (Tina4HttpCocoa / iOS / Android) instead — first prize, and nothing
+  crypto is shipped. NB: FPC 3.2.2's OpenSSL binding does not initialise on
+  Darwin/arm64 (any OpenSSL version), which is exactly why macOS uses Cocoa. }
 procedure InstallFPCHttp;
 begin
-  PointOpenSSL;
   SetHttpBackend(TFPCHttpBackend.Create);
 end;
 

@@ -1,0 +1,5 @@
+main
+*.o
+*.ppu
+link*.res
+ppas*.sh

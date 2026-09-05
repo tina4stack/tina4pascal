@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><style>
+body{font-family:sans-serif;background:#fbfaf7;color:#15162e;margin:0;padding:20px}
+h1{font-size:22px;margin:0 0 2px}
+.sub{color:#5b5c78;font-size:13px;margin:0 0 16px}
+.btn{display:inline-block;background:#4F46E5;color:#fff;border-radius:11px;
+     padding:11px 15px;font-weight:bold;font-size:14px;margin:0 8px 8px 0}
+.btn2{display:inline-block;background:#f3f2fb;color:#15162e;border:1px solid #e6e5f0;
+      border-radius:11px;padding:11px 15px;font-size:14px;margin:0 8px 8px 0}
+.card{background:#fff;border:1px solid #e6e5f0;border-radius:14px;padding:14px;margin-top:6px}
+.lbl{color:#5b5c78;font-size:12px;font-weight:bold;text-transform:uppercase;margin-bottom:8px}
+#result{font-family:monospace;font-size:12px;white-space:pre-wrap;line-height:1.5}
+</style></head><body>
+  <h1>HTTP demo · desktop</h1>
+  <p class="sub">Tina4Http + OS TLS (NSURLSession) — real https, nothing crypto shipped</p>
+  <div>
+    <span class="btn"  onclick="Http:Get(https://api.github.com/zen)">GitHub Zen</span>
+    <span class="btn2" onclick="Http:Get(https://httpbin.org/get)">httpbin GET</span>
+    <span class="btn2" onclick="Http:Get(https://api.github.com/octocat)">Octocat</span>
+  </div>
+  <div class="card">
+    <div class="lbl">Response</div>
+    <div id="result">Tap a button — the reply lands here.</div>
+  </div>
+</body></html>
