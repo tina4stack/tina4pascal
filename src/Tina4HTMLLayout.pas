@@ -1908,6 +1908,17 @@ begin
       begin
         LayoutBlock(Box, c, ParentStyle, CX, CY, CW);
         absBox := Box.Children[Box.Children.Count - 1];
+        // fixed is viewport-relative (origin 0,0); absolute is container-relative.
+        // Paint (PaintBoxEx) drops the scroll offset for fixed so it stays put.
+        if SameText(cs.CSSPosition, 'fixed') then
+        begin
+          absX := 0; absY := 0;
+          if cs.CSSLeft > -9998 then absX := cs.CSSLeft
+          else if cs.CSSRight > -9998 then absX := CX + CW - absBox.W - cs.CSSRight;
+          if cs.CSSTop > -9998 then absY := cs.CSSTop;
+          ShiftBoxTree(absBox, absX - absBox.X, absY - absBox.Y);
+          Continue;
+        end;
         absX := CX; absY := CY;
         if cs.CSSLeft > -9998 then absX := CX + cs.CSSLeft
         else if cs.CSSRight > -9998 then absX := CX + CW - absBox.W - cs.CSSRight;
@@ -2558,6 +2569,9 @@ var
   bg, bd, fg: TTina4Color;
 begin
   st := Box.Style;
+  // position: fixed — viewport-pinned: ignore the inherited scroll offset for
+  // this box and its subtree so it stays put while the page scrolls.
+  if SameText(st.CSSPosition, 'fixed') then OffsetY := 0;
   // transform: translate — shift this box + subtree, unshift after paint
   tx := st.TransformTranslateX;
   ty := st.TransformTranslateY;

@@ -40,7 +40,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | Property | Status | Note |
 |---|---|---|
 | position static/relative/absolute | ✅ | relative offsets in flow; absolute out-of-flow with top/right/bottom/left + `inset` |
-| position fixed | 🟡 | treated as absolute — **not viewport-pinned on scroll** |
+| position fixed | ✅ | viewport-pinned (origin 0,0 + top/left/right); stays put on scroll |
 | position sticky | 📦 | parsed, falls back to static |
 | top, right, bottom, left, inset | ✅ | consumed by relative/absolute |
 | z-index | ✅ | stable paint-order sort among siblings (ties keep tree order) |
