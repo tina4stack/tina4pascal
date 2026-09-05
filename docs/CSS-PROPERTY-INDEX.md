@@ -71,7 +71,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | font-style | ✅ | italic/oblique |
 | font-family | ✅ | resolved on all 3 shell canvases (generic + named + @font-face); real fonts, not one system face |
 | font (shorthand), font-variant, font-stretch | ❌ | not parsed |
-| line-height | 🟡 | unitless + px; %/rem unhandled |
+| line-height | ✅ | unitless, px, em, % (÷100), rem (×16 root) |
 | letter-spacing | ✅ | applied in measure AND paint |
 | word-spacing | ❌ | |
 | text-align | 🟡 | left/center/right; **justify falls back to left** |

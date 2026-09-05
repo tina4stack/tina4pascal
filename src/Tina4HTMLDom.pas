@@ -2823,13 +2823,32 @@ begin
   end;
   if Decls.TryGetValue('line-height', Temp) and not ShouldSkip(Temp) then
   begin
-    LH := StrToFloatDef(Temp.Replace('px', '').Replace('em', ''), 0);
-    if LH > 0 then
+    // LineHeight is stored as a unitless multiple of the element's font-size.
+    Temp := Temp.Trim.ToLower;
+    if Temp.EndsWith('%') then
     begin
-      if Temp.Contains('px') then
-        Style.LineHeight := LH / Style.FontSize
-      else
-        Style.LineHeight := LH;
+      // 150% -> 1.5x the font-size.
+      LH := StrToFloatDef(Temp.Replace('%', ''), 0);
+      if LH > 0 then Style.LineHeight := LH / 100;
+    end
+    else if Temp.EndsWith('rem') then
+    begin
+      // rem = root font-size (16px base, as ParseLength assumes).
+      LH := StrToFloatDef(Temp.Replace('rem', ''), 0);
+      if (LH > 0) and (Style.FontSize > 0) then
+        Style.LineHeight := (LH * 16) / Style.FontSize;
+    end
+    else
+    begin
+      // px -> divide out font-size; unitless or em -> already the multiple.
+      LH := StrToFloatDef(Temp.Replace('px', '').Replace('em', ''), 0);
+      if LH > 0 then
+      begin
+        if Temp.Contains('px') then
+          Style.LineHeight := LH / Style.FontSize
+        else
+          Style.LineHeight := LH;
+      end;
     end;
   end;
   if Decls.TryGetValue('margin', Temp) and not ShouldSkip(Temp) then
