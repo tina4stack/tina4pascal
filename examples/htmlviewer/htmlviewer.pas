@@ -10,7 +10,36 @@ program htmlviewer;
 
 uses
   SysUtils, StrUtils, Classes, Math, Generics.Collections,
-  Tina4HTMLDom, Tina4RenderBackend, Tina4ShellCocoa, Tina4HTMLLayout, Tina4Canvas2D;
+  Tina4HTMLDom, Tina4RenderBackend, Tina4ShellCocoa, Tina4HTMLLayout, Tina4Canvas2D,
+  Tina4Lottie;
+
+var
+  GLottie: TTina4Lottie = nil;
+
+{ Demo Lottie painter — loads the JSON at $TINA4_LOTTIE once and renders a frame
+  ($TINA4_LOTTIE_FRAME, default 0) for <canvas id="lottie">. }
+procedure LottiePainter(ctx: TTina4Canvas2D);
+var sl: TStringList; p: string;
+begin
+  if GLottie = nil then
+  begin
+    p := GetEnvironmentVariable('TINA4_LOTTIE');
+    if p = '' then Exit;
+    sl := TStringList.Create;
+    try
+      sl.LoadFromFile(p);
+      GLottie := TTina4Lottie.Create;
+      if not GLottie.LoadFromString(sl.Text) then FreeAndNil(GLottie);
+    finally sl.Free; end;
+  end;
+  if GLottie <> nil then
+  begin
+    // scale the native animation to fill this canvas box
+    if (GLottie.Width > 0) and (GLottie.Height > 0) then
+      ctx.Scale(ctx.Width / GLottie.Width, ctx.Height / GLottie.Height);
+    GLottie.Render(ctx, StrToFloatDef(GetEnvironmentVariable('TINA4_LOTTIE_FRAME'), 0));
+  end;
+end;
 
 { Demo <canvas> painter (pure Pascal, no JS) — registered for id="demo" so a page
   with <canvas id="demo"> draws this scene. }
@@ -808,6 +837,7 @@ begin
   Viewer.Parser.Parse(HTML);
   Viewer.Sheet := TCSSStyleSheet.Create;
   RegisterCanvasPainter('demo', @CanvasDemo);   // <canvas id="demo"> → the Pascal painter
+  RegisterCanvasPainter('lottie', @LottiePainter);
 
   { Linked stylesheets: remote URLs from the local cache dir (prefetched),
     relative hrefs from beside the HTML file. }

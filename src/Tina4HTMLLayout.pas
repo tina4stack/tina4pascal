@@ -12,7 +12,8 @@ interface
 
 uses
   SysUtils, Classes, Math, Generics.Collections,
-  Tina4HTMLDom, Tina4RenderBackend, Tina4Theme, Tina4QR, Tina4SVG, Tina4Canvas2D;
+  Tina4HTMLDom, Tina4RenderBackend, Tina4Theme, Tina4QR, Tina4SVG, Tina4Canvas2D,
+  Tina4Lottie;
 
 type
   TTextRun = record
@@ -964,7 +965,12 @@ begin
   if w < 0 then w := AvailW;
   if not SameText(St.BoxSizing, 'border-box') then w := w + edgeL + edgeR;
   Result.W := Min(w, AvailW);
-  LayoutChildren(Result, Tag, St, edgeL, edgeT, Result.W - edgeL - edgeR, usedH);
+  // <lottie>/<canvas> are painted by the core; their children are data/fallback
+  // (e.g. the inline Lottie JSON), never laid out as visible text.
+  if SameText(Tag.TagName, 'lottie') or SameText(Tag.TagName, 'canvas') then
+    usedH := 0
+  else
+    LayoutChildren(Result, Tag, St, edgeL, edgeT, Result.W - edgeL - edgeR, usedH);
   eh := ResolveSize(St.ExplicitHeight, 0);
   if eh >= 0 then
   begin
@@ -3099,6 +3105,9 @@ var
   bg, bd, fg: TTina4Color;
   cv2d: TTina4Canvas2D;
   cvPaint: TCanvasPaintProc;
+  lot: TTina4Lottie;
+  lotF: Double;
+  lotTotal, lotFrame: Single;
 begin
   st := Box.Style;
   // position: fixed — viewport-pinned: ignore the inherited scroll offset for
@@ -3292,6 +3301,34 @@ begin
         Canvas.ClearClip;
         Canvas.RestoreState;
       end;
+    end;
+  end;
+  // <lottie>: parse the inline JSON once, render the current frame (time-driven
+  // off the shared anim clock), scaled to fill the box. Core-rendered → every
+  // shell, and it animates while it's on screen.
+  if (not Hidden) and (Box.Tag <> nil) and SameText(Box.Tag.TagName, 'lottie')
+     and (Box.W > 0) and (Box.H > 0) then
+  begin
+    lot := GetLottieFor(Trim(InnerText(Box.Tag)));
+    if (lot <> nil) and (lot.Width > 0) and (lot.Height > 0) then
+    begin
+      lotTotal := lot.OutPoint - lot.InPoint;
+      if lotTotal <= 0 then lotTotal := 1;
+      lotF := AnimClock * lot.FrameRate;
+      lotFrame := lot.InPoint + (lotF - lotTotal * Floor(lotF / lotTotal));
+      Canvas.SaveState;
+      Canvas.SetClip(Box.X, y, Box.W, Box.H);
+      cv2d := TTina4Canvas2D.Create(Canvas, Box.W, Box.H, bg);
+      try
+        cv2d.Translate(Box.X, y);
+        cv2d.Scale(Box.W / lot.Width, Box.H / lot.Height);
+        try lot.Render(cv2d, lotFrame); except end;
+      finally
+        cv2d.Free;
+        Canvas.ClearClip;
+        Canvas.RestoreState;
+      end;
+      AnimMarkActive;   // keep repainting so it animates
     end;
   end;
   if (not Hidden) and ((st.BorderWidths.Top > 0) or (st.BorderWidths.Right > 0) or

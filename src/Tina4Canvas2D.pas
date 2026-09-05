@@ -123,7 +123,26 @@ procedure RegisterCanvasPainter(const Id: string; Proc: TCanvasPaintProc);
 function  FindCanvasPainter(const Id: string): TCanvasPaintProc;
 procedure ClearCanvasPainters;
 
+{ Shared animation clock for time-driven canvas content (e.g. <lottie>). The
+  paint marks itself active while animated content is on screen; the shell's tick
+  advances the clock and keeps repainting while active. }
+procedure AnimMarkActive;
+procedure AnimResetActive;
+function  AnimActive: Boolean;
+procedure AnimAdvance(dtSeconds: Double);
+function  AnimClock: Double;
+
 implementation
+
+var
+  GAnimClock: Double = 0;
+  GAnimActive: Boolean = False;
+
+procedure AnimMarkActive;  begin GAnimActive := True; end;
+procedure AnimResetActive; begin GAnimActive := False; end;
+function  AnimActive: Boolean; begin Result := GAnimActive; end;
+procedure AnimAdvance(dtSeconds: Double); begin GAnimClock := GAnimClock + dtSeconds; end;
+function  AnimClock: Double; begin Result := GAnimClock; end;
 
 { ---- painter registry ------------------------------------------------- }
 

@@ -123,7 +123,8 @@ implementation
 
 uses
   SysUtils, Classes, Math, DateUtils, Generics.Collections, fpjson, jsonparser,
-  Tina4HTMLDom, Tina4HTMLLayout, Tina4Events, Tina4Frond, Tina4Http, Tina4Services;
+  Tina4HTMLDom, Tina4HTMLLayout, Tina4Events, Tina4Frond, Tina4Http, Tina4Services,
+  Tina4Canvas2D;
 
 type
   TEmbedRec = record
@@ -1155,6 +1156,7 @@ begin
     LayoutDoc(cssW);
   ScrollFocusedIntoView;
   ClampScroll;
+  AnimResetActive;   // paint re-marks it if animated content (<lottie>) is on screen
   if GRoot <> nil then PaintBox(GCanvas, GRoot, GScrollY);
   PaintSelectOverlay(cssW, cssH);
   PaintDateOverlay(cssW, cssH);
@@ -1380,6 +1382,8 @@ const FRICTION = 0.95; STOPV = 0.3;
 var nx, ny: Single;
 begin
   Result := 0;
+  // time-driven canvas content (<lottie>) keeps the repaint loop alive
+  if AnimActive then begin AnimAdvance(1.0 / 60.0); Result := 1; end;
   if (GFlingVX = 0) and (GFlingVY = 0) then Exit;
   if GDragBox <> nil then
   begin

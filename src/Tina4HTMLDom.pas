@@ -2559,6 +2559,13 @@ begin
     if Result.ExplicitWidth < 0 then Result.ExplicitWidth := 300;
     if Result.ExplicitHeight < 0 then Result.ExplicitHeight := 150;
   end
+  else if TN = 'lottie' then
+  begin
+    // Tina4 custom: a core-rendered Lottie animation (inline JSON content)
+    Result.Display := 'inline-block';
+    if Result.ExplicitWidth < 0 then Result.ExplicitWidth := 240;
+    if Result.ExplicitHeight < 0 then Result.ExplicitHeight := 240;
+  end
   else if TN = 'dialog' then
   begin
     // UA: dialog:not([open]) { display:none }. An open dialog is a bordered,
