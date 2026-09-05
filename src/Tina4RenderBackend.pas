@@ -35,6 +35,10 @@ type
       around a run, reset to '' (system) after. Backends resolve the first
       family they can, incl. fonts registered via RegisterFont. }
     FontFamily: string;
+    { CSS font-weight (100..900) for the next DrawText/MeasureText. 0 or 400 =
+      normal. Set around a run, reset to 0 after. Backends combine it with the
+      tfsBold style flag (bold ⇒ at least 700). }
+    FontWeight: Integer;
     procedure FillRect(X, Y, W, H: Single; Color: TTina4Color); virtual; abstract;
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); virtual; abstract;
     { Rounded variants; default falls back to square corners so simple

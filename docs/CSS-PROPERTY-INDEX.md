@@ -67,7 +67,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 |---|---|---|
 | color | ✅ | hex/rgb/rgba/named/var() |
 | font-size | ✅ | px/pt/em/rem/% |
-| font-weight | 🟡 | binary bold/normal (≥500 = bold); no light/medium/semibold/black |
+| font-weight | ✅ | numeric 100–900 + keywords, threaded to the canvas; Cocoa steps the system font weight (iOS/Android binary bold for now) |
 | font-style | ✅ | italic/oblique |
 | font-family | ✅ | resolved on all 3 shell canvases (generic + named + @font-face); real fonts, not one system face |
 | font (shorthand), font-variant, font-stretch | ❌ | not parsed |

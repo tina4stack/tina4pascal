@@ -260,6 +260,7 @@ type
     FontFamily: string;
     FontSize: Single;
     Bold: Boolean;
+    FontWeight: Integer;   // 100..900 numeric weight (400 normal, 700 bold)
     Italic: Boolean;
     Color: TAlphaColor;
     BackgroundColor: TAlphaColor;
@@ -2018,6 +2019,7 @@ begin
   Result.FontFamily := 'Segoe UI';
   Result.FontSize := 14;
   Result.Bold := False;
+  Result.FontWeight := 400;
   Result.Italic := False;
   Result.Color := TAlphaColors.Black;
   Result.BackgroundColor := TAlphaColors.Null;
@@ -2306,6 +2308,7 @@ begin
   Result.FontFamily := ParentStyle.FontFamily;
   Result.FontSize := ParentStyle.FontSize;
   Result.Bold := ParentStyle.Bold;
+  Result.FontWeight := ParentStyle.FontWeight;
   Result.Italic := ParentStyle.Italic;
   Result.Color := ParentStyle.Color;
   Result.TextAlign := ParentStyle.TextAlign;
@@ -2793,8 +2796,19 @@ begin
       Style.FontSize := ParseLength(Temp, ParentStyle.FontSize);
   end;
   if Decls.TryGetValue('font-weight', Temp) and not ShouldSkip(Temp) then
-    Style.Bold := SameText(Temp, 'bold') or SameText(Temp, 'bolder') or
-      (StrToIntDef(Temp, 400) >= 500);
+  begin
+    Temp := Temp.Trim.ToLower;
+    if Temp = 'normal' then Style.FontWeight := 400
+    else if Temp = 'bold' then Style.FontWeight := 700
+    else if Temp = 'bolder' then Style.FontWeight := 700
+    else if Temp = 'lighter' then Style.FontWeight := 300
+    else if Temp = 'light' then Style.FontWeight := 300
+    else if Temp = 'medium' then Style.FontWeight := 500
+    else if Temp = 'semibold' then Style.FontWeight := 600
+    else if Temp = 'black' then Style.FontWeight := 900
+    else Style.FontWeight := StrToIntDef(Temp, 400);
+    Style.Bold := Style.FontWeight >= 600;   // legacy flag
+  end;
   if Decls.TryGetValue('font-style', Temp) and not ShouldSkip(Temp) then
     Style.Italic := SameText(Temp, 'italic') or SameText(Temp, 'oblique');
   if Decls.TryGetValue('text-decoration', Temp) and not ShouldSkip(Temp) then

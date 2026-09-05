@@ -310,12 +310,43 @@ begin
     NSMakeRect(X, Y, W, H), NSZeroRect, NSCompositeSourceOver, 1.0, True, nil);
 end;
 
+{ Map a CSS numeric weight (100..900) to an NSFontManager weight class
+  (1=thin … 5=regular … 9=bold … 15=black). }
+function CSSWeightToMgr(w: Integer): Integer;
+begin
+  if w <= 100 then Result := 2
+  else if w <= 200 then Result := 3
+  else if w <= 300 then Result := 4
+  else if w <= 400 then Result := 5
+  else if w <= 500 then Result := 6
+  else if w <= 600 then Result := 8
+  else if w <= 700 then Result := 9
+  else if w <= 800 then Result := 11
+  else Result := 13;
+end;
+
+{ Step a font toward a target NSFontManager weight class via convertWeight. }
+function ApplyWeight(f: NSFont; targetMgr: Integer): NSFont;
+var fm: NSFontManager; cur, guard: Integer;
+begin
+  Result := f;
+  fm := NSFontManager.sharedFontManager;
+  cur := 5;  // system regular ≈ class 5
+  guard := 0;
+  while (cur < targetMgr) and (guard < 10) do
+  begin Result := fm.convertWeight_ofFont(True, Result); Inc(cur); Inc(guard); end;
+  while (cur > targetMgr) and (guard < 20) do
+  begin Result := fm.convertWeight_ofFont(False, Result); Dec(cur); Inc(guard); end;
+end;
+
 function TCocoaCanvas.FontFor(FontSize: Single; Styles: TTina4FontStyles): NSFont;
 var
   fm: NSFontManager;
-  fam, cand: string; parts: TStringArray; k: Integer; f: NSFont;
+  fam, cand: string; parts: TStringArray; k, w: Integer; f: NSFont;
 begin
   Result := nil;
+  w := FontWeight; if w = 0 then w := 400;
+  if (tfsBold in Styles) and (w < 700) then w := 700;   // bold flag ⇒ ≥700
   // Resolve the CSS font-family stack: first candidate that names a real font
   // (a system generic, or a face installed / registered via @font-face) wins.
   fam := Trim(FontFamily);
@@ -345,11 +376,9 @@ begin
   // San Francisco system font — what browsers resolve -apple-system / system-ui
   // to on macOS, so metrics track Chrome closely.
   if Result = nil then
-  begin
-    if tfsBold in Styles then Result := NSFont.boldSystemFontOfSize(FontSize)
-    else Result := NSFont.systemFontOfSize(FontSize);
-  end
-  else if tfsBold in Styles then
+    // system font stepped to the numeric weight (San Francisco covers the range)
+    Result := ApplyWeight(NSFont.systemFontOfSize(FontSize), CSSWeightToMgr(w))
+  else if w >= 600 then
   begin
     fm := NSFontManager.sharedFontManager;
     Result := fm.convertFont_toHaveTrait(Result, NSBoldFontMask);

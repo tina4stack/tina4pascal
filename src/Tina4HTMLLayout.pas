@@ -23,6 +23,7 @@ type
     Color: TTina4Color;
     LetterSpacing: Single;
     FontFamily: string;
+    FontWeight: Integer;
   end;
 
   { Form controls are DRAWN by the renderer (no native widgets); their state
@@ -1561,6 +1562,7 @@ type
     Color: TTina4Color;
     LetterSpacing: Single;
     FontFamily: string;
+    FontWeight: Integer;
     SpaceBefore: Boolean;
     LineBreak: Boolean;    // <br>
   end;
@@ -1603,7 +1605,7 @@ var
     qi.Text := Q; qi.Box := nil; qi.W := qm.Width; qi.H := LineHeightOf(St);
     qi.Ascent := (qi.H - (qm.Ascent + qm.Descent)) / 2 + qm.Ascent;
     qi.FontSize := St.FontSize; qi.Styles := FontStylesOf(St); qi.Color := St.Color;
-    qi.LetterSpacing := St.LetterSpacing; qi.FontFamily := St.FontFamily;
+    qi.LetterSpacing := St.LetterSpacing; qi.FontFamily := St.FontFamily; qi.FontWeight := St.FontWeight;
     qi.SpaceBefore := SpaceBefore and (items.Count > 0); qi.LineBreak := False;
     items.Add(qi);
   end;
@@ -1616,9 +1618,11 @@ var
   begin
     FCanvas.LetterSpacing := St.LetterSpacing;
     FCanvas.FontFamily := St.FontFamily;
+    FCanvas.FontWeight := St.FontWeight;
     tm := FCanvas.MeasureText(W, St.FontSize, FontStylesOf(St));
     FCanvas.LetterSpacing := 0;
     FCanvas.FontFamily := '';
+    FCanvas.FontWeight := 0;
     ti.Text := W; ti.Box := nil; ti.W := tm.Width; ti.H := LineHeightOf(St);
     ti.Ascent := (ti.H - (tm.Ascent + tm.Descent)) / 2 + tm.Ascent;
     ti.FontAscent := tm.Ascent;
@@ -1627,7 +1631,7 @@ var
     else if SameText(St.VerticalAlign, 'super') then
     begin ti.Ascent := ti.Ascent + St.FontSize * 0.42; ti.FontAscent := ti.FontAscent + St.FontSize * 0.42; end;
     ti.FontSize := St.FontSize; ti.Styles := FontStylesOf(St); ti.Color := St.Color;
-    ti.LetterSpacing := St.LetterSpacing; ti.FontFamily := St.FontFamily;
+    ti.LetterSpacing := St.LetterSpacing; ti.FontFamily := St.FontFamily; ti.FontWeight := St.FontWeight;
     ti.SpaceBefore := SpaceBefore and (items.Count > 0);
     ti.LineBreak := False;
     items.Add(ti);
@@ -1780,6 +1784,7 @@ var
         words.DelimitedText := Trim(txt);
         FCanvas.LetterSpacing := St.LetterSpacing;
         FCanvas.FontFamily := St.FontFamily;   // measure in the run's font
+        FCanvas.FontWeight := St.FontWeight;
         for i := 0 to words.Count - 1 do
         begin
           if words[i] = '' then Continue;
@@ -1818,11 +1823,13 @@ var
           it.Color := St.Color;
           it.LetterSpacing := St.LetterSpacing;
           it.FontFamily := St.FontFamily;
+          it.FontWeight := St.FontWeight;
           it.SpaceBefore := (items.Count > 0) and ((i > 0) or leadingSpace);
           items.Add(it);
         end;
         FCanvas.LetterSpacing := 0;
         FCanvas.FontFamily := '';
+        FCanvas.FontWeight := 0;
       finally
         words.Free;
       end;
@@ -2064,6 +2071,7 @@ var
         run.Color := it.Color;
         run.LetterSpacing := it.LetterSpacing;
         run.FontFamily := it.FontFamily;
+        run.FontWeight := it.FontWeight;
         Box.Runs.Add(run);
       end;
       x := x + it.W;
@@ -3146,9 +3154,11 @@ begin
       fg := ScaleAlpha(r.Color, op);
       Canvas.LetterSpacing := r.LetterSpacing;
       Canvas.FontFamily := r.FontFamily;
+      Canvas.FontWeight := r.FontWeight;
       Canvas.DrawText(r.X - sx, r.Y - innerOfs, drawTxt, r.FontSize, r.Styles, fg);
       Canvas.LetterSpacing := 0;
       Canvas.FontFamily := '';
+      Canvas.FontWeight := 0;
     end;
   // z-index: paint children ordered by z-index (stable — ties keep tree order),
   // so positioned overlays layer correctly. Fast path when nothing sets it.
