@@ -992,7 +992,9 @@ var
   dir, jc, ai: string;
   sumMain, freeMain, curr, gap, crossOff, usedFixed, sumGrow, targetW: Single;
   lineW, lineH, lineFree, lx, lgap, lineY, totalH, flexGap: Single;
-  baseW, growF: array of Single;
+  baseW, growF, shrinkF: array of Single;
+  overflowMain, scaledShrink: Single;   // flex-shrink distribution (row, single-line)
+  crossFixed: array of Boolean;   // item has an explicit cross-axis size (skip stretch)
   sb: TStringBuilder;
   m: TTina4TextMetrics;
   i, k, lineEnd: Integer;
@@ -1045,11 +1047,14 @@ begin
       itemTags.Add(c);
     end;
 
+    SetLength(crossFixed, itemTags.Count);
     if isCol then
     begin
       for i := 0 to itemTags.Count - 1 do
       begin
         cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
+        // column cross axis = horizontal → an explicit width opts out of stretch
+        crossFixed[i] := ResolveSize(cs.ExplicitWidth, contentW) >= 0;
         cb := MakeReplacedBox(itemTags[i], cs, contentW);
         if (cb = nil) and IsFormControlTag(itemTags[i].TagName) then
           cb := MakeControl(itemTags[i], cs, contentW);
@@ -1059,20 +1064,24 @@ begin
     end
     else
     begin
-      // row: base widths + grow factors
+      // row: base widths + grow/shrink factors
       SetLength(baseW, itemTags.Count);
       SetLength(growF, itemTags.Count);
+      SetLength(shrinkF, itemTags.Count);
       usedFixed := 0; sumGrow := 0;
       for i := 0 to itemTags.Count - 1 do
       begin
         cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
+        // row cross axis = vertical → an explicit height opts out of stretch
+        crossFixed[i] := ResolveSize(cs.ExplicitHeight, 0) >= 0;
         growF[i] := cs.FlexGrow;
+        shrinkF[i] := cs.FlexShrink;
         ew := ResolveSize(cs.ExplicitWidth, contentW);
         // checkbox/radio have a fixed intrinsic size — CSS width doesn't grow
         // them, so don't let it reserve flex space either
         if ControlKindOf(itemTags[i]) in [ckCheckbox, ckRadio] then
         begin
-          baseW[i] := 18; growF[i] := 0;
+          baseW[i] := 18; growF[i] := 0; shrinkF[i] := 0;
         end
         else if ew >= 0 then
         begin
@@ -1097,6 +1106,16 @@ begin
         sumGrow := sumGrow + growF[i];
       end;
       freeMain := contentW - usedFixed - flexGap * Max(0, itemTags.Count - 1);
+      // flex-shrink: when items overflow a non-wrapping row, shrink each by
+      // its (flex-shrink × base) share of the overflow (CSS weighted shrink).
+      overflowMain := 0; scaledShrink := 0;
+      if (freeMain < 0) and
+         not ((LowerCase(st.FlexWrap) = 'wrap') or (LowerCase(st.FlexWrap) = 'wrap-reverse')) then
+      begin
+        overflowMain := -freeMain;
+        for i := 0 to itemTags.Count - 1 do
+          scaledShrink := scaledShrink + shrinkF[i] * baseW[i];
+      end;
       if freeMain < 0 then freeMain := 0;
       for i := 0 to itemTags.Count - 1 do
       begin
@@ -1105,7 +1124,12 @@ begin
         // grow only when NOT wrapping (wrapped items keep their base size)
         if (growF[i] > 0) and (sumGrow > 0) and
            not ((LowerCase(st.FlexWrap) = 'wrap') or (LowerCase(st.FlexWrap) = 'wrap-reverse')) then
-          targetW := targetW + freeMain * growF[i] / sumGrow;
+          targetW := targetW + freeMain * growF[i] / sumGrow
+        else if (overflowMain > 0) and (scaledShrink > 0) and (shrinkF[i] > 0) then
+        begin
+          targetW := baseW[i] - overflowMain * (shrinkF[i] * baseW[i]) / scaledShrink;
+          if targetW < 0 then targetW := 0;
+        end;
         cs.ExplicitWidth := targetW;    // force the resolved main size
         cs.BoxSizing := 'border-box';
         cb := MakeReplacedBox(itemTags[i], cs, contentW);
@@ -1166,6 +1190,8 @@ begin
         for k := i to lineEnd - 1 do
         begin
           cb := items[k];
+          if (ai = 'stretch') and not crossFixed[k] and (cb.H < lineH) then
+            cb.H := lineH;                          // stretch to the line's height
           if ai = 'center' then crossOff := (lineH - cb.H) / 2
           else if (ai = 'flex-end') or (ai = 'end') then crossOff := lineH - cb.H
           else crossOff := 0;
@@ -1207,6 +1233,8 @@ begin
       if isCol then
       begin
         // cross axis = horizontal
+        if (ai = 'stretch') and not crossFixed[i] and (cb.W < contentW) then
+          cb.W := contentW;                       // stretch: fill the cross axis
         if (ai = 'center') then crossOff := (contentW - cb.W) / 2
         else if (ai = 'flex-end') or (ai = 'end') then crossOff := contentW - cb.W
         else crossOff := 0;
@@ -1216,6 +1244,8 @@ begin
       else
       begin
         // cross axis = vertical
+        if (ai = 'stretch') and not crossFixed[i] and (cb.H < contentH) then
+          cb.H := contentH;                       // stretch: equal-height items
         if (ai = 'center') then crossOff := (contentH - cb.H) / 2
         else if (ai = 'flex-end') or (ai = 'end') then crossOff := contentH - cb.H
         else crossOff := 0;
