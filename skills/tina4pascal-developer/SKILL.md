@@ -180,6 +180,14 @@ while porting flow BOTH ways: report renderer bugs upstream to tina4delphi.
 
 ## FPC 3.2.2 landmines
 
+- **Cocoa `.count` is UNSIGNED** — `for i := 0 to arr.count - 1` underflows to
+  ~4e9 when count is 0 (then `objectAtIndex(0)` throws NSRangeException and
+  terminates the app). Guard `if arr.count = 0 then Exit` first. This once
+  crashed EVERY macOS `--snapshot` (a `<video>`-less page) and reddened the whole
+  compliance suite. **Corollary: run `tools/run-compliance.sh` after ANY change
+  to the core OR a shell — a shell regression silently breaks every snapshot.**
+- An NSException (Obj-C) is NOT caught by Pascal `try/except`; it propagates and
+  aborts. Validate inputs before Cocoa calls rather than relying on `except`.
 - **Never instantiate generics with objcclass types** (`TList<NSImage>`) —
   internal error 2009092303. Use Classes.TList/TStringList with casts.
 - Generics.Collections otherwise works and is API-compatible with Delphi's.
