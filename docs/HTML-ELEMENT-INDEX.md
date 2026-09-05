@@ -69,7 +69,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | qrcode | ✅ | **Tina4 custom** — pure-Pascal QR encoder |
 | camera | ✅ | **Tina4 custom** — "Take Photo" → shell capture |
 | picture, source, srcset | ✅ | responsive selection (media/type/density/width/sizes) |
-| video | ✅ iOS · 🟡 macOS | core lays out a sized poster box + exposes it via `tina4_embed_*`. **iOS** ✅ verified on device — `AVPlayerViewController` overlay (play/pause/scrub/skip/fullscreen/AirPlay). **macOS** 🟡 wired + compiles — Cocoa shell overlays an `AVPlayerView` (AVKit) with native controls; visual verify pending a GUI-session run. **Android** TODO |
+| video | ✅ iOS · 🟡 macOS · 🟡 Android | core lays out a sized poster box + exposes it via `tina4_embed_*` (all shells). **iOS** ✅ verified on device — `AVPlayerViewController` (play/pause/scrub/skip/fullscreen/AirPlay). **macOS** 🟡 wired + compiles — Cocoa `AVPlayerView` (AVKit) with native controls; verify pending a GUI run. **Android** 🟡 wired + native `.so` compiles — `VideoView` + `MediaController` overlaid in a host `FrameLayout`; APK/emulator verify pending the Android SDK toolchain |
 | audio | ❌ | outstanding — shell-owned native audio player over a core placeholder box |
 | canvas | ❌ | outstanding — needs a Tina4 native draw hook (no JS engine) |
 | iframe | ⬜ | **intentionally not supported** — Tina4 composes pages with `<include src>` (native HTML splice into the same render tree), not a foreign web view |

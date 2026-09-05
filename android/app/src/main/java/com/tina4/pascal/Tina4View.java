@@ -2,14 +2,24 @@ package com.tina4.pascal;
 
 import android.content.Context;
 import android.graphics.Canvas;
+import android.media.MediaPlayer;
+import android.net.Uri;
 import android.text.InputType;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.FrameLayout;
+import android.widget.MediaController;
+import android.widget.VideoView;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
 
 /**
  * The whole UI: a single custom View whose every pixel is drawn by the native
@@ -33,6 +43,9 @@ public class Tina4View extends View implements Runnable {
     private native int nativeFocusNext();        // move to next field; new kind (0=none)
     private native void nativeSetFile(String name);   // picked filename → the <input type=file>
     private native void nativeSetPhoto(String path);  // captured image path → <img id="shot">
+    private native int    nativeEmbedCount();          // laid-out <video> boxes
+    private native float[] nativeEmbedRect(int index); // [x,y,w,h] in CSS px (scroll applied)
+    private native String  nativeEmbedSrc(int index);  // the video source URL
 
     /** Called by MainActivity once the system file picker returns a name. */
     void onFilePicked(String name) { nativeSetFile(name); invalidate(); }
@@ -104,6 +117,79 @@ public class Tina4View extends View implements Runnable {
         // autofocus: the engine parses on the first frame, so poll here (it
         // returns 1 exactly once, after an input[autofocus] has been focused)
         if (nativeWantsKeyboard() != 0) showKeyboard();
+        // overlay/position native <video> players — off the draw pass (mutating
+        // the view hierarchy during onDraw is unsafe), coalesced to one per frame
+        removeCallbacks(videoSync);
+        post(videoSync);
+    }
+
+    // --- native <video> overlays --------------------------------------------
+    // Each <video> the engine lays out gets a sibling VideoView (with a
+    // MediaController for play/pause/scrub), positioned over the poster box in
+    // the parent FrameLayout and reused across frames; removed when the box goes.
+    private final Map<String, VideoView> videoViews = new HashMap<>();
+    private final Runnable videoSync = new VideoSync(this);
+
+    private static final class VideoSync implements Runnable {
+        private final Tina4View v;
+        VideoSync(Tina4View v) { this.v = v; }
+        public void run() { v.syncVideos(); }
+    }
+
+    // muted, looping autoplay once the media is prepared
+    private static final class LoopPrepared implements MediaPlayer.OnPreparedListener {
+        private final VideoView v;
+        LoopPrepared(VideoView v) { this.v = v; }
+        public void onPrepared(MediaPlayer mp) {
+            mp.setLooping(true);
+            mp.setVolume(0f, 0f);
+            v.start();
+        }
+    }
+
+    private void syncVideos() {
+        if (!(getParent() instanceof ViewGroup)) return;
+        ViewGroup parent = (ViewGroup) getParent();
+        int n = nativeEmbedCount();
+        HashSet<String> live = new HashSet<>();
+        for (int i = 0; i < n; i++) {
+            String src = nativeEmbedSrc(i);
+            float[] r = nativeEmbedRect(i);
+            if (src == null || src.isEmpty() || r == null || r.length < 4
+                || r[2] <= 0 || r[3] <= 0) continue;
+            live.add(src);
+            int x = Math.round(r[0] * density), y = Math.round(r[1] * density);
+            int w = Math.round(r[2] * density), h = Math.round(r[3] * density);
+            VideoView vv = videoViews.get(src);
+            if (vv == null) {
+                vv = new VideoView(getContext());
+                vv.setVideoURI(Uri.parse(src));
+                MediaController mc = new MediaController(getContext());
+                mc.setAnchorView(vv);
+                vv.setMediaController(mc);
+                vv.setOnPreparedListener(new LoopPrepared(vv));
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, h);
+                lp.leftMargin = x; lp.topMargin = y;
+                parent.addView(vv, lp);
+                videoViews.put(src, vv);
+                vv.start();
+            } else {
+                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) vv.getLayoutParams();
+                lp.width = w; lp.height = h; lp.leftMargin = x; lp.topMargin = y;
+                vv.setLayoutParams(lp);
+            }
+        }
+        // tear down players whose <video> is no longer laid out
+        Iterator<Map.Entry<String, VideoView>> it = videoViews.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<String, VideoView> e = it.next();
+            if (!live.contains(e.getKey())) {
+                VideoView vv = e.getValue();
+                vv.stopPlayback();
+                parent.removeView(vv);
+                it.remove();
+            }
+        }
     }
 
     @Override

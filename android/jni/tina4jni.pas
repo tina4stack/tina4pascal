@@ -127,6 +127,33 @@ begin
   TinaSetPhoto(JToStr(Env, Path));
 end;
 
+{ ---- native media embeds (<video>) ----------------------------------- }
+
+function Java_com_tina4_pascal_Tina4View_nativeEmbedCount(Env: PJNIEnv;
+  This: jobject): jint; cdecl;
+begin
+  Result := TinaEmbedCount;
+end;
+
+{ [x, y, w, h] screen-point rect for the given embed (scroll applied). }
+function Java_com_tina4_pascal_Tina4View_nativeEmbedRect(Env: PJNIEnv;
+  This: jobject; Index: jint): jfloatArray; cdecl;
+var x, y, w, h: Single; f: array[0..3] of jfloat;
+begin
+  TinaEmbedRect(Index, x, y, w, h);
+  f[0] := x; f[1] := y; f[2] := w; f[3] := h;
+  Result := Env^.NewFloatArray(Env, 4);
+  if Result <> nil then Env^.SetFloatArrayRegion(Env, Result, 0, 4, @f[0]);
+end;
+
+function Java_com_tina4_pascal_Tina4View_nativeEmbedSrc(Env: PJNIEnv;
+  This: jobject; Index: jint): jstring; cdecl;
+var s: AnsiString;
+begin
+  s := TinaEmbedSrc(Index);
+  Result := Env^.NewStringUTF(Env, PAnsiChar(s));
+end;
+
 exports
   Java_com_tina4_pascal_Tina4View_nativeSetHtml,
   Java_com_tina4_pascal_Tina4View_nativePaint,
@@ -140,6 +167,9 @@ exports
   Java_com_tina4_pascal_Tina4View_nativeFocusNext,
   Java_com_tina4_pascal_Tina4View_nativeSetFile,
   Java_com_tina4_pascal_Tina4View_nativeSetPhoto,
+  Java_com_tina4_pascal_Tina4View_nativeEmbedCount,
+  Java_com_tina4_pascal_Tina4View_nativeEmbedRect,
+  Java_com_tina4_pascal_Tina4View_nativeEmbedSrc,
   Java_com_tina4_pascal_Http_nativeHttpResult,
   Java_com_tina4_pascal_ImageLoader_nativeImageReady,
   JNI_OnLoad;

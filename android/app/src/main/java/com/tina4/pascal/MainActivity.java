@@ -8,6 +8,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
+import android.widget.FrameLayout;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import java.text.SimpleDateFormat;
@@ -38,7 +39,12 @@ public class MainActivity extends Activity {
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
         }
         view = new Tina4View(this);
-        setContentView(view);
+        // Host the engine view in a FrameLayout so native <video> players can be
+        // overlaid as sibling views positioned over their poster boxes.
+        FrameLayout root = new FrameLayout(this);
+        root.addView(view, new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        setContentView(root);
         ImageLoader.init(getCacheDir(), view);   // async remote <img> cache + repaint
         // "@demo" = built-in interactive demo; an asset name renders that page.
         view.setHtml(loadAsset("http_demo.html"));
