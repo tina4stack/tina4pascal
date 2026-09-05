@@ -2404,7 +2404,9 @@ var
   m: TTina4TextMetrics;
   didClip: Boolean;
   op, tx, ty, sx, rcx, rcy, ox: Single;
-  shifted, hasRS: Boolean;
+  shifted, hasRS, ellip, ellipDone: Boolean;
+  rightEdge, avail: Single;
+  drawTxt: string;
   bg, bd, fg: TTina4Color;
 begin
   st := Box.Style;
@@ -2577,14 +2579,35 @@ begin
     innerOfs := OffsetY + Box.ScrollTop;
   end;
 
+  // text-overflow: ellipsis — a single non-wrapping line (CSS requires
+  // white-space:nowrap). Words are separate runs, so we truncate the run that
+  // crosses the content edge, append '…', and drop every run after it.
+  ellip := SameText(st.TextOverflow, 'ellipsis') and SameText(st.WhiteSpace, 'nowrap');
+  rightEdge := Box.X + Box.W - st.BorderWidths.Right - st.Padding.Right;
+  ellipDone := False;
   if not Hidden then
     for i := 0 to Box.Runs.Count - 1 do
     begin
       r := Box.Runs[i];
+      drawTxt := r.Text;
+      if ellip then
+      begin
+        if ellipDone then Continue;                 // line already ended with '…'
+        avail := rightEdge - (r.X - sx);
+        if avail <= 0 then Continue;                // run starts past the edge
+        if Canvas.MeasureText(drawTxt, r.FontSize, r.Styles).Width > avail then
+        begin
+          while (drawTxt <> '') and
+                (Canvas.MeasureText(drawTxt + '…', r.FontSize, r.Styles).Width > avail) do
+            Delete(drawTxt, Length(drawTxt), 1);
+          drawTxt := drawTxt + '…';
+          ellipDone := True;
+        end;
+      end;
       fg := ScaleAlpha(r.Color, op);
       Canvas.LetterSpacing := r.LetterSpacing;
       Canvas.FontFamily := r.FontFamily;
-      Canvas.DrawText(r.X - sx, r.Y - innerOfs, r.Text, r.FontSize, r.Styles, fg);
+      Canvas.DrawText(r.X - sx, r.Y - innerOfs, drawTxt, r.FontSize, r.Styles, fg);
       Canvas.LetterSpacing := 0;
       Canvas.FontFamily := '';
     end;
