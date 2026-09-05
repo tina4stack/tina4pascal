@@ -102,7 +102,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | Element | Status | Note |
 |---|---|---|
 | form | ✅ | block; submit collects name=value |
-| input[text/email/password/search/number] | 🟡 | all accept text + focus/caret; password masks (•). Type-specific affordances (numeric/email soft-keyboard, number steppers) pending a keyboard-type shell contract — steppers are a desktop convention; touch uses a typed keyboard |
+| input[text/email/password/search/number] | ✅ | all accept text + focus/caret; password masks (•). `number` paints a right-edge ▴/▾ spinner; clicking it steps `value` by `step` (default 1), clamped to min/max, firing `change`. (numeric/email soft-keyboard still pending a keyboard-type shell contract) |
 | input[checkbox] | ✅ | draw + toggle, `:checked` stylable |
 | input[radio] | ✅ | draw + group exclusivity by name |
 | input[submit/button] | ✅ | drawn button + press feedback |
@@ -114,7 +114,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | optgroup | ✅ | label row + indented options in the dropdown; nested options selectable and resolved when closed |
 | button | ✅ | drawn; submit |
 | label | ✅ | `for=`/wrapping/sibling all wired to focus+toggle |
-| fieldset, legend | 🟡 | border + bold legend (not notched) |
+| fieldset, legend | ✅ | bordered group; the legend straddles the top border and notches it (masks the segment behind its background) |
 | datalist | ✅ | inert (display:none UA); options never painted |
 | output | 🟡 | renders its text; live form-binding needs a script/eval model (deferred) |
 | progress, meter | ✅ | drawn bars (progress accent, meter green) from value/max |
@@ -147,9 +147,9 @@ wishlist.
 **Core-renderable, still open (in priority order):**
 1. **external `<link href>` CSS fetch** — theme/look distribution from a URL
    (reuses the `<img>` HTTP+cache path). `link` row is 🟡 for this reason.
-2. **Forms polish** — `input[number]` stepper buttons; `<output>` form-binding;
-   `<textarea>` mid-text editing (append/backspace-at-end today);
-   `<fieldset>`/`<legend>` notched border.
+2. **Forms polish** — done: `input[number]` steppers, `<fieldset>`/`<legend>`
+   notch. Remaining: `<output>` form-binding (needs the scripting model);
+   `<textarea>` mid-text editing (append/backspace-at-end today).
 3. **`<dialog>` modal** — backdrop + centering (`showModal`); needs the scripting
    model. Non-modal open/closed already works.
 

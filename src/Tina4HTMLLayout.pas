@@ -3573,6 +3573,18 @@ begin
     if Box.ControlKind = ckSelect then
       Canvas.DrawText(Box.X + Box.W - 18, y + st.BorderWidths.Top + st.Padding.Top,
         '▾', st.FontSize, [], TC_MUTED);
+    // <input type=number> spinner: a thin divider + stacked ▴/▾ on the right
+    // edge; the viewer routes clicks in this strip to step the value up/down.
+    if (Box.ControlKind = ckTextInput) and
+       SameText(Box.Tag.GetAttribute('type'), 'number') then
+    begin
+      Canvas.FillRect(Box.X + Box.W - 20, y + st.BorderWidths.Top, 1,
+        Box.H - st.BorderWidths.Vert, TC_BORDER);
+      Canvas.DrawText(Box.X + Box.W - 15, y + 2,
+        '▴', st.FontSize * 0.85, [], TC_MUTED);
+      Canvas.DrawText(Box.X + Box.W - 15, y + Box.H / 2,
+        '▾', st.FontSize * 0.85, [], TC_MUTED);
+    end;
   end;
   finally
     if hasRS then Canvas.RestoreState;

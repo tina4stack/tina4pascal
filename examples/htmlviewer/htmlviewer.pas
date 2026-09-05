@@ -534,7 +534,7 @@ var
   typ, ot, ov, v, picked: string;
   radios: TList<THTMLTag>;
   cb: TLayoutBox;
-  tx, mw: Single;
+  tx, mw, stepv, curv: Single;
   ci, ni: Integer;
   wasDragging: Boolean;
 begin
@@ -628,6 +628,29 @@ begin
     begin
       SubmitForm(t);
       Exit;
+    end;
+    // <input type=number>: a click in the right-edge spinner strip steps the
+    // value by `step` (default 1), clamped to min/max — no keyboard needed.
+    if SameText(t.TagName, 'input') and SameText(typ, 'number') then
+    begin
+      cb := FindBoxForTag(RootBox, t);
+      if (cb <> nil) and (X >= cb.X + cb.W - 20) then
+      begin
+        stepv := StrToFloatDef(t.GetAttribute('step'), 1);
+        if stepv <= 0 then stepv := 1;
+        curv := StrToFloatDef(t.GetAttribute('value'), 0);
+        if Y < (cb.Y - ScrollY) + cb.H / 2 then curv := curv + stepv
+        else curv := curv - stepv;
+        if t.HasAttribute('min') then
+          curv := Max(curv, StrToFloatDef(t.GetAttribute('min'), curv));
+        if t.HasAttribute('max') then
+          curv := Min(curv, StrToFloatDef(t.GetAttribute('max'), curv));
+        if Frac(curv) = 0 then t.Attributes.AddOrSetValue('value', IntToStr(Round(curv)))
+        else t.Attributes.AddOrSetValue('value', FloatToStr(curv));
+        Event('change ' + t.GetAttribute('name', 'number') + '=' + t.GetAttribute('value'));
+        Rebuild;
+        Exit;
+      end;
     end;
     if SameText(t.TagName, 'input') or SameText(t.TagName, 'textarea') then
     begin
