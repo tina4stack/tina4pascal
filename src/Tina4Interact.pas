@@ -83,7 +83,7 @@ implementation
 
 uses
   SysUtils, Classes, Math, fpjson, jsonparser,
-  Tina4HTMLDom, Tina4HTMLLayout, Tina4Events, Tina4Frond;
+  Tina4HTMLDom, Tina4HTMLLayout, Tina4Events, Tina4Frond, Tina4Http;
 
 var
   GFrond: TFrond = nil;         // the template engine (created on first use)
@@ -312,12 +312,37 @@ procedure ActInc(const Args: string);   begin Inc(GCount); SyncCount; end;
 procedure ActDec(const Args: string);   begin Dec(GCount); SyncCount; end;
 procedure ActReset(const Args: string); begin GCount := 0; SyncCount; end;
 
+{ set the text of an element by id and re-lay-out }
+procedure SetById(const Id, Text: string);
+var el: THTMLTag;
+begin
+  if GParser = nil then Exit;
+  el := FindById(GParser.Root, Id);
+  if el <> nil then begin SetElemText(el, Text); GLayoutDirty := True; end;
+end;
+
+{ HTTP demo: fetch a URL (arg) and drop the body into #result. The callback runs
+  on the main thread via HttpPump, so touching the DOM is safe. }
+procedure OnHttpResult(const R: TTina4HttpResponse);
+begin
+  if R.Ok then SetById('result', Copy(R.Body, 1, 4000))
+  else if R.Error <> '' then SetById('result', 'Network error: ' + R.Error)
+  else SetById('result', 'HTTP ' + IntToStr(R.Status) + #10 + Copy(R.Body, 1, 4000));
+end;
+
+procedure ActHttpGet(const Args: string);
+begin
+  SetById('result', 'Loading ' + Args + ' …');
+  HttpGet(Trim(Args), @OnHttpResult);
+end;
+
 procedure EnsureActions;
 begin
   if GActionsReady then Exit;
   RegisterAction('Counter:Inc', @ActInc);
   RegisterAction('Counter:Dec', @ActDec);
   RegisterAction('Counter:Reset', @ActReset);
+  RegisterAction('Http:Get', @ActHttpGet);
   GActionsReady := True;
 end;
 

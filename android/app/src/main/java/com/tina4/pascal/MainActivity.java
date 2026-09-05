@@ -40,7 +40,7 @@ public class MainActivity extends Activity {
         view = new Tina4View(this);
         setContentView(view);
         // "@demo" = built-in interactive demo; an asset name renders that page.
-        view.setHtml(loadAsset("controls.html"));
+        view.setHtml(loadAsset("http_demo.html"));
     }
 
     /** Called from the view when an <input type=file> is tapped. */
