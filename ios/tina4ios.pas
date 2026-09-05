@@ -55,6 +55,14 @@ begin
   Result := TinaTick;
 end;
 
+{ In-flight HTTP requests. The view runs a light redraw loop while this is > 0,
+  so an async response (delivered on a background thread) gets pumped onto the
+  main thread and painted without needing another touch. }
+function tina4_http_pending: cint; cdecl;
+begin
+  Result := HttpPending;
+end;
+
 function tina4_wants_keyboard: cint; cdecl;
 begin
   Result := TinaWantsKeyboard;
@@ -96,9 +104,9 @@ begin
 end;
 
 exports
-  tina4_set_html, tina4_frame, tina4_touch, tina4_tick, tina4_wants_keyboard,
-  tina4_blur, tina4_blink_caret, tina4_key, tina4_focus_kind, tina4_focus_next,
-  tina4_set_file, tina4_set_photo;
+  tina4_set_html, tina4_frame, tina4_touch, tina4_tick, tina4_http_pending,
+  tina4_wants_keyboard, tina4_blur, tina4_blink_caret, tina4_key,
+  tina4_focus_kind, tina4_focus_next, tina4_set_file, tina4_set_photo;
 
 begin
 end.

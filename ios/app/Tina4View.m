@@ -7,6 +7,7 @@
                          UIDocumentPickerDelegate>
 @property (strong, nonatomic) CADisplayLink *fling;
 @property (strong, nonatomic) NSTimer *caret;
+@property (strong, nonatomic) CADisplayLink *pump;   // redraws while HTTP is in flight
 @end
 
 @implementation Tina4View
@@ -59,6 +60,28 @@
     // deterministic keyboard: up only while a text field is focused
     if (r != TINA_SHOW_KBD && tina4_focus_kind() == 0) [self hideKeyboard];
     [self setNeedsDisplay];
+    // On touch-DOWN paint synchronously so the :active press colour actually
+    // shows: a quick tap's down+up would otherwise coalesce into one frame and
+    // the pressed state would never render.
+    if (action == 0) [self.layer displayIfNeeded];
+    // a tap may have kicked off an HTTP request (onclick → Http:Get); keep
+    // redrawing until the async reply is pumped in, so it isn't "stuck" on
+    // Loading until the next touch.
+    if (tina4_http_pending() > 0) [self startPump];
+}
+
+// ---- HTTP pump: light redraw loop while a request is in flight ---------
+- (void)startPump {
+    if (self.pump) return;
+    self.pump = [CADisplayLink displayLinkWithTarget:self selector:@selector(pumpTick)];
+    if (@available(iOS 15.0, *)) self.pump.preferredFrameRateRange = CAFrameRateRangeMake(8, 15, 12);
+    else self.pump.preferredFramesPerSecond = 12;
+    [self.pump addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+}
+- (void)stopPump { [self.pump invalidate]; self.pump = nil; }
+- (void)pumpTick {
+    [self setNeedsDisplay];               // drawRect drains HttpPump + repaints
+    if (tina4_http_pending() == 0) [self stopPump];
 }
 
 - (void)touchesBegan:(NSSet<UITouch *> *)t withEvent:(UIEvent *)e { [self stopFling]; [self send:0 touches:t]; }

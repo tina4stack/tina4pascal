@@ -22,6 +22,7 @@ begin
   r.Id := Req.Id; r.Url := Req.Url; r.ContentType := 'text/plain'; r.Error := '';
   if Pos('/fail', Req.Url) > 0 then begin r.Status := 500; r.Body := 'boom'; end
   else if Pos('/echo', Req.Url) > 0 then begin r.Status := 200; r.Body := Req.Method + ':' + Req.Body; end
+  else if Pos('/headers', Req.Url) > 0 then begin r.Status := 200; r.Body := Req.Headers; end
   else begin r.Status := 200; r.Body := 'hello'; end;
   HttpDeliver(r);
 end;
@@ -74,6 +75,29 @@ begin
   HttpCancel(id);
   Check(HttpPump = 0, 'cancelled callback not fired');
   Check((Fired = 0) and (HttpPending = 0), 'cancel leaves nothing pending');
+
+  { headers: a per-request header reaches the backend }
+  SetHttpBackend(TMockBackend.Create);
+  HttpClearHeaders;
+  Fired := 0;
+  HttpGetEx('http://x/headers', 'Authorization: Bearer PER-REQ', @OnResp);
+  HttpPump;
+  Check(Pos('Authorization: Bearer PER-REQ', Last.Body) > 0, 'per-request header sent');
+
+  { headers: a global default is applied to every request }
+  HttpSetHeader('Authorization', 'Bearer DEFAULT');
+  Fired := 0;
+  HttpGet('http://x/headers', @OnResp);
+  HttpPump;
+  Check(Pos('Authorization: Bearer DEFAULT', Last.Body) > 0, 'default header applied');
+
+  { headers: a per-request header OVERRIDES the default of the same name }
+  Fired := 0;
+  HttpGetEx('http://x/headers', 'Authorization: Bearer OVERRIDE', @OnResp);
+  HttpPump;
+  Check((Pos('Bearer OVERRIDE', Last.Body) > 0) and (Pos('DEFAULT', Last.Body) = 0),
+    'per-request header overrides default');
+  HttpClearHeaders;
 
   { no backend → an error response is delivered }
   SetHttpBackend(nil);

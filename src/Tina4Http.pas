@@ -53,6 +53,7 @@ type
     Url: string;
     Body: string;
     ContentType: string;
+    Headers: string;        // extra request headers, one "Name: Value" per line
   end;
 
   TTina4HttpBackend = class
@@ -72,6 +73,16 @@ function HttpGet(const Url: string; CB: TTina4HttpMethod): Integer; overload;
 function HttpPost(const Url, Body, ContentType: string; CB: TTina4HttpProc): Integer; overload;
 function HttpPost(const Url, Body, ContentType: string; CB: TTina4HttpMethod): Integer; overload;
 function HttpRequest(const Method, Url, Body, ContentType: string; CB: TTina4HttpMethod): Integer;
+
+{ GET with extra per-request headers ("Name: Value" per line) merged over the
+  defaults — for authenticated fetches (e.g. an <include> to a protected URL). }
+function HttpGetEx(const Url, Headers: string; CB: TTina4HttpProc): Integer;
+
+{ Default headers sent on EVERY request (auth once, applies everywhere): set a
+  bearer token after login and every Http:Get / <include> / API call carries it.
+  A per-request header of the same name overrides the default. }
+procedure HttpSetHeader(const Name, Value: string);
+procedure HttpClearHeaders;
 
 { Backend → core: hand back a completed response (thread-safe, any thread). }
 procedure HttpDeliver(const Resp: TTina4HttpResponse);
@@ -99,6 +110,7 @@ var
   GPending: TDictionary<Integer, TPending> = nil;    // main thread only
   GQueue: TList<TTina4HttpResponse> = nil;           // guarded by GLock
   GLock: TCriticalSection = nil;
+  GDefaultHeaders: TStringList = nil;                // Name=Value, main thread
 
 function TTina4HttpResponse.Ok: Boolean;
 begin
@@ -123,8 +135,57 @@ begin
   Result := GBackend <> nil;
 end;
 
+procedure HttpSetHeader(const Name, Value: string);
+begin
+  if GDefaultHeaders = nil then GDefaultHeaders := TStringList.Create;
+  GDefaultHeaders.Values[Name] := Value;
+end;
+
+procedure HttpClearHeaders;
+begin
+  if GDefaultHeaders <> nil then GDefaultHeaders.Clear;
+end;
+
+{ Lower-cased header name from a "Name: Value" line, for override matching. }
+function HeaderNameOf(const Line: string): string;
+var p: Integer;
+begin
+  p := Pos(':', Line);
+  if p > 0 then Result := LowerCase(Trim(Copy(Line, 1, p - 1)))
+  else Result := LowerCase(Trim(Line));
+end;
+
+{ Merge the default headers under the per-request Extra ("Name: Value" lines);
+  Extra wins on a name clash. Result is the newline-joined header block. }
+function MergeHeaders(const Extra: string): string;
+var res, names: TStringList; i: Integer; nm: string;
+begin
+  res := TStringList.Create;
+  names := TStringList.Create;
+  try
+    names.CaseSensitive := False;
+    // per-request headers first (they take precedence)
+    res.Text := Trim(Extra);
+    for i := 0 to res.Count - 1 do
+      if Trim(res[i]) <> '' then names.Add(HeaderNameOf(res[i]));
+    // then any default not already overridden
+    if GDefaultHeaders <> nil then
+      for i := 0 to GDefaultHeaders.Count - 1 do
+        if Trim(GDefaultHeaders.Names[i]) <> '' then
+        begin
+          nm := LowerCase(GDefaultHeaders.Names[i]);
+          if names.IndexOf(nm) < 0 then
+            res.Add(GDefaultHeaders.Names[i] + ': ' + GDefaultHeaders.ValueFromIndex[i]);
+        end;
+    Result := Trim(res.Text);
+  finally
+    names.Free; res.Free;
+  end;
+end;
+
 { start a request with the pending callback recorded; dispatch or fail fast }
-function Start(const Method, Url, Body, ContentType: string; const P: TPending): Integer;
+function StartEx(const Method, Url, Body, ContentType, ExtraHeaders: string;
+  const P: TPending): Integer;
 var req: TTina4HttpRequest; r: TTina4HttpResponse;
 begin
   Ensure;
@@ -140,7 +201,13 @@ begin
   end;
   req.Id := Result; req.Method := Method; req.Url := Url;
   req.Body := Body; req.ContentType := ContentType;
+  req.Headers := MergeHeaders(ExtraHeaders);
   GBackend.Send(req);
+end;
+
+function Start(const Method, Url, Body, ContentType: string; const P: TPending): Integer;
+begin
+  Result := StartEx(Method, Url, Body, ContentType, '', P);
 end;
 
 function HttpGet(const Url: string; CB: TTina4HttpProc): Integer;
@@ -148,6 +215,13 @@ var p: TPending;
 begin
   p.CBProc := CB; p.CBMethod := nil;
   Result := Start('GET', Url, '', '', p);
+end;
+
+function HttpGetEx(const Url, Headers: string; CB: TTina4HttpProc): Integer;
+var p: TPending;
+begin
+  p.CBProc := CB; p.CBMethod := nil;
+  Result := StartEx('GET', Url, '', '', Headers, p);
 end;
 
 function HttpGet(const Url: string; CB: TTina4HttpMethod): Integer;
@@ -226,4 +300,5 @@ finalization
   GQueue.Free;
   GLock.Free;
   GBackend.Free;
+  GDefaultHeaders.Free;
 end.

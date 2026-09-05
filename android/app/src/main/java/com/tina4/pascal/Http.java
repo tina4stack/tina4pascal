@@ -1,5 +1,8 @@
 package com.tina4.pascal;
 
+import android.os.Handler;
+import android.os.Looper;
+
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -18,9 +21,18 @@ public class Http {
     // implemented in libtina4.so (Java_com_tina4_pascal_Http_nativeHttpResult)
     static native void nativeHttpResult(int id, int status, String body, String error);
 
+    // The Pascal engine is single-threaded; deliver results on the main thread.
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    private static void deliver(final int id, final int status,
+                                final String body, final String error) {
+        MAIN.post(new Runnable() {
+            public void run() { nativeHttpResult(id, status, body, error); }
+        });
+    }
+
     /** Called from native Tina4HttpAndroid.Send. */
     public static void send(final int id, final String method, final String url,
-                            final String body, final String ctype) {
+                            final String body, final String ctype, final String headers) {
         new Thread(new Runnable() {
             public void run() {
                 int status = 0;
@@ -33,6 +45,16 @@ public class Http {
                     c.setReadTimeout(20000);
                     c.setInstanceFollowRedirects(true);
                     c.setRequestProperty("User-Agent", "Tina4Pascal");
+                    // extra headers: one "Name: Value" per line (auth etc.)
+                    if (headers != null && !headers.isEmpty()) {
+                        for (String line : headers.split("\n")) {
+                            int colon = line.indexOf(':');
+                            if (colon < 0) continue;
+                            String name = line.substring(0, colon).trim();
+                            String val  = line.substring(colon + 1).trim();
+                            if (!name.isEmpty()) c.setRequestProperty(name, val);
+                        }
+                    }
                     if (body != null && !body.isEmpty()) {
                         c.setDoOutput(true);
                         if (ctype != null && !ctype.isEmpty())
@@ -50,7 +72,7 @@ public class Http {
                 } finally {
                     if (c != null) c.disconnect();
                 }
-                nativeHttpResult(id, status, resp, err);
+                deliver(id, status, resp, err);   // hop to the main thread
             }
         }).start();
     }

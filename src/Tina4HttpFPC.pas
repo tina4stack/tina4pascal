@@ -42,6 +42,27 @@ begin
   inherited Create(False);
 end;
 
+{ Apply a "Name: Value" per-line header block onto the fphttpclient. }
+procedure ApplyHeaders(client: TFPHTTPClient; const Block: string);
+var lines: TStringList; i, p: Integer; nm, vl: string;
+begin
+  if Trim(Block) = '' then Exit;
+  lines := TStringList.Create;
+  try
+    lines.Text := Block;
+    for i := 0 to lines.Count - 1 do
+    begin
+      p := Pos(':', lines[i]);
+      if p <= 0 then Continue;
+      nm := Trim(Copy(lines[i], 1, p - 1));
+      vl := Trim(Copy(lines[i], p + 1, MaxInt));
+      if nm <> '' then client.AddHeader(nm, vl);
+    end;
+  finally
+    lines.Free;
+  end;
+end;
+
 procedure THttpThread.Execute;
 var
   client: TFPHTTPClient;
@@ -56,6 +77,7 @@ begin
   try
     client.AllowRedirect := True;
     client.AddHeader('User-Agent', 'Tina4Pascal');
+    ApplyHeaders(client, FReq.Headers);
     if (FReq.Body <> '') then
     begin
       if FReq.ContentType <> '' then client.AddHeader('Content-Type', FReq.ContentType);

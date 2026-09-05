@@ -33,8 +33,9 @@ begin
   HttpDeliver(r);
 end;
 
-{ Implemented in the app (ios/app/Http.m) — starts an NSURLSession data task. }
-procedure tina4_ios_http_send(Id: cint; Method, Url, Body, Ctype: PAnsiChar); cdecl;
+{ Implemented in the app (ios/app/Http.m) — starts an NSURLSession data task.
+  Headers is a "Name: Value" per-line block (auth etc.), applied natively. }
+procedure tina4_ios_http_send(Id: cint; Method, Url, Body, Ctype, Headers: PAnsiChar); cdecl;
   external name 'tina4_ios_http_send';
 
 type
@@ -46,7 +47,7 @@ type
 procedure TIOSHttpBackend.Send(const Req: TTina4HttpRequest);
 begin
   tina4_ios_http_send(Req.Id, PAnsiChar(Req.Method), PAnsiChar(Req.Url),
-    PAnsiChar(Req.Body), PAnsiChar(Req.ContentType));
+    PAnsiChar(Req.Body), PAnsiChar(Req.ContentType), PAnsiChar(Req.Headers));
 end;
 
 procedure InstallIOSHttp;

@@ -51,8 +51,8 @@ end;
 procedure TAndroidHttpBackend.Send(const Req: TTina4HttpRequest);
 var
   env: PJNIEnv; cls: jclass;
-  a: array[0..4] of jvalue;
-  jMethod, jUrl, jBody, jCtype: jstring;
+  a: array[0..5] of jvalue;
+  jMethod, jUrl, jBody, jCtype, jHeaders: jstring;
 begin
   env := CurrentEnv;
   if env = nil then
@@ -66,16 +66,19 @@ begin
     if cls = nil then begin AndroidHttpResult(Req.Id, 0, '', 'Http class missing'); Exit; end;
     GHttpCls := env^.NewGlobalRef(env, cls);
     GSend := env^.GetStaticMethodID(env, GHttpCls, 'send',
-      '(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V');
+      '(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V');
   end;
-  jMethod := env^.NewStringUTF(env, PAnsiChar(Req.Method));
-  jUrl    := env^.NewStringUTF(env, PAnsiChar(Req.Url));
-  jBody   := env^.NewStringUTF(env, PAnsiChar(Req.Body));
-  jCtype  := env^.NewStringUTF(env, PAnsiChar(Req.ContentType));
-  a[0].i := Req.Id; a[1].l := jMethod; a[2].l := jUrl; a[3].l := jBody; a[4].l := jCtype;
+  jMethod  := env^.NewStringUTF(env, PAnsiChar(Req.Method));
+  jUrl     := env^.NewStringUTF(env, PAnsiChar(Req.Url));
+  jBody    := env^.NewStringUTF(env, PAnsiChar(Req.Body));
+  jCtype   := env^.NewStringUTF(env, PAnsiChar(Req.ContentType));
+  jHeaders := env^.NewStringUTF(env, PAnsiChar(Req.Headers));
+  a[0].i := Req.Id; a[1].l := jMethod; a[2].l := jUrl; a[3].l := jBody;
+  a[4].l := jCtype; a[5].l := jHeaders;
   env^.CallStaticVoidMethodA(env, GHttpCls, GSend, @a[0]);
-  env^.DeleteLocalRef(env, jMethod); env^.DeleteLocalRef(env, jUrl);
-  env^.DeleteLocalRef(env, jBody);   env^.DeleteLocalRef(env, jCtype);
+  env^.DeleteLocalRef(env, jMethod);  env^.DeleteLocalRef(env, jUrl);
+  env^.DeleteLocalRef(env, jBody);    env^.DeleteLocalRef(env, jCtype);
+  env^.DeleteLocalRef(env, jHeaders);
 end;
 
 procedure InstallAndroidHttp(VM: PJavaVM);

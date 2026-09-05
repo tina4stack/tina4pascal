@@ -25,6 +25,27 @@ begin
   Result := NSString.stringWithUTF8String(PAnsiChar(S));
 end;
 
+{ Apply a "Name: Value" per-line header block to the request (Apple TLS/native). }
+procedure ApplyHeaders(req: NSMutableURLRequest; const Block: string);
+var lines: TStringList; i, p: Integer; nm, vl: string;
+begin
+  if Trim(Block) = '' then Exit;
+  lines := TStringList.Create;
+  try
+    lines.Text := Block;
+    for i := 0 to lines.Count - 1 do
+    begin
+      p := Pos(':', lines[i]);
+      if p <= 0 then Continue;
+      nm := Trim(Copy(lines[i], 1, p - 1));
+      vl := Trim(Copy(lines[i], p + 1, MaxInt));
+      if nm <> '' then req.setValue_forHTTPHeaderField(NS(vl), NS(nm));
+    end;
+  finally
+    lines.Free;
+  end;
+end;
+
 type
   THttpThread = class(TThread)
   private
@@ -64,6 +85,7 @@ begin
     req.setHTTPMethod(NS(FReq.Method));
     req.setTimeoutInterval(20);
     req.setValue_forHTTPHeaderField(NS('Tina4Pascal'), NS('User-Agent'));
+    ApplyHeaders(req, FReq.Headers);
     if FReq.Body <> '' then
     begin
       req.setHTTPBody(NS(FReq.Body).dataUsingEncoding(NSUTF8StringEncoding));
