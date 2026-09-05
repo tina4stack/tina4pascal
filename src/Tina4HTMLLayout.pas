@@ -2244,6 +2244,66 @@ begin
       end;
 end;
 
+{ Paint a box's background-image. Handles background-size cover/contain/auto,
+  background-position (px or the left/center/right · top/center/bottom
+  percentage sentinels), and background-repeat (default tile vs no-repeat).
+  The image comes from the canvas's cached/async LoadImage; if it's not ready
+  yet (handle < 0) nothing is drawn and the next relayout retries. }
+procedure PaintBackgroundImage(Canvas: TTina4Canvas; Box: TLayoutBox;
+  const st: TComputedStyle; y: Single);
+var
+  h: Integer;
+  iw, ih, dw, dh, scale, px, py, tileX, tileY: Single;
+  sz, rep: string;
+  noRepeat: Boolean;
+begin
+  h := Canvas.LoadImage(st.BackgroundImage);
+  if h < 0 then Exit;                          // not decoded yet (async) — retry
+  if not Canvas.ImageSize(h, iw, ih) then Exit;
+  if (iw <= 0) or (ih <= 0) then Exit;
+
+  sz := LowerCase(Trim(st.BackgroundSize));
+  dw := iw; dh := ih;
+  if sz = 'cover' then
+  begin
+    scale := Max(Box.W / iw, Box.H / ih);
+    dw := iw * scale; dh := ih * scale;
+  end
+  else if sz = 'contain' then
+  begin
+    scale := Min(Box.W / iw, Box.H / ih);
+    dw := iw * scale; dh := ih * scale;
+  end;
+
+  // position: negative sentinel = percentage (center=-50, right/bottom=-100);
+  // >= 0 = px offset from the top-left.
+  if st.BgPosX < 0 then px := (Box.W - dw) * (-st.BgPosX) / 100 else px := st.BgPosX;
+  if st.BgPosY < 0 then py := (Box.H - dh) * (-st.BgPosY) / 100 else py := st.BgPosY;
+
+  rep := LowerCase(Trim(st.BgRepeat));
+  noRepeat := (rep = 'no-repeat') or (sz = 'cover') or (sz = 'contain');
+
+  Canvas.SetClip(Box.X, y, Box.W, Box.H);
+  if noRepeat then
+    Canvas.DrawImage(h, Box.X + px, y + py, dw, dh)
+  else
+  begin
+    // tile from the positioned origin, back-filling to cover the whole box
+    tileY := y + py; while tileY > y do tileY := tileY - dh;
+    while tileY < y + Box.H do
+    begin
+      tileX := Box.X + px; while tileX > Box.X do tileX := tileX - dw;
+      while tileX < Box.X + Box.W do
+      begin
+        Canvas.DrawImage(h, tileX, tileY, dw, dh);
+        tileX := tileX + dw;
+      end;
+      tileY := tileY + dh;
+    end;
+  end;
+  Canvas.ClearClip;
+end;
+
 procedure PaintBoxEx(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single;
   Opacity: Single; Hidden: Boolean);
 var
@@ -2371,6 +2431,11 @@ begin
     else
       Canvas.FillRect(Box.X, y, Box.W, Box.H, bg);
   end;
+  // background-image: url() — loaded via the cached/async image path, sized by
+  // background-size (cover/contain/auto), positioned by background-position,
+  // tiled per background-repeat, and clipped to the box.
+  if (not Hidden) and (st.BackgroundImage <> '') and (Box.W > 0) and (Box.H > 0) then
+    PaintBackgroundImage(Canvas, Box, st, y);
   if (not Hidden) and (st.BorderWidths.Top > 0) then
   begin
     if st.MaxCornerRadius > 0 then

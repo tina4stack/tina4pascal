@@ -242,7 +242,17 @@ begin
     Exit(Integer(PtrInt(FImageBySrc.Objects[idx])));
   Result := -1;
   data := nil;
-  if (Pos('http://', LowerCase(Src)) = 1) or (Pos('https://', LowerCase(Src)) = 1) then
+  if Pos('data:', LowerCase(Src)) = 1 then
+  begin
+    // data: URI — decode the base64 payload after the comma (self-contained
+    // images, common in CSS background-image and small icons).
+    idx := Pos(',', Src);
+    if idx > 0 then
+      data := NSData.alloc.initWithBase64EncodedString_options(
+        NSStr(Copy(Src, idx + 1, MaxInt)),
+        NSDataBase64DecodingIgnoreUnknownCharacters).autorelease;
+  end
+  else if (Pos('http://', LowerCase(Src)) = 1) or (Pos('https://', LowerCase(Src)) = 1) then
   begin
     cacheDir := GetEnvironmentVariable('HOME') + '/.cache/tina4render/';
     ForceDirectories(cacheDir);
