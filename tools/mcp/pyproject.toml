@@ -1,0 +1,11 @@
+[project]
+name = "tina4pascal-mcp"
+version = "1.0.0"
+description = "MCP service for the Tina4Pascal native dev loop (build/deploy/debug/screenshot/drive)"
+requires-python = ">=3.11"
+dependencies = [
+    "tina4-python",
+]
+
+[tool.uv]
+package = false
