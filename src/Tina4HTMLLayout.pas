@@ -408,24 +408,37 @@ const
     'May','June','July','August','September','October','November','December');
 
 function FormatDateDisplay(const ISO, Fmt: string): string;
-var y, mo, d, e: Integer; s: string;
+var
+  y, mo, d, e, i, n: Integer;
+  { true if Fmt has token `tok` (case-insensitive) at position i }
+  function At(const tok: string): Boolean;
+  begin
+    Result := (i + Length(tok) - 1 <= Length(Fmt)) and
+      SameText(Copy(Fmt, i, Length(tok)), tok);
+  end;
 begin
   Result := ISO;
   if Length(ISO) < 10 then Exit;
   Val(Copy(ISO, 1, 4), y, e);  if e <> 0 then Exit;
   Val(Copy(ISO, 6, 2), mo, e); if (e <> 0) or (mo < 1) or (mo > 12) then Exit;
   Val(Copy(ISO, 9, 2), d, e);  if (e <> 0) or (d < 1) or (d > 31) then Exit;
-  s := Fmt;
-  s := StringReplace(s, 'yyyy', Format('%.4d', [y]), [rfReplaceAll]);
-  s := StringReplace(s, 'yy', Format('%.2d', [y mod 100]), [rfReplaceAll]);
-  s := StringReplace(s, 'MMMM', MON_FULL[mo], [rfReplaceAll]);
-  s := StringReplace(s, 'MMM', MON_ABBR[mo], [rfReplaceAll]);
-  s := StringReplace(s, 'MM', Format('%.2d', [mo]), [rfReplaceAll]);
-  s := StringReplace(s, 'dd', Format('%.2d', [d]), [rfReplaceAll]);
-  // single-letter tokens last, so they don't clobber the doubles above
-  s := StringReplace(s, 'M', IntToStr(mo), [rfReplaceAll]);
-  s := StringReplace(s, 'd', IntToStr(d), [rfReplaceAll]);
-  Result := s;
+  // Scan tokens left→right, emitting substitutions so they're never re-scanned
+  // (a naive StringReplace would corrupt month names, e.g. the 'M' in "March").
+  // Longest token wins. Month is case-insensitive so dd/mm/yyyy and dd/MM/yyyy
+  // both mean month (no time component in a date field).
+  Result := ''; i := 1; n := Length(Fmt);
+  while i <= n do
+  begin
+    if At('yyyy') then begin Result := Result + Format('%.4d', [y]); Inc(i, 4); end
+    else if At('yy') then begin Result := Result + Format('%.2d', [y mod 100]); Inc(i, 2); end
+    else if At('MMMM') then begin Result := Result + MON_FULL[mo]; Inc(i, 4); end
+    else if At('MMM') then begin Result := Result + MON_ABBR[mo]; Inc(i, 3); end
+    else if At('MM') then begin Result := Result + Format('%.2d', [mo]); Inc(i, 2); end
+    else if At('dd') then begin Result := Result + Format('%.2d', [d]); Inc(i, 2); end
+    else if At('M') then begin Result := Result + IntToStr(mo); Inc(i); end
+    else if At('d') then begin Result := Result + IntToStr(d); Inc(i); end
+    else begin Result := Result + Fmt[i]; Inc(i); end;
+  end;
 end;
 
 { Widest replaced descendant (qrcode/img) with an explicit width, so a
@@ -1753,7 +1766,7 @@ var
   box: TLayoutBox;
   contentX, contentY, contentW, usedH: Single;
   edgeL, edgeT, edgeR, edgeB: Single;
-  mL, mR, mT, mB, ew, eh, availInner, naturalH, mnw, mxw, relDX, relDY: Single;
+  mL, mR, mT, mB, ew, eh, availInner, naturalH, mnw, mxw, mnh, mxh, relDX, relDY: Single;
   autoL, autoR: Boolean;
   ov: string;
   liIdx: Integer;
@@ -1848,6 +1861,11 @@ begin
     box.MaxScrollX := box.NaturalW - contentW;
   end;
   box.H := usedH + edgeT + edgeB;
+  // min-height / max-height clamp (border-box; px resolved, % against 0)
+  mnh := ResolveSize(st.MinHeight, 0);
+  mxh := ResolveSize(st.MaxHeight, 0);
+  if (mxh >= 0) and (box.H > mxh) then box.H := mxh;
+  if (mnh >= 0) and (box.H < mnh) then box.H := mnh;
 
   // position: relative — offset visually by top/left (or right/bottom),
   // without changing the space the box occupies in normal flow.
@@ -2198,7 +2216,7 @@ var
   sizeTxt, val: string;
   m: TTina4TextMetrics;
   didClip: Boolean;
-  op, tx, ty, sx, rcx, rcy: Single;
+  op, tx, ty, sx, rcx, rcy, ox: Single;
   shifted, hasRS: Boolean;
   bg, bd, fg: TTina4Color;
 begin
@@ -2322,6 +2340,20 @@ begin
         st.BorderWidths.Top, bd)
     else
       Canvas.StrokeRect(Box.X, y, Box.W, Box.H, st.BorderWidths.Top, bd);
+  end;
+  // outline: a stroke OUTSIDE the border box, offset by outline-offset. Sits in
+  // the margin, doesn't affect layout. (dashed/dotted fall back to solid.)
+  if (not Hidden) and (st.OutlineWidth > 0)
+     and ((st.OutlineColor shr 24) > 0)
+     and not SameText(st.OutlineStyle, 'none') then
+  begin
+    ox := st.OutlineOffset + st.OutlineWidth / 2;
+    if st.MaxCornerRadius > 0 then
+      Canvas.StrokeRoundRect(Box.X - ox, y - ox, Box.W + 2 * ox, Box.H + 2 * ox,
+        st.MaxCornerRadius + ox, st.OutlineWidth, ScaleAlpha(st.OutlineColor, op))
+    else
+      Canvas.StrokeRect(Box.X - ox, y - ox, Box.W + 2 * ox, Box.H + 2 * ox,
+        st.OutlineWidth, ScaleAlpha(st.OutlineColor, op));
   end;
   // list marker: right-aligned so multi-char markers (III., 10.) share the
   // same right edge, sitting just left of the content text.

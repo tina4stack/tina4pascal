@@ -1146,6 +1146,16 @@ begin
          // a tap: a <label> activates its control; otherwise walk up to the
          // nearest control or onclick handler under the finger
          hit := HitTest(GRoot, cx, cy + GScrollY);
+         // <summary> toggles its parent <details> open/closed
+         ctrl := hit;
+         while (ctrl <> nil) and not SameText(ctrl.TagName, 'summary') do ctrl := ctrl.Parent;
+         if (ctrl <> nil) and (ctrl.Parent <> nil)
+            and SameText(ctrl.Parent.TagName, 'details') then
+         begin
+           if ctrl.Parent.HasAttribute('open') then DelAttr(ctrl.Parent, 'open')
+           else SetAttr(ctrl.Parent, 'open', '');
+           GLayoutDirty := True; Exit;
+         end;
          ctrl := LabelTarget(hit);
          if ctrl = nil then
          begin
