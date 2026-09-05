@@ -115,6 +115,11 @@ CLI drives FPC; the engine renders live) — the IDE assembles them.
   required so the dev loop doesn't need a physical iPhone. Android device builds
   (`-Tandroid -Paarch64`) already run on an **arm64 Android emulator** image — wire that
   into the tooling as a first-class test target too.
+- **Media (`video`/`audio`/`iframe`/`canvas`)** — shell-owned native surfaces. The
+  core lays out a correctly-sized placeholder box (width/height/CSS); the shell
+  overlays a native view at that rect and keeps it positioned as the renderer
+  scrolls. iOS `video` via `AVPlayer`/`AVPlayerLayer` first (in progress), then
+  audio, then `iframe` (WKWebView) and a `canvas` draw hook.
 - **iOS/Android paint parity** — native gradients (CGGradient / Android shaders) and
   numeric font-weight on those shells; they use the flat-average / binary-bold
   fallbacks today.

@@ -79,7 +79,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | text-transform | ✅ | uppercase/lowercase/capitalize applied to painted glyphs |
 | text-indent | ✅ | first formatted line indented (left-aligned blocks) |
 | text-overflow | ✅ | ellipsis truncation (single nowrap line): truncates the crossing run + drops the rest |
-| text-shadow | 📦 | fully parsed, never rendered |
+| text-shadow | ✅ | painted (offset shadow pass before the glyph); see PaintBoxEx run loop |
 | white-space | ✅ | normal/nowrap/pre/pre-wrap/pre-line; pre* preserve newlines (+ spaces for pre/pre-wrap) — parser keeps raw text for <pre> and inline white-space:pre* |
 | word-break, overflow-wrap | ✅ | break-word/break-all/anywhere: over-long words break between characters (UTF-8 aware) |
 | vertical-align | 🟡 | sub/super/top/middle; no text-top/bottom/length |
@@ -98,7 +98,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | background: linear-gradient() | ✅ | real multi-stop gradient (up to 8 stops + positions), angle honored; backend NSGradient on Cocoa (base fallback = flat avg) |
 | background: radial-gradient() | ✅ | parsed + painted (center radial); shape/size keywords accepted, not yet modelled |
 | box-shadow | ✅ | soft blur (NSShadow) + spread + corner-radius aware, outset; inset still TODO |
-| outline (+ width/style/color/offset) | 📦 | fully parsed, **never painted** (focus ring is bespoke) |
+| outline (+ width/style/color/offset) | ✅ | painted: stroke outside the border box, offset by outline-offset (dashed→solid) |
 
 ## Visual effects & compositing
 
