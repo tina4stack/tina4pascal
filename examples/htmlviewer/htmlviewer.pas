@@ -10,7 +10,28 @@ program htmlviewer;
 
 uses
   SysUtils, StrUtils, Classes, Math, Generics.Collections,
-  Tina4HTMLDom, Tina4RenderBackend, Tina4ShellCocoa, Tina4HTMLLayout;
+  Tina4HTMLDom, Tina4RenderBackend, Tina4ShellCocoa, Tina4HTMLLayout, Tina4Canvas2D;
+
+{ Demo <canvas> painter (pure Pascal, no JS) — registered for id="demo" so a page
+  with <canvas id="demo"> draws this scene. }
+procedure CanvasDemo(ctx: TTina4Canvas2D);
+var i: Integer; bh: Single;
+const bars: array[0..4] of Single = (0.5, 0.8, 0.35, 0.95, 0.6);
+begin
+  ctx.SetFillColor($FF2B41E6);
+  for i := 0 to 4 do
+  begin bh := 150 * bars[i]; ctx.FillRect(24 + i * 44, 200 - bh, 30, bh); end;
+  ctx.SetGlobalAlpha(0.85); ctx.SetFillColor($FFFF5AA0);
+  ctx.BeginPath; ctx.Arc(280, 90, 46, 0, 2 * Pi); ctx.Fill;
+  ctx.SetGlobalAlpha(1);
+  ctx.SetStrokeColor($FFFFD23C); ctx.SetLineWidth(4);
+  ctx.BeginPath; ctx.MoveTo(24, 40);
+  ctx.BezierCurveTo(120, -10, 220, 90, 336, 30); ctx.Stroke;
+  ctx.SetFillColor($FF15162E); ctx.SetFont(15, True, False); ctx.SetTextAlign('left');
+  ctx.FillText('Q1  Q2  Q3  Q4  Q5', 24, 224);
+  ctx.SetFont(13, False, False); ctx.SetTextAlign('center'); ctx.SetFillColor($FFFFFFFF);
+  ctx.FillText('87%', 280, 95);
+end;
 
 type
   TViewer = class
@@ -786,6 +807,7 @@ begin
   Viewer.Parser := THTMLParser.Create;
   Viewer.Parser.Parse(HTML);
   Viewer.Sheet := TCSSStyleSheet.Create;
+  RegisterCanvasPainter('demo', @CanvasDemo);   // <canvas id="demo"> → the Pascal painter
 
   { Linked stylesheets: remote URLs from the local cache dir (prefetched),
     relative hrefs from beside the HTML file. }

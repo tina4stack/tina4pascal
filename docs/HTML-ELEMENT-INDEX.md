@@ -71,7 +71,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | picture, source, srcset | ✅ | responsive selection (media/type/density/width/sizes) |
 | video | ✅ iOS · ✅ Android · 🟡 macOS | core lays out a poster box + exposes rect/src/**flags**/poster via `tina4_embed_*`. Attributes honored per shell: `controls`, `autoplay`, `loop`, `muted` (bitmask), and `poster` (painted as the box background by the core). **iOS** ✅ `AVPlayerViewController`. **Android** ✅ `VideoView`+`MediaController` in a host `FrameLayout`. **macOS** 🟡 Cocoa `AVPlayerView` (AVKit; loop TODO) — compiles, verify pending a GUI run |
 | audio | ❌ | outstanding — shell-owned native audio player over a core placeholder box |
-| canvas | ❌ | outstanding — needs a Tina4 native draw hook (no JS engine) |
+| canvas | ✅ | **pure-Pascal Canvas 2D** (`Tina4Canvas2D`) — an app registers a painter for `<canvas id>`; draws with the familiar methods (rects, paths, arc/bezier/quadratic, fill/stroke, text, transforms, globalAlpha, drawImage). Core-rendered → every shell + snapshot-testable. No JS, no Skia |
 | iframe | ⬜ | **intentionally not supported** — Tina4 composes pages with `<include src>` (native HTML splice into the same render tree), not a foreign web view |
 | object, map | ⬜ | legacy embed / image maps — not planned |
 | track, area, embed | ⬜ | void children / not applicable |

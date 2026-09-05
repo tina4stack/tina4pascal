@@ -2552,6 +2552,13 @@ begin
     if Result.ExplicitWidth < 0 then Result.ExplicitWidth := 300;
     if Result.ExplicitHeight < 0 then Result.ExplicitHeight := 150;
   end
+  else if TN = 'canvas' then
+  begin
+    // core-rendered drawing surface (Tina4Canvas2D painter); HTML default 300x150
+    Result.Display := 'inline-block';
+    if Result.ExplicitWidth < 0 then Result.ExplicitWidth := 300;
+    if Result.ExplicitHeight < 0 then Result.ExplicitHeight := 150;
+  end
   else if TN = 'dialog' then
   begin
     // UA: dialog:not([open]) { display:none }. An open dialog is a bordered,

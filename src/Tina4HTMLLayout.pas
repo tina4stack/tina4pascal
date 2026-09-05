@@ -12,7 +12,7 @@ interface
 
 uses
   SysUtils, Classes, Math, Generics.Collections,
-  Tina4HTMLDom, Tina4RenderBackend, Tina4Theme, Tina4QR, Tina4SVG;
+  Tina4HTMLDom, Tina4RenderBackend, Tina4Theme, Tina4QR, Tina4SVG, Tina4Canvas2D;
 
 type
   TTextRun = record
@@ -3097,6 +3097,8 @@ var
   gcol: array of TTina4Color;
   gpos: array of Single;
   bg, bd, fg: TTina4Color;
+  cv2d: TTina4Canvas2D;
+  cvPaint: TCanvasPaintProc;
 begin
   st := Box.Style;
   // position: fixed — viewport-pinned: ignore the inherited scroll offset for
@@ -3271,6 +3273,27 @@ begin
   // tiled per background-repeat, and clipped to the box.
   if (not Hidden) and (st.BackgroundImage <> '') and (Box.W > 0) and (Box.H > 0) then
     PaintBackgroundImage(Canvas, Box, st, y);
+  // <canvas>: hand a Tina4Canvas2D (origin at the box top-left, clipped to it) to
+  // the Pascal painter registered for this canvas id — the no-JS canvas.
+  if (not Hidden) and (Box.Tag <> nil) and SameText(Box.Tag.TagName, 'canvas') then
+  begin
+    cvPaint := FindCanvasPainter(Box.Tag.GetAttribute('id'));
+    if Assigned(cvPaint) then
+    begin
+      Canvas.SaveState;
+      Canvas.SetClip(Box.X, y, Box.W, Box.H);
+      cv2d := TTina4Canvas2D.Create(Canvas, Box.W, Box.H, bg);
+      try
+        cv2d.Translate(Box.X, y);
+        // a buggy painter must never corrupt the page paint (save/clip balance)
+        try cvPaint(cv2d); except end;
+      finally
+        cv2d.Free;
+        Canvas.ClearClip;
+        Canvas.RestoreState;
+      end;
+    end;
+  end;
   if (not Hidden) and ((st.BorderWidths.Top > 0) or (st.BorderWidths.Right > 0) or
      (st.BorderWidths.Bottom > 0) or (st.BorderWidths.Left > 0)) then
   begin
