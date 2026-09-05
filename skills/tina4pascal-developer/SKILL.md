@@ -72,6 +72,22 @@ cd examples/htmlviewer && fpc -Mdelphi -Fu../../src htmlviewer.pas
 fpc -Mdelphi -Twin64 -Px86_64 -FE/tmp/w64 -FU/tmp/w64 -Fu../../src ../../tests/test_dom.pas
 ```
 
+**RULE — the inventory index is the source of truth for "what's done".**
+`docs/CSS-PROPERTY-INDEX.md` and `docs/HTML-ELEMENT-INDEX.md` are how anyone (the
+user, the next dev, future-you) knows the coverage state. Keep them honest:
+
+- **Update the row in the SAME commit** that changes the behaviour — never leave
+  "I'll fix the docs later". A feature isn't done until its row says so.
+- **Never mark ✅ without proof** — a passing reftest pair, or a verified runtime
+  check (e.g. a `--script` drive + snapshot for interaction). No proof ⇒ 🟡/❌.
+- **Audit against the source, not the old tracker.** These docs have carried stale
+  rows (❌ items that were actually implemented, ✅ items only parsed). When you
+  touch an area, verify every nearby row against `Tina4HTMLDom`/`Tina4HTMLLayout`
+  and correct what's wrong right then.
+- **Status legend is exact:** ✅ done+proven · 🟡 partial (state the caveat) ·
+  📦 parsed-only, never painted/laid out · ❌ not started · ⬜ intentionally out of
+  core scope (shell-owned/metadata). Don't blur these.
+
 Verification discipline: real compiles and real runs, never mocks.
 
 - **W3C reftests** — `tools/run-compliance.sh` runs the `examples/compliance/`

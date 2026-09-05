@@ -41,7 +41,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | dl, dt, dd | ✅ | bold term, indented def |
 | blockquote | ✅ | indent + left border |
 | pre | ✅ | monospace, whitespace preserved |
-| hr | 🟡 | thin bordered block; no dedicated rule line |
+| hr | ✅ | UA thin grey rule line (1px block) + 8px margins |
 | figure, figcaption | ✅ | block; figure has UA 1em/40px margins |
 
 ## Inline text semantics
@@ -55,10 +55,10 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | small, mark, code, kbd, samp, var | ✅ | mark = yellow bg; code/kbd/samp mono |
 | sub, sup | ✅ | baseline shift + smaller |
 | abbr, cite, dfn, q, br | ✅ | q = auto quotes |
-| wbr | ❌ | no break opportunity |
-| bdi, bdo | ❌ | no bidi/direction override |
-| time, data | 🟡 | inline text only |
-| ruby, rt, rp | ❌ | render inline (not annotated) |
+| wbr | ✅ | zero-width break opportunity (line wraps there when needed) |
+| bdi, bdo | 🟡 | text renders inline; bidi/direction override needs RTL support (not near-term — engine is LTR) |
+| time, data | ✅ | inline text (no visual difference required; value/datetime are metadata) |
+| ruby, rt, rp | 🟡 | children render inline; no stacked ruby annotation (CJK-specific, deferred) |
 
 ## Image & multimedia
 
@@ -69,7 +69,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | qrcode | ✅ | **Tina4 custom** — pure-Pascal QR encoder |
 | camera | ✅ | **Tina4 custom** — "Take Photo" → shell capture |
 | picture, source, srcset | ✅ | responsive selection (media/type/density/width/sizes) |
-| video, audio, canvas, iframe, object, map | ❌ | media/embed belong in shells; canvas needs a draw hook |
+| video, audio, canvas, iframe, object, map | ⬜ | shell-owned (out of core-renderer scope); needs a per-OS media/embed surface + canvas draw hook — see ROADMAP |
 | track, area, embed | ⬜ | void children / not applicable |
 
 ## Tina4 custom tags
@@ -118,7 +118,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 
 | Element | Status | Note |
 |---|---|---|
-| details, summary | 🟡 | honors `open` statically + draws ▸/▾; **tapping does not toggle** |
+| details, summary | ✅ | draws ▸/▾ + honors `open`; tapping the summary toggles open/closed (mobile `TinaTouch` + desktop `MouseUp`) |
 | dialog | 🟡 | hidden unless `open`; open = bordered box in flow; no modal backdrop/centering (needs scripting) |
 | script | ✅ | content skipped (not rendered) |
 | noscript | 🟡 | children render (non-spec, harmless) |
@@ -133,23 +133,29 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | id / class / style | ✅ | selectors + inline styles (inline wins) |
 | hidden attribute | ✅ | ⇒ display:none |
 
-## Priority element gaps (by impact)
+## Outstanding (verified against source 2026-09-05)
 
-**Done since last audit:** tables complete (rowspan, `<caption>`+caption-side,
-`<col>`/`<colgroup>`, tfoot-to-bottom, th bold/center); template/datalist inert.
+Everything not listed here is ✅ or ⬜ in the tables above. Each row is corrected
+in the same commit that changes its behaviour — this list is the truth, not a
+wishlist.
 
-Outstanding, by impact:
+**Core-renderable, still open (in priority order):**
+1. **external `<link href>` CSS fetch** — theme/look distribution from a URL
+   (reuses the `<img>` HTTP+cache path). `link` row is 🟡 for this reason.
+2. **Forms polish** — `input[number]` stepper buttons; `<output>` form-binding;
+   `<textarea>` mid-text editing (append/backspace-at-end today);
+   `<fieldset>`/`<legend>` notched border.
+3. **`<dialog>` modal** — backdrop + centering (`showModal`); needs the scripting
+   model. Non-modal open/closed already works.
 
-1. **details/summary tap-toggle** — ubiquitous accordion, currently dead (renders
-   open/closed statically but does not toggle on tap).
-2. **`<optgroup>` in `<select>`** — grouped options not shown (only direct
-   `<option>` read); labels + indented options in the dropdown overlay.
-3. **`<dialog>`** open/modal/backdrop — currently always-visible block.
-4. **external `<link href>` CSS fetch** — theme/look distribution from a URL
-   (reuses the HTTP+cache path).
-5. **Forms**: number stepper; `output` form-binding; textarea mid-text editing;
-   fieldset notched legend.
-6. Small correctness: **menu** as list; **strike** strikethrough; **hgroup**
-   block; **figure** default 40px margins; **address** italic UA.
-7. Inline: `wbr`, `bdi/bdo`, `ruby/rt/rp`; media `video`/`audio`/`canvas`/`iframe`
-   (shell-owned); `time`/`data` are inline-only today.
+**Deferred (need a larger subsystem, intentionally later):**
+4. **`bdi`/`bdo`** — bidi/direction override needs RTL support (engine is LTR).
+5. **`ruby`/`rt`/`rp`** — stacked CJK annotation positioning.
+6. **`video`/`audio`/`canvas`/`iframe`/`object`/`map`** — shell-owned media/embed
+   surfaces + a canvas draw hook (see `docs/ROADMAP.md`).
+
+**Done since the previous audit:** whole tables set (rowspan, caption+side,
+col/colgroup, tfoot, th); template/datalist inert; `<optgroup>`; `<dialog>`
+open/closed; details/summary tap-toggle (was already wired — doc was stale);
+menu list, strike, hgroup, figure margins, address italic, hr rule line, wbr,
+time/data.
