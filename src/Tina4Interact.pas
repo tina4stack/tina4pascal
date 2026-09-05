@@ -103,7 +103,7 @@ procedure TinaSetCaptureProtected(Protect: Boolean);
 implementation
 
 uses
-  SysUtils, Classes, Math, Generics.Collections, fpjson, jsonparser,
+  SysUtils, Classes, Math, DateUtils, Generics.Collections, fpjson, jsonparser,
   Tina4HTMLDom, Tina4HTMLLayout, Tina4Events, Tina4Frond, Tina4Http, Tina4Services;
 
 var
@@ -142,6 +142,12 @@ var
   GOptRowH: Single = 44;
   GOverX, GOverY, GOverW: Single;
   GScrollToFocus: Boolean = False;    // bring the focused field on-screen next paint
+  // open <input type=date> calendar overlay (nil = closed)
+  GOpenDate: THTMLTag = nil;
+  GCalYear: Integer = 0; GCalMonth: Integer = 1;   // the month on show
+  GCalX, GCalW, GCalGridY, GCalCellW, GCalCellH: Single;
+  GCalHdrY, GCalHdrH, GCalTodayY, GCalTodayH: Single;
+  GCalFirstDow, GCalDays: Integer;    // weekday of the 1st (0=Sun), days in month
 
 { ---- DOM helpers ------------------------------------------------------- }
 procedure SetAttr(Tag: THTMLTag; const Name, Value: string);
@@ -775,6 +781,170 @@ begin
   CloseSelect;   // any tap closes it
 end;
 
+{ ---- <input type=date> calendar overlay ------------------------------- }
+
+function MonName(M: Integer): string;
+const N: array[1..12] of string = ('January','February','March','April','May',
+  'June','July','August','September','October','November','December');
+begin
+  if (M >= 1) and (M <= 12) then Result := N[M] else Result := '';
+end;
+
+procedure CloseDate;
+begin
+  if GOpenDate <> nil then GOpenDate.IsFocused := False;
+  GOpenDate := nil; GLayoutDirty := True;
+end;
+
+{ Open the calendar for a date control, starting on the value's month (or today). }
+procedure OpenDate(Ctrl: THTMLTag);
+var iso: string; y, mo, d, e: Integer;
+begin
+  BlurAll;
+  GOpenDate := Ctrl; Ctrl.IsFocused := True;
+  iso := Trim(Ctrl.GetAttribute('value'));
+  if Length(iso) >= 10 then
+  begin
+    Val(Copy(iso,1,4), y, e); if e <> 0 then y := 0;
+    Val(Copy(iso,6,2), mo, e); if (e <> 0) or (mo < 1) or (mo > 12) then mo := 0;
+  end
+  else begin y := 0; mo := 0; end;
+  if (y = 0) or (mo = 0) then begin y := YearOf(Date); mo := MonthOf(Date); end;
+  GCalYear := y; GCalMonth := mo;
+  GLayoutDirty := True;
+end;
+
+{ Paint the month calendar on top of the page. Header ‹ Month YYYY ›, weekday
+  row, a 6×7 day grid (today ringed, selected filled), and a Today button. }
+procedure PaintDateOverlay(cssW, cssH: Single);
+const
+  INK=$FF15162E; BLUE=$FF2B41E6; TINT=$FFEFF1FE; BORDER=$FFE6E5F0;
+  MUTED=$FF9698B4; PAPER=$FFFFFFFF;
+  DOW: array[0..6] of string = ('Su','Mo','Tu','We','Th','Fr','Sa');
+var
+  box: TLayoutBox; bx, by, pad, w, h, titleY, cx, cy: Single;
+  i, col, row, day, selY, selMo, selD, e, tY, tMo, tD: Integer;
+  title, iso, cell: string; isToday, isSel: Boolean;
+begin
+  if (GOpenDate = nil) or (GRoot = nil) then Exit;
+  box := FindBoxForTag(GRoot, GOpenDate);
+  if box = nil then begin CloseDate; Exit; end;
+
+  pad := 12; GCalCellW := 40; GCalCellH := 38;
+  w := 7 * GCalCellW + 2 * pad;                 // 304
+  GCalHdrH := 46;
+  h := GCalHdrH + 26 + 6 * GCalCellH + 48 + pad; // header + dow + 6 rows + footer
+  bx := box.X; by := box.Y - GScrollY + box.H + 6;
+  if bx + w > cssW then bx := cssW - w - 6;
+  if bx < 6 then bx := 6;
+  if by + h > cssH then by := box.Y - GScrollY - h - 6;   // flip above
+  if by < 6 then by := 6;
+  GCalX := bx; GCalW := w;
+
+  GCalDays := DaysInAMonth(GCalYear, GCalMonth);
+  GCalFirstDow := DayOfWeek(EncodeDate(GCalYear, GCalMonth, 1)) - 1;  // 0=Sun
+
+  // panel + soft shadow
+  GCanvas.FillRoundRect(bx - 1, by + 8, w + 2, h, 18, $14000000);
+  GCanvas.FillRoundRect(bx, by, w, h, 18, PAPER);
+  GCanvas.StrokeRect(bx, by, w, h, 1, BORDER);
+
+  // header: prev / title / next
+  GCalHdrY := by;
+  titleY := by + (GCalHdrH - 18) / 2;
+  GCanvas.DrawText(bx + 16, titleY, #$E2#$80#$B9, 22, [tfsBold], BLUE);  // ‹
+  GCanvas.DrawText(bx + w - 30, titleY, #$E2#$80#$BA, 22, [tfsBold], BLUE); // ›
+  title := MonName(GCalMonth) + ' ' + IntToStr(GCalYear);
+  GCanvas.DrawText(bx + (w - GCanvas.MeasureText(title, 16, [tfsBold]).Width) / 2,
+    titleY + 1, title, 16, [tfsBold], INK);
+
+  // weekday labels
+  for i := 0 to 6 do
+    GCanvas.DrawText(bx + pad + i * GCalCellW + (GCalCellW - 16) / 2,
+      by + GCalHdrH, DOW[i], 12, [tfsBold], MUTED);
+
+  // selected + today
+  selY := 0; selMo := 0; selD := 0;
+  iso := Trim(GOpenDate.GetAttribute('value'));
+  if Length(iso) >= 10 then
+  begin
+    Val(Copy(iso,1,4), selY, e); Val(Copy(iso,6,2), selMo, e); Val(Copy(iso,9,2), selD, e);
+  end;
+  tY := YearOf(Date); tMo := MonthOf(Date); tD := DayOf(Date);
+
+  GCalGridY := by + GCalHdrH + 26;
+  for day := 1 to GCalDays do
+  begin
+    i := GCalFirstDow + day - 1;
+    col := i mod 7; row := i div 7;
+    cx := bx + pad + col * GCalCellW;
+    cy := GCalGridY + row * GCalCellH;
+    isSel := (selY = GCalYear) and (selMo = GCalMonth) and (selD = day);
+    isToday := (tY = GCalYear) and (tMo = GCalMonth) and (tD = day);
+    if isSel then
+      GCanvas.FillRoundRect(cx + 3, cy + 2, GCalCellW - 6, GCalCellH - 6, 9, BLUE)
+    else if isToday then
+      GCanvas.StrokeRoundRect(cx + 3, cy + 2, GCalCellW - 6, GCalCellH - 6, 9, 1.5, BLUE);
+    cell := IntToStr(day);
+    if isSel then
+      GCanvas.DrawText(cx + (GCalCellW - GCanvas.MeasureText(cell,15,[tfsBold]).Width)/2,
+        cy + 10, cell, 15, [tfsBold], PAPER)
+    else
+      GCanvas.DrawText(cx + (GCalCellW - GCanvas.MeasureText(cell,15,[]).Width)/2,
+        cy + 10, cell, 15, [], INK);
+  end;
+
+  // footer: Today
+  GCalTodayH := 34;
+  GCalTodayY := by + h - GCalTodayH - 8;
+  GCanvas.FillRoundRect(bx + pad, GCalTodayY, w - 2 * pad, GCalTodayH, 9, TINT);
+  GCanvas.DrawText(bx + (w - GCanvas.MeasureText('Today', 14, [tfsBold]).Width) / 2,
+    GCalTodayY + 9, 'Today', 14, [tfsBold], BLUE);
+end;
+
+{ A tap while the calendar is open: nav arrows keep it open; a day / Today picks. }
+procedure HandleDateOverlayTap(cx, cy: Single);
+var i, col, row, day: Integer; iso: string;
+begin
+  // header arrows
+  if (cy >= GCalHdrY) and (cy < GCalHdrY + GCalHdrH) then
+  begin
+    if (cx >= GCalX) and (cx < GCalX + 46) then
+    begin
+      Dec(GCalMonth); if GCalMonth < 1 then begin GCalMonth := 12; Dec(GCalYear); end;
+      GLayoutDirty := True; Exit;                       // stay open
+    end;
+    if (cx >= GCalX + GCalW - 46) and (cx < GCalX + GCalW) then
+    begin
+      Inc(GCalMonth); if GCalMonth > 12 then begin GCalMonth := 1; Inc(GCalYear); end;
+      GLayoutDirty := True; Exit;                       // stay open
+    end;
+  end;
+  // Today
+  if (cy >= GCalTodayY) and (cy < GCalTodayY + GCalTodayH) and
+     (cx >= GCalX) and (cx <= GCalX + GCalW) then
+  begin
+    SetAttr(GOpenDate, 'value', FormatDateTime('yyyy-mm-dd', Date));
+    CloseDate; Exit;
+  end;
+  // a day cell
+  if (cx >= GCalX + 12) and (cx < GCalX + 12 + 7 * GCalCellW) and
+     (cy >= GCalGridY) and (cy < GCalGridY + 6 * GCalCellH) then
+  begin
+    col := Trunc((cx - GCalX - 12) / GCalCellW);
+    row := Trunc((cy - GCalGridY) / GCalCellH);
+    i := row * 7 + col;
+    day := i - GCalFirstDow + 1;
+    if (day >= 1) and (day <= GCalDays) then
+    begin
+      iso := Format('%.4d-%.2d-%.2d', [GCalYear, GCalMonth, day]);
+      SetAttr(GOpenDate, 'value', iso);
+      CloseDate; Exit;
+    end;
+  end;
+  CloseDate;   // tap elsewhere dismisses
+end;
+
 { ---- public API -------------------------------------------------------- }
 
 procedure TinaInit(Canvas: TTina4Canvas);
@@ -841,6 +1011,7 @@ begin
   ClampScroll;
   if GRoot <> nil then PaintBox(GCanvas, GRoot, GScrollY);
   PaintSelectOverlay(cssW, cssH);
+  PaintDateOverlay(cssW, cssH);
 end;
 
 function TinaWantsKeyboard: Integer;
@@ -880,6 +1051,11 @@ begin
         BlurAll; GOpenSelect := Ctrl; Ctrl.IsFocused := True;  // ring on the trigger
         GLayoutDirty := True; Result := TINA_HIDE_KBD;         // open dropdown
       end;
+    ckDate:
+      begin
+        OpenDate(Ctrl);                                        // open the calendar
+        Result := TINA_HIDE_KBD;
+      end;
     ckTextInput, ckTextarea:
       begin
         if Ctrl.HasAttribute('disabled') then Exit;
@@ -912,6 +1088,12 @@ begin
   if GOpenSelect <> nil then
   begin
     if Action = 1 then HandleOverlayTap(cx, cy);
+    Exit;
+  end;
+  // an open date calendar eats touches too (arrows re-navigate, a day picks)
+  if GOpenDate <> nil then
+  begin
+    if Action = 1 then HandleDateOverlayTap(cx, cy);
     Exit;
   end;
   case Action of

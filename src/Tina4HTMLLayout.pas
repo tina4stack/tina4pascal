@@ -28,7 +28,7 @@ type
     lives in the DOM: input/textarea in 'value', checkbox/radio in 'checked',
     select in 'value'. The app mutates attributes and rebuilds. }
   TControlKind = (ckNone, ckTextInput, ckTextarea, ckCheckbox, ckRadio,
-    ckSelect, ckButton, ckFile);
+    ckSelect, ckButton, ckFile, ckDate);
 
   TLayoutBox = class
   public
@@ -112,6 +112,10 @@ function InnerText(Tag: THTMLTag): string;
 function IsFormControlTag(const Name: string): Boolean;
 { Classify a tag as a form control kind (ckNone if not a control). }
 function ControlKindOf(Tag: THTMLTag): TControlKind;
+
+{ Format an ISO date (yyyy-mm-dd) for display per a token pattern:
+  yyyy/yy year · MMMM/MMM/MM/M month · dd/d day. Falls back to the raw string. }
+function FormatDateDisplay(const ISO, Fmt: string): string;
 
 { Capture-protection: when on, any element with class="sensitive" (or a <secure>
   tag) is redacted at paint time — its content and subtree are not drawn. Paint-
@@ -393,7 +397,35 @@ begin
   else if typ = 'radio' then Result := ckRadio
   else if (typ = 'file') or SameText(Tag.TagName, 'camera') then Result := ckFile
   else if (typ = 'submit') or (typ = 'button') then Result := ckButton
+  else if typ = 'date' then Result := ckDate
   else Result := ckTextInput;
+end;
+
+const
+  MON_ABBR: array[1..12] of string = ('Jan','Feb','Mar','Apr','May','Jun',
+    'Jul','Aug','Sep','Oct','Nov','Dec');
+  MON_FULL: array[1..12] of string = ('January','February','March','April',
+    'May','June','July','August','September','October','November','December');
+
+function FormatDateDisplay(const ISO, Fmt: string): string;
+var y, mo, d, e: Integer; s: string;
+begin
+  Result := ISO;
+  if Length(ISO) < 10 then Exit;
+  Val(Copy(ISO, 1, 4), y, e);  if e <> 0 then Exit;
+  Val(Copy(ISO, 6, 2), mo, e); if (e <> 0) or (mo < 1) or (mo > 12) then Exit;
+  Val(Copy(ISO, 9, 2), d, e);  if (e <> 0) or (d < 1) or (d > 31) then Exit;
+  s := Fmt;
+  s := StringReplace(s, 'yyyy', Format('%.4d', [y]), [rfReplaceAll]);
+  s := StringReplace(s, 'yy', Format('%.2d', [y mod 100]), [rfReplaceAll]);
+  s := StringReplace(s, 'MMMM', MON_FULL[mo], [rfReplaceAll]);
+  s := StringReplace(s, 'MMM', MON_ABBR[mo], [rfReplaceAll]);
+  s := StringReplace(s, 'MM', Format('%.2d', [mo]), [rfReplaceAll]);
+  s := StringReplace(s, 'dd', Format('%.2d', [d]), [rfReplaceAll]);
+  // single-letter tokens last, so they don't clobber the doubles above
+  s := StringReplace(s, 'M', IntToStr(mo), [rfReplaceAll]);
+  s := StringReplace(s, 'd', IntToStr(d), [rfReplaceAll]);
+  Result := s;
 end;
 
 { Widest replaced descendant (qrcode/img) with an explicit width, so a
@@ -586,7 +618,7 @@ procedure ApplyControlChrome(var St: TComputedStyle; Kind: TControlKind;
   Focused: Boolean; Primary: Boolean = False; Disabled: Boolean = False);
 begin
   case Kind of
-    ckTextInput, ckTextarea, ckSelect:
+    ckTextInput, ckTextarea, ckSelect, ckDate:
       begin
         if St.BorderWidths.Top <= 0 then
         begin
@@ -630,7 +662,7 @@ begin
         if St.BorderRadius < 0 then St.BorderRadius := TC_RADIUS;
       end;
   end;
-  if Focused and (Kind in [ckTextInput, ckTextarea, ckSelect]) then
+  if Focused and (Kind in [ckTextInput, ckTextarea, ckSelect, ckDate]) then
   begin
     St.SetBorderWidth(TC_FOCUS_W);
     St.SetBorderColor(TC_ACCENT); // indigo focus (ring not paintable yet)
@@ -647,7 +679,7 @@ end;
 function TLayoutEngine.MakeControl(Tag: THTMLTag; St: TComputedStyle; AvailW: Single): TLayoutBox;
 var
   kind: TControlKind;
-  txt, ph: string;
+  txt, ph, val: string;
   m: TTina4TextMetrics;
   run: TTextRun;
   padH, padV, lineH, wChars, ew: Single;
@@ -718,6 +750,18 @@ begin
       end;
     ckTextarea:
       txt := Tag.GetAttribute('value', InnerText(Tag));
+    ckDate:
+      begin
+        // a native-quality date field: 📅 + the value formatted per `format`
+        // (default "dd MMM yyyy"), or the placeholder. The calendar overlay
+        // edits the ISO `value`.
+        val := Trim(Tag.GetAttribute('value'));
+        if val <> '' then
+          txt := #$F0#$9F#$93#$85' ' +
+            FormatDateDisplay(val, Tag.GetAttribute('format', 'dd MMM yyyy'))
+        else
+          txt := #$F0#$9F#$93#$85' ' + Tag.GetAttribute('placeholder', 'Select date');
+      end;
   else // ckTextInput
     txt := Tag.GetAttribute('value');
   end;
@@ -735,8 +779,8 @@ begin
   end
   else if wChars > 0 then
     Result.W := wChars + padH
-  else if (kind = ckButton) or St.AppearanceNone then
-    Result.W := FCanvas.MeasureText(txt, St.FontSize, FontStylesOf(St)).Width + padH
+  else if (kind = ckButton) or (kind = ckDate) or St.AppearanceNone then
+    Result.W := FCanvas.MeasureText(txt, St.FontSize, FontStylesOf(St)).Width + padH + 8
   else
     Result.W := Min(240 + padH, AvailW);
 
