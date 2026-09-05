@@ -19,7 +19,7 @@ var
 { Demo Lottie painter — loads the JSON at $TINA4_LOTTIE once and renders a frame
   ($TINA4_LOTTIE_FRAME, default 0) for <canvas id="lottie">. }
 procedure LottiePainter(ctx: TTina4Canvas2D);
-var sl: TStringList; p: string;
+var sl: TStringList; p: string; sc: Single;
 begin
   if GLottie = nil then
   begin
@@ -32,11 +32,13 @@ begin
       if not GLottie.LoadFromString(sl.Text) then FreeAndNil(GLottie);
     finally sl.Free; end;
   end;
-  if GLottie <> nil then
+  if (GLottie <> nil) and (GLottie.Width > 0) and (GLottie.Height > 0) then
   begin
-    // scale the native animation to fill this canvas box
-    if (GLottie.Width > 0) and (GLottie.Height > 0) then
-      ctx.Scale(ctx.Width / GLottie.Width, ctx.Height / GLottie.Height);
+    // contain-fit + centre with a small inset (never clip swinging limbs)
+    sc := Min(ctx.Width / GLottie.Width, ctx.Height / GLottie.Height) * 0.94;
+    ctx.Translate((ctx.Width - GLottie.Width * sc) / 2,
+                  (ctx.Height - GLottie.Height * sc) / 2);
+    ctx.Scale(sc, sc);
     GLottie.Render(ctx, StrToFloatDef(GetEnvironmentVariable('TINA4_LOTTIE_FRAME'), 0));
   end;
 end;
