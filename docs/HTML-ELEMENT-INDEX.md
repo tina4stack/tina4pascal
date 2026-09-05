@@ -90,7 +90,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | colspan (attr) | ✅ | both layout passes |
 | rowspan (attr) | ✅ | cell reserves its columns downward; following rows shift correctly |
 | caption | ✅ | full-table-width block above (default) or below rows; caption-side honored |
-| col, colgroup | ❌ | ignored (widths from content only) |
+| col, colgroup | ✅ | per-column width via width attr or style; span honored |
 
 ## Forms
 

@@ -2427,6 +2427,8 @@ var
   capCs: TComputedStyle;
   capH, capUsed: Single;
   capBottom: Boolean;
+  colW: array of Single;                  // explicit per-column width from <col>/<colgroup>
+  colIdx: Integer;
 
   procedure CollectRows(T: THTMLTag);
   var c: THTMLTag;
@@ -2435,6 +2437,44 @@ var
       if SameText(c.TagName, 'tr') then rows.Add(c)
       else if SameText(c.TagName, 'thead') or SameText(c.TagName, 'tbody') or
               SameText(c.TagName, 'tfoot') then CollectRows(c);
+  end;
+
+  // Apply one <col>/<colgroup> element's width across the columns it spans.
+  procedure OneCol(colTag: THTMLTag);
+  var s2, j: Integer; ww: Single; ccs: TComputedStyle;
+  begin
+    s2 := Max(1, StrToIntDef(colTag.GetAttribute('span', '1'), 1));
+    if colTag.HasAttribute('width') then
+      ww := TComputedStyle.ParseLength(colTag.GetAttribute('width'), 16)
+    else
+    begin
+      ccs := TComputedStyle.ForTag(colTag, Style, FSheet);
+      ww := ResolveSize(ccs.ExplicitWidth, tblAvail);
+    end;
+    for j := 1 to s2 do
+    begin
+      if colIdx >= ncols then Break;
+      if ww >= 0 then colW[colIdx] := ww;
+      Inc(colIdx);
+    end;
+  end;
+
+  // Walk <col> and <colgroup> children in document order, seeding colW[].
+  procedure SeedCols;
+  var cg, cc: THTMLTag; hasChild: Boolean; k: Integer;
+  begin
+    SetLength(colW, ncols);
+    for k := 0 to ncols - 1 do colW[k] := -1;
+    colIdx := 0;
+    for cg in Tag.Children do
+      if SameText(cg.TagName, 'col') then OneCol(cg)
+      else if SameText(cg.TagName, 'colgroup') then
+      begin
+        hasChild := False;
+        for cc in cg.Children do
+          if SameText(cc.TagName, 'col') then begin hasChild := True; OneCol(cc); end;
+        if not hasChild then OneCol(cg);   // a bare <colgroup span=.. width=..>
+      end;
   end;
 
 begin
@@ -2456,6 +2496,7 @@ begin
     hasBorder := Tag.HasAttribute('border');
     tblAvail := AvailW - Style.Margin.Horz;
     explW := ResolveSize(Style.ExplicitWidth, tblAvail);  // px or % of available
+    SeedCols;   // <col>/<colgroup> explicit widths
 
     // preferred column widths: an explicit cell width is exact; otherwise
     // content plus padding (+ a little slop for content-sized cells).
@@ -2502,6 +2543,9 @@ begin
       for i := 0 to ncols - 1 do
         if blocked[i] > 0 then Dec(blocked[i]);
     end;
+    // a <col> width is authoritative for its column (at least as wide as content)
+    for i := 0 to ncols - 1 do
+      if colW[i] >= 0 then prefW[i] := Max(prefW[i], colW[i]);
     total := 0;
     for i := 0 to ncols - 1 do total := total + prefW[i];
     if total <= 0 then total := 1;
