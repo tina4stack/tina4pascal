@@ -120,7 +120,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | table layout + colspan | ✅ | auto column sizing; colspan both passes |
 | rowspan | ✅ | column-occupancy tracked across rows; spanned height + valign resolved |
 | border-collapse, border-spacing, table-layout | ❌ | not parsed; per-cell borders only |
-| caption-side | ✅ | top (default) + bottom; empty-cells ❌ |
+| caption-side | ✅ | top (default) + bottom |
+| empty-cells | ❌ | not parsed |
 | vertical-align (cells) | ✅ | top/middle/bottom |
 
 ## UI & interaction
@@ -146,23 +147,40 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 
 ## Prioritised roadmap (by real-world impact ÷ effort)
 
-**Quick wins (parsed already — pure paint/wire):**
-1. **`@media` rules** — wire the existing `EvalMediaQuery` into `ParseCSS`/cascade → dark-mode `prefers-color-scheme` (**the color-vars fix**) + responsive breakpoints.
-2. **outline** paint (mirror the border stroke, offset outward) — focus rings.
-3. **background-image: url()** paint (fetch/cache path already exists for `<img>`).
-4. **box-shadow** soft blur + inset + radius-aware.
-5. **min-height / max-height** clamp; **per-side border width/color + border-style** (dashed/dotted) paint.
-6. **details/summary** tap-toggle (HTML) — ubiquitous accordion.
+**Done since the last audit** (each with a reftest; suite now 100/100): `@media`
++ `prefers-color-scheme`, `background-image`, gradients (linear/radial),
+`box-shadow`, per-side borders, flex (shrink/justify/align-items), grid, position
+fixed/relative/absolute, z-index, `font-family` + numeric weight, `text-overflow`,
+`word-break`/`overflow-wrap`, `white-space`, `text-transform`/`text-indent`,
+`letter-spacing`, `line-height` %/rem, and the full tables set (rowspan,
+caption + caption-side, col/colgroup, tfoot-to-bottom, th bold/center).
 
-**Bigger rocks:**
-7. **Flexbox faithfulness**: flex-shrink pass, align-items:stretch, align-content/self/order.
-8. **position: fixed/sticky** (viewport-pinned) + **z-index** paint ordering.
-9. **font-family** through the canvas (system/serif/mono/named buckets) + numeric font-weight.
-10. **Real gradients** (linear angle + multi-stop, radial) via a backend gradient op.
-11. **text-overflow: ellipsis**, **overflow-wrap/word-break**, **white-space: pre-wrap**.
-12. **calc()** \*// + %; **clamp()/min()/max()/env()**.
-13. **Grid** (the largest single unlock after the above).
-14. **transitions/animations** (needs the ticker + a timeline).
+**Outstanding — quick wins (parsed or nearly, pure paint/wire):**
+1. **outline** paint — still parsed-only (📦); mirror the border stroke, offset
+   outward. Focus rings.
+2. **text-shadow** paint — fully parsed (📦), never rendered.
+3. **text-align: justify** — currently falls back to left.
+4. **text-decoration: overline** + color/style longhands (underline/line-through
+   done; overline needs a manual rule since no native font attribute exists).
+5. **position: sticky** — parsed (📦), falls back to static.
+6. **cursor** — parsed (📦); set the OS cursor in the shells.
+
+**Outstanding — bigger rocks:**
+7. **float / clear** — parsed (📦), no float layout.
+8. **aspect-ratio** — not parsed.
+9. **Flexbox faithfulness**: reverse directions, wrap-reverse, `align-content` /
+   `align-self` / `order`, per-axis `row-gap`/`column-gap`.
+10. **Grid**: explicit line placement, `grid-template-rows`/`areas`, multi-row span.
+11. **calc()** `*` `/` and %/vw/vh terms; **clamp() / min() / max() / env()** (all 0 today).
+12. **border-collapse / border-spacing / table-layout / empty-cells**.
+13. **transitions / animations** + `@keyframes` (needs the ticker + a timeline);
+    `@supports` / `@import`.
+14. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
+    backdrop-filter / clip-path / mask**; blend-modes.
+15. Typography long tail: `font`/`font-variant`/`font-stretch` shorthands,
+    `word-spacing`, `direction`/`writing-mode` (bidi), `list-style` shorthand +
+    position/image, `vertical-align` text-top/bottom/length.
+16. **accent-color / caret-color**; **pointer-events / user-select / resize**.
 
 Each item ships with a reftest under `examples/compliance/` and flips its row
 here and in `CONFORMANCE.md`.

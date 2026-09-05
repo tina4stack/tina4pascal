@@ -124,3 +124,23 @@ CLI drives FPC; the engine renders live) — the IDE assembles them.
   images, date picker) into `tina4delphi`; fixes flow both ways.
 - **Binary size** stays tracked per change (OS-TLS ships zero crypto; the engine
   stays lean).
+
+## SDK layer (post CSS/HTML inventory)
+
+Tina4Pascal is an **SDK for rapid native development**, not just a renderer. The
+SDK stops at the backend: apps *consume* JSON/REST APIs built with other tools, or
+persist to a local store — it never *is* a server. Device/app capabilities are
+added to the render-backend contract with a safe default and implemented per shell
+(never in the OS-free core), and driven from HTML the Tina4 way (semantic events /
+attributes, not widgets):
+
+- **Multiscreen + navigation** — compose an app from a Frond base template + screen
+  templates, with built-in `navigate` / `load-template` events and a screen stack.
+- **Notifications** — native local (and later push) notifications: contract virtual +
+  macOS/iOS `UNUserNotification`, Android `NotificationManager`.
+- **Local store** — on-device persistence so simple apps work fully offline (no backend).
+- **Remote API data layer** — fetch JSON over the existing HTTP+cache path and bind it
+  into a template.
+
+New compiler targets **bolt on** by design: a target is a new shell unit + one row
+in the build table — the three-layer law keeps the core and contract OS-free.

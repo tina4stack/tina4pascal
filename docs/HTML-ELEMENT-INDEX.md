@@ -86,7 +86,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | table | ✅ | auto/explicit column sizing, `border` attr |
 | thead, tbody, tfoot | ✅ | tfoot rows moved to the bottom regardless of source order; no sticky/repeat |
 | tr, td | ✅ | |
-| th | 🟡 | renders as a cell; **no default bold/center** |
+| th | ✅ | UA bold + center |
 | colspan (attr) | ✅ | both layout passes |
 | rowspan (attr) | ✅ | cell reserves its columns downward; following rows shift correctly |
 | caption | ✅ | full-table-width block above (default) or below rows; caption-side honored |
@@ -110,7 +110,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | button | ✅ | drawn; submit |
 | label | ✅ | `for=`/wrapping/sibling all wired to focus+toggle |
 | fieldset, legend | 🟡 | border + bold legend (not notched) |
-| datalist | ❌ | **leaks its options as visible text** (should be invisible) |
+| datalist | ✅ | inert (display:none UA); options never painted |
 | output | 🟡 | text renders; no form binding |
 | progress, meter | ✅ | drawn bars (progress accent, meter green) from value/max |
 
@@ -122,7 +122,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | dialog | 🟡 | renders as a block **always visible** — no `open`/modal/backdrop |
 | script | ✅ | content skipped (not rendered) |
 | noscript | 🟡 | children render (non-spec, harmless) |
-| template | ❌ | **content renders** (should be inert) |
+| template | ✅ | inert (display:none UA); content never painted |
 | slot | 🟡 | passthrough (no shadow DOM) |
 
 ## Misc
@@ -135,10 +135,21 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 
 ## Priority element gaps (by impact)
 
-1. **details/summary tap-toggle** — ubiquitous accordion, currently dead.
-2. **external `<link href>` CSS fetch** — enables theme/look distribution from a URL (reuses the HTTP+cache path).
-3. **table rowspan**, `<caption>`, `<col>/<colgroup>`; th default bold/center; tfoot-to-bottom.
-4. **Forms**: password masking, `optgroup`, `input[color/range]` widgets, `progress`/`meter` bars, caret navigation / mid-text editing.
-5. **template/datalist leak** (should be inert); **dialog** open/modal.
-6. **menu** as list; **strike** strikethrough; **hgroup** block — small correctness fixes.
-7. Inline: `wbr`, `bdi/bdo`, `ruby`; media `video`/`audio`/`canvas` (shell-owned).
+**Done since last audit:** tables complete (rowspan, `<caption>`+caption-side,
+`<col>`/`<colgroup>`, tfoot-to-bottom, th bold/center); template/datalist inert.
+
+Outstanding, by impact:
+
+1. **details/summary tap-toggle** — ubiquitous accordion, currently dead (renders
+   open/closed statically but does not toggle on tap).
+2. **`<optgroup>` in `<select>`** — grouped options not shown (only direct
+   `<option>` read); labels + indented options in the dropdown overlay.
+3. **`<dialog>`** open/modal/backdrop — currently always-visible block.
+4. **external `<link href>` CSS fetch** — theme/look distribution from a URL
+   (reuses the HTTP+cache path).
+5. **Forms**: number stepper; `output` form-binding; textarea mid-text editing;
+   fieldset notched legend.
+6. Small correctness: **menu** as list; **strike** strikethrough; **hgroup**
+   block; **figure** default 40px margins; **address** italic UA.
+7. Inline: `wbr`, `bdi/bdo`, `ruby/rt/rp`; media `video`/`audio`/`canvas`/`iframe`
+   (shell-owned); `time`/`data` are inline-only today.
