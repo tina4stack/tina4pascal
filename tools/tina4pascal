@@ -311,9 +311,15 @@ cmd_clean() { rm -rf "$BUILD" "$ROOT/android/out" "$ROOT/android/tina4pascal-deb
 # ---- device screenshot / logs / debug loop ----------------------------------
 adb_have_device() { [ "$(adb devices | grep -cw device)" -gt 0 ]; }
 
-# screenshot [out.png] [android|ios]  (default android)
+# screenshot [android|ios|macos] [out.png]   — grab the app screen for a target.
+# (legacy order `screenshot out.png platform` still accepted)
 cmd_screenshot() {
-  out="${1:-$ROOT/build/device.png}"; plat="${2:-android}"; mkdir -p "$(dirname "$out")"
+  a1="${1:-android}"; a2="${2:-}"
+  case "$a1" in
+    android|ios|macos|win64|windows|linux) plat="$a1"; out="${a2:-$ROOT/build/$a1.png}" ;;
+    *) out="$a1"; plat="${a2:-android}" ;;    # legacy: out first
+  esac
+  mkdir -p "$(dirname "$out")"
   case "$plat" in
     ios)
       [ -x "$PMD3" ] || command -v pymobiledevice3 >/dev/null 2>&1 || die "pymobiledevice3 missing — run: tina4pascal setup ios"
@@ -321,6 +327,17 @@ cmd_screenshot() {
       # be unlocked. No app focus needed — it grabs the whole screen.
       "$PMD3" developer dvt screenshot "$out" >/dev/null 2>&1 || die "iOS screenshot failed (unlock the iPhone?)"
       ok "iOS screenshot → $out" ;;
+    macos)
+      # bring the running app forward, then capture its window (no shadow, PNG)
+      osascript -e 'tell application "Tina4Pascal" to activate' >/dev/null 2>&1 || \
+        open "$BUILD/Tina4Pascal.app" >/dev/null 2>&1 || true
+      sleep 1
+      wid="$(GetWindowID Tina4Pascal --list 2>/dev/null | awk 'NR==1{print $1}')"
+      if [ -n "$wid" ]; then screencapture -o -x -l"$wid" "$out"
+      else screencapture -o -x "$out"; fi          # fall back to full screen
+      ok "macOS screenshot → $out" ;;
+    win64|windows|linux)
+      die "no $plat screenshot yet — the $plat windowed shell is pending (see docs/ROADMAP.md); 'build $plat' cross-compiles the engine" ;;
     android|*)
       adb_have_device || die "no device attached (adb devices)"
       adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true   # slept screen = black
@@ -328,6 +345,19 @@ cmd_screenshot() {
       sleep 1
       adb exec-out screencap -p > "$out"
       ok "screenshot → $out" ;;
+  esac
+}
+
+# on-device log tail: logcat [android|ios] [-f|N]
+cmd_logs() {
+  plat="${1:-android}"; shift 2>/dev/null || true
+  case "$plat" in
+    ios)
+      if command -v idevicesyslog >/dev/null 2>&1; then
+        case "${1:-}" in -f|--follow) idevicesyslog -m Tina4Pascal ;;
+        *) idevicesyslog -m Tina4Pascal & p=$!; sleep 3; kill $p 2>/dev/null || true ;; esac
+      else die "idevicesyslog missing — run: tina4pascal setup ios"; fi ;;
+    android|*) cmd_logcat "$@" ;;
   esac
 }
 
@@ -339,21 +369,81 @@ cmd_logcat() {
   esac
 }
 
-# build → install → launch → screenshot → show logs, in one shot
-cmd_debug() {
-  adb_have_device || die "no device attached"
-  cmd_apk
-  adb install -r "$ROOT/android/tina4pascal-debug.apk" >/dev/null
-  adb logcat -c || true
-  adb shell am force-stop com.tina4.pascal >/dev/null 2>&1 || true
-  adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
-  adb shell am start -n com.tina4.pascal/.MainActivity >/dev/null 2>&1
-  sleep 3
-  shot="$ROOT/build/device.png"; mkdir -p "$ROOT/build"
-  adb exec-out screencap -p > "$shot"
-  ok "screenshot → $shot"
-  say "${B}--- tina4 log ---${Z}"; adb logcat -d -s tina4 | tail -20
+# deploy [android|ios|macos]  — build + install/open + launch on that target.
+cmd_run_target() {
+  case "${1:-android}" in
+    ios)   cmd_ios ;;
+    macos) cmd_macos --run ;;
+    android) cmd_deploy ;;
+    win64|windows|linux) cmd_build "$1"; warn "$1 windowed shell is pending — engine cross-compiled only (docs/ROADMAP.md)" ;;
+    *) die "deploy <android|ios|macos|win64|linux>" ;;
+  esac
 }
+
+# debug [android|ios|macos] — build → install → launch → screenshot → tail log.
+cmd_debug() {
+  plat="${1:-android}"
+  case "$plat" in
+    android)
+      adb_have_device || die "no device attached"
+      cmd_apk
+      adb install -r "$ROOT/android/tina4pascal-debug.apk" >/dev/null
+      adb logcat -c || true
+      adb shell am force-stop com.tina4.pascal >/dev/null 2>&1 || true
+      adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+      adb shell am start -n com.tina4.pascal/.MainActivity >/dev/null 2>&1
+      sleep 3
+      cmd_screenshot android "$ROOT/build/device.png"
+      say "${B}--- tina4 log ---${Z}"; adb logcat -d -s tina4 | tail -20 ;;
+    ios)
+      cmd_ios
+      sleep 2
+      cmd_screenshot ios "$ROOT/build/ios.png"
+      cmd_logs ios ;;
+    macos)
+      cmd_macos --run
+      sleep 1
+      cmd_screenshot macos "$ROOT/build/macos.png" ;;
+    *) die "debug <android|ios|macos>" ;;
+  esac
+}
+
+# ---- app input (drive the running app: navigate, click, type) ----------------
+# tap <platform> X Y   — a click/tap at screen coords (device px)
+cmd_tap() {
+  plat="${1:-android}"; x="${2:-}"; y="${3:-}"
+  [ -n "$x" ] && [ -n "$y" ] || die "usage: tina4pascal tap <android|ios|macos> X Y"
+  case "$plat" in
+    android) adb_have_device || die "no device"; adb shell input tap "$x" "$y"; ok "tap $x,$y" ;;
+    ios)     ios_input_note ;;
+    macos)   macos_note ;;
+    *) die "tap <android|ios|macos> X Y" ;;
+  esac
+}
+# swipe <platform> X1 Y1 X2 Y2 [ms]  — scroll / drag
+cmd_swipe() {
+  plat="${1:-android}"; shift 2>/dev/null || true
+  [ $# -ge 4 ] || die "usage: tina4pascal swipe <platform> X1 Y1 X2 Y2 [ms]"
+  case "$plat" in
+    android) adb_have_device || die "no device"; adb shell input swipe "$1" "$2" "$3" "$4" "${5:-300}"; ok "swipe" ;;
+    ios)     ios_input_note ;;
+    macos)   macos_note ;;
+    *) die "swipe <platform> X1 Y1 X2 Y2 [ms]" ;;
+  esac
+}
+# text <platform> "string"  — type into the focused field
+cmd_text() {
+  plat="${1:-android}"; shift 2>/dev/null || true
+  [ $# -ge 1 ] || die "usage: tina4pascal text <platform> \"...\""
+  case "$plat" in
+    android) adb_have_device || die "no device"; adb shell input text "$(printf '%s' "$*" | sed 's/ /%s/g')"; ok "typed" ;;
+    ios)     ios_input_note ;;
+    macos)   macos_note ;;
+    *) die "text <platform> \"...\"" ;;
+  esac
+}
+ios_input_note() { die "live input on a physical iPhone needs a WebDriverAgent / in-app automation bridge — on the roadmap (docs/ROADMAP.md). screenshot + deploy + logs work today."; }
+macos_note()     { die "live macOS input isn't wired yet; the htmlviewer accepts a --script of click/drag/key/wheel at launch (see examples/htmlviewer). An in-app bridge is on the roadmap."; }
 
 # ---- usage -------------------------------------------------------------------
 usage() {
@@ -380,17 +470,23 @@ ${B}macOS run${Z}
   run [page.html]        build + open the HTML viewer on a page
   snapshot <html> <png>  headless off-screen render to PNG
 
-${B}Android${Z}
-  apk                    build native .so (all ABIs) + package a signed debug APK
-  deploy                 apk + adb install + launch on a connected device
-  debug                  deploy + screenshot + dump the on-device log (dev loop)
-  logcat [-f|N]          show the app's native log (tag tina4)
+${B}deploy & run${Z}  (targets: android · ios · macos · win64 · linux)
+  deploy <target>        build + install/open + launch on the target
+  ios                    (alias) build engine + xcodebuild sign + install + launch on iPhone
+  apk                    Android: native .so (all ABIs) + signed debug APK
 
-${B}iOS${Z}
-  ios                    build the engine + xcodebuild (sign) + install + launch on iPhone
+${B}debug loop${Z}
+  debug <target>         build → install → launch → screenshot → tail log
+                         (android · ios · macos; win64/linux cross-compile only)
 
-${B}device${Z}
-  screenshot [out.png] [android|ios]   grab the screen (default android)
+${B}drive the app${Z}  (the device-automation the IDE builds on)
+  screenshot <target> [out.png]   grab the app screen  (android · ios · macos)
+  tap <target> X Y                click/tap at screen coords
+  swipe <target> X1 Y1 X2 Y2 [ms] scroll / drag
+  text <target> "..."             type into the focused field
+  logs <target> [-f|N]            tail the on-device log
+                         (android: full live input; ios/macos: screenshot+deploy now,
+                          live input via WebDriverAgent / in-app bridge — roadmap)
 
   clean                  remove build outputs
 EOF
@@ -410,10 +506,14 @@ case "$cmd" in
   snapshot)   cmd_snapshot "$@" ;;
   compliance) cmd_compliance "$@" ;;
   apk)        cmd_apk "$@" ;;
-  deploy)     cmd_deploy "$@" ;;
+  deploy)     case "${1:-}" in android|ios|macos|win64|windows|linux) cmd_run_target "$@" ;; *) cmd_deploy "$@" ;; esac ;;
   ios)        cmd_ios "$@" ;;
   debug)      cmd_debug "$@" ;;
   screenshot) cmd_screenshot "$@" ;;
+  tap)        cmd_tap "$@" ;;
+  swipe)      cmd_swipe "$@" ;;
+  text)       cmd_text "$@" ;;
+  logs)       cmd_logs "$@" ;;
   logcat)     cmd_logcat "$@" ;;
   clean)      cmd_clean "$@" ;;
   help|-h|--help) usage ;;
