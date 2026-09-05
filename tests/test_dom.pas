@@ -357,8 +357,8 @@ begin
     // ── Stylesheet ───────────────────────────────────────────────────────
     Sheet.AddCSS(Parser.StyleBlocks[0]);
 
-    Check(Sheet.Rules.Count = 10,
-      '10 rules parsed (p, .note, div p.note, #headline, .title, .card, .btn:hover, input[type], h1, h2); @media skipped');
+    Check(Sheet.Rules.Count = 11,
+      '11 rules parsed (10 top-level + the .card rule inside @media, now parsed with its condition)');
     Check(Sheet.CustomProps.Count = 2, ':root custom properties collected as globals');
     Check(Sheet.CustomProps.TryGetValue('--main-color', Val) and (Val = '#ff0000'),
       '--main-color captured');
@@ -416,6 +416,7 @@ begin
     // ApplyTo: .card — var() resolution from :root scope
     Decls := TCSSDeclarations.Create;
     try
+      Sheet.SetMediaContext(1024, False);   // wide → the max-width:600 rule must NOT match
       Sheet.ApplyTo(CardDiv, Decls);
       Writeln('=== matched declarations for div.card ================================');
       for DeclPair in Decls do
@@ -426,7 +427,7 @@ begin
       Check(Decls.TryGetValue('padding', Val) and (Val = '4px'),
         'padding: var(--pad, 8px) resolved to 4px (definition wins over fallback)');
       Check(not Decls.ContainsKey('display'),
-        'NEGATIVE: rule inside skipped @media block not applied');
+        'NEGATIVE: @media(max-width:600) rule not applied at 1024px width');
     finally
       Decls.Free;
     end;

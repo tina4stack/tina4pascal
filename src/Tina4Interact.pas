@@ -92,6 +92,11 @@ procedure TinaSetHeader(const Name, Value: string);
   so the layout re-runs LoadImage and the image drops in. }
 procedure TinaInvalidateLayout;
 
+{ Dark mode: drives the `@media (prefers-color-scheme: dark)` rules (and its
+  :root var overrides). The shell sets it from the OS appearance; relayout re-
+  cascades. Off by default (light). }
+procedure TinaSetColorScheme(Dark: Boolean);
+
 { Capture protection: while ON, every element marked class="sensitive" (or a
   <secure> tag) paints as a solid redaction bar — its content is never drawn.
   The shell calls this the instant the OS reports a screen capture / recording
@@ -142,6 +147,7 @@ var
   GOptRowH: Single = 44;
   GOverX, GOverY, GOverW: Single;
   GScrollToFocus: Boolean = False;    // bring the focused field on-screen next paint
+  GDarkMode: Boolean = False;         // prefers-color-scheme: dark active?
   // open <input type=date> calendar overlay (nil = closed)
   GOpenDate: THTMLTag = nil;
   GCalYear: Integer = 0; GCalMonth: Integer = 1;   // the month on show
@@ -642,6 +648,7 @@ begin
   GSheet := TCSSStyleSheet.Create;
   for i := 0 to GParser.StyleBlocks.Count - 1 do
     GSheet.AddCSS(GParser.StyleBlocks[i]);
+  GSheet.SetMediaContext(W, GDarkMode);   // @media: viewport width + dark scheme
   GEngine := TLayoutEngine.Create(GCanvas, GSheet);
   GRoot := GEngine.Build(GParser.Root, W);
   GLayoutW := W;
@@ -656,6 +663,7 @@ begin
   if GParser = nil then begin ParseDoc(W); Exit; end;
   if GEngine <> nil then FreeAndNil(GEngine);
   if GRoot <> nil then FreeAndNil(GRoot);
+  GSheet.SetMediaContext(W, GDarkMode);   // @media context may have changed
   GEngine := TLayoutEngine.Create(GCanvas, GSheet);
   GRoot := GEngine.Build(GParser.Root, W);
   GLayoutW := W;
@@ -1316,6 +1324,13 @@ end;
 procedure TinaSetCaptureProtected(Protect: Boolean);
 begin
   SetCaptureProtected(Protect);   // paint-time redaction of class="sensitive"
+end;
+
+procedure TinaSetColorScheme(Dark: Boolean);
+begin
+  if Dark = GDarkMode then Exit;
+  GDarkMode := Dark;
+  GLayoutDirty := True;   // re-cascade: @media prefers-color-scheme rules change
 end;
 
 finalization

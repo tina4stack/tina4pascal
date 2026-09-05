@@ -151,6 +151,7 @@ type
     Selector: string;
     Declarations: TCSSDeclarations;
     SourceOrder: Integer;  // Order in which rule appeared in CSS (for stable sorting)
+    MediaCond: string;     // '' = always; else an @media condition to satisfy
     // Pre-classified routing key set at parse time so the cascade can
     // lookup-instead-of-scan. Determined from the rule's last selector
     // part (the one that targets the tag itself):
@@ -184,7 +185,13 @@ type
     // behaviour — owned value lists — is identical to the Delphi original.)
     FRulesByKey: TObjectDictionary<string, TList<TCSSRule>>;
     FUniversalRules: TList<TCSSRule>;  // rules with empty RoutingKey
-    procedure ParseCSS(const CSSText: string);
+    // @media-conditional :root custom props: (condition, name, value)
+    FMediaCustom: array of record Cond, Name, Val: string; end;
+    FHasMediaRules: Boolean;
+    FMediaW: Single;                   // current viewport width for @media eval
+    FMediaDark: Boolean;               // prefers-color-scheme: dark active?
+    procedure ParseCSS(const CSSText: string); overload;
+    procedure ParseBlock(const CSSText, MediaCond: string);
     function SelectorMatches(Rule: TCSSRule; Tag: THTMLTag): Boolean;
     function SelectorSpecificity(const Selector: string): Integer;
     procedure ClassifyRule(Rule: TCSSRule);
@@ -195,6 +202,15 @@ type
     procedure AddCSS(const CSSText: string);
     procedure Clear;
     procedure ApplyTo(Tag: THTMLTag; Declarations: TCSSDeclarations);
+    { Set the live @media evaluation context (viewport width + dark scheme).
+      Call before a cascade pass; rules/vars behind @media react to it. }
+    procedure SetMediaContext(ViewportW: Single; Dark: Boolean);
+    { Does an @media condition currently hold? min-width/max-width +
+      prefers-color-scheme: dark/light. Unknown features are permissive. }
+    function MatchesMedia(const Cond: string): Boolean;
+    { True if any @media rule was seen — lets the shell skip re-layout on a
+      scheme/size change when nothing depends on it. }
+    property HasMediaRules: Boolean read FHasMediaRules;
     function ResolveVar(const Value: string): string;
     function ResolveVarWith(const Value: string; Props: TDictionary<string, string>): string;
     property Rules: TObjectList<TCSSRule> read FRules;
@@ -441,6 +457,8 @@ procedure TCSSStyleSheet.Clear;
 begin
   FRules.Clear;
   FCustomProps.Clear;
+  SetLength(FMediaCustom, 0);
+  FHasMediaRules := False;
   ClearRuleIndex;
 end;
 
@@ -522,31 +540,37 @@ begin
 end;
 
 procedure TCSSStyleSheet.ParseCSS(const CSSText: string);
+var S: string; I, EndComment: Integer;
+begin
+  // Strip CSS comments /* ... */, then parse the top-level block (no @media).
+  S := CSSText;
+  I := S.IndexOf('/*');
+  while I >= 0 do
+  begin
+    EndComment := S.IndexOf('*/', I + 2);
+    if EndComment >= 0 then S := S.Remove(I, EndComment - I + 2)
+    else S := S.Remove(I);
+    I := S.IndexOf('/*');
+  end;
+  ParseBlock(S, '');
+end;
+
+{ Parse a block of rules. MediaCond (if non-empty) is stamped on every rule and
+  scopes its :root custom props, so @media blocks recurse in with their query. }
+procedure TCSSStyleSheet.ParseBlock(const CSSText, MediaCond: string);
 var
   S, SelectorPart, DeclBlock, DeclStr: string;
   BraceStart, BraceEnd, I: Integer;
   Rule: TCSSRule;
   Decls: TStringArray;
   Selectors: TStringArray;
-  EndComment, Depth, J: Integer;
+  Depth, J: Integer;
   SelStr, TrimmedSel, SelLowerTmp: string;
   IsGlobalScope: Boolean;
-  D, PropName, PropVal, RestStr: string;
+  D, PropName, PropVal, RestStr, InnerCond: string;
   ColonPos, ColonPos2: Integer;
 begin
-  // Strip CSS comments /* ... */
   S := CSSText;
-  I := S.IndexOf('/*');
-  while I >= 0 do
-  begin
-    EndComment := S.IndexOf('*/', I + 2);
-    if EndComment >= 0 then
-      S := S.Remove(I, EndComment - I + 2)
-    else
-      S := S.Remove(I);
-    I := S.IndexOf('/*');
-  end;
-
   I := 0;
   while I < Length(S) do
   begin
@@ -561,8 +585,7 @@ begin
     SelectorPart := S.Substring(I, BraceStart - I).Trim;
     DeclBlock := S.Substring(BraceStart + 1, BraceEnd - BraceStart - 1).Trim;
 
-    // Skip @rules (media queries, keyframes, etc.) — must find matching '}'
-    // by counting brace nesting, since @media blocks contain nested rules
+    // @rules: find the matching '}' by counting nesting (blocks nest rules).
     if SelectorPart.StartsWith('@') then
     begin
       Depth := 1;
@@ -572,6 +595,16 @@ begin
         if S.Chars[J] = '{' then Inc(Depth)
         else if S.Chars[J] = '}' then Dec(Depth);
         Inc(J);
+      end;
+      // @media: recurse into the inner rules, tagged with the query. Other
+      // @rules (keyframes/font-face/supports/import) are still skipped.
+      if SelectorPart.ToLower.StartsWith('@media') then
+      begin
+        FHasMediaRules := True;
+        InnerCond := Trim(Copy(SelectorPart, 7, MaxInt));       // after "@media"
+        // inner block content between BraceStart+1 and the matching close (J-1)
+        ParseBlock(S.Substring(BraceStart + 1, (J - 1) - (BraceStart + 1)),
+          Trim(InnerCond));
       end;
       I := J;
       Continue;
@@ -591,6 +624,7 @@ begin
 
         Rule := TCSSRule.Create;
         Rule.Selector := TrimmedSel;
+        Rule.MediaCond := MediaCond;   // '' unless inside an @media block
 
         // Check if this is a :root or * selector (global custom properties)
         IsGlobalScope := SameText(TrimmedSel, ':root') or (TrimmedSel = '*');
@@ -614,11 +648,19 @@ begin
             // Strip !important (we don't track priority yet but must strip for parsing)
             if PropVal.EndsWith('!important') then
               PropVal := PropVal.Substring(0, PropVal.Length - 10).Trim;
-            // Collect CSS custom properties (--var-name) from :root as globals
+            // Collect CSS custom properties (--var-name) from :root as globals.
+            // Inside @media, they become conditional overrides (dark-mode themes).
             if PropName.StartsWith('--') then
             begin
-              if IsGlobalScope then
+              if IsGlobalScope and (MediaCond = '') then
                 FCustomProps.AddOrSetValue(PropName, PropVal)
+              else if IsGlobalScope then
+              begin
+                SetLength(FMediaCustom, Length(FMediaCustom) + 1);
+                FMediaCustom[High(FMediaCustom)].Cond := MediaCond;
+                FMediaCustom[High(FMediaCustom)].Name := PropName;
+                FMediaCustom[High(FMediaCustom)].Val := PropVal;
+              end
               else
                 Rule.Declarations.AddOrSetValue(PropName, PropVal);
             end
@@ -658,6 +700,53 @@ end;
 procedure TCSSStyleSheet.AddCSS(const CSSText: string);
 begin
   ParseCSS(CSSText);
+end;
+
+procedure TCSSStyleSheet.SetMediaContext(ViewportW: Single; Dark: Boolean);
+begin
+  FMediaW := ViewportW;
+  FMediaDark := Dark;
+end;
+
+{ px value after the ':' in a media feature like "min-width: 768px". }
+function MediaPx(const Feature: string): Single;
+var p: Integer; s: string;
+begin
+  Result := 0;
+  p := Pos(':', Feature);
+  if p <= 0 then Exit;
+  s := Trim(Copy(Feature, p + 1, MaxInt));
+  s := StringReplace(s, 'px', '', [rfReplaceAll, rfIgnoreCase]);
+  Result := StrToFloatDef(Trim(s), 0);
+end;
+
+function TCSSStyleSheet.MatchesMedia(const Cond: string): Boolean;
+var c, part: string; parts: TStringArray; k: Integer;
+begin
+  Result := True;
+  if Trim(Cond) = '' then Exit;
+  c := LowerCase(Cond);
+  c := StringReplace(c, ' and ', '&', [rfReplaceAll]);
+  c := StringReplace(c, '(', '', [rfReplaceAll]);
+  c := StringReplace(c, ')', '', [rfReplaceAll]);
+  parts := c.Split(['&']);
+  for k := 0 to High(parts) do
+  begin
+    part := Trim(parts[k]);
+    if (part = '') or (part = 'screen') or (part = 'all') then Continue;
+    if part = 'print' then Exit(False);             // we render to a screen
+    if Pos('prefers-color-scheme', part) > 0 then
+    begin
+      if Pos('dark', part) > 0 then begin if not FMediaDark then Exit(False); end
+      else if Pos('light', part) > 0 then begin if FMediaDark then Exit(False); end;
+      Continue;
+    end;
+    if Pos('min-width', part) > 0 then
+    begin if FMediaW < MediaPx(part) then Exit(False); Continue; end;
+    if Pos('max-width', part) > 0 then
+    begin if FMediaW > MediaPx(part) then Exit(False); Continue; end;
+    // unknown feature → permissive (never drop styles we don't understand)
+  end;
 end;
 
 function TCSSStyleSheet.ResolveVar(const Value: string): string;
@@ -992,6 +1081,7 @@ var
   ClsParts: TStringArray;
   List: TList<TCSSRule>;
   R, Rule: TCSSRule;
+  J: Integer;
 begin
   // Collect matching rules and sort by specificity (lower first, so higher overrides)
   MatchedRules := TList<TCSSRule>.Create;
@@ -1002,6 +1092,11 @@ begin
     // Start with global custom props (from :root and *)
     for PropPair in FCustomProps do
       LocalProps.AddOrSetValue(PropPair.Key, PropPair.Value);
+    // Overlay @media-conditional :root vars whose query currently holds
+    // (e.g. prefers-color-scheme: dark theme swaps) — later matches win.
+    for J := 0 to High(FMediaCustom) do
+      if MatchesMedia(FMediaCustom[J].Cond) then
+        LocalProps.AddOrSetValue(FMediaCustom[J].Name, FMediaCustom[J].Val);
 
     // Indexed cascade: instead of asking every rule "do you match?", we
     // build a candidate set from rules indexed by the tag's id, classes,
@@ -1046,9 +1141,11 @@ begin
         if not Seen.ContainsKey(R) then begin Candidates.Add(R); Seen.Add(R, True); end;
 
       // Verify each candidate with the full selector matcher (handles
-      // descendant ancestry, pseudo-classes, attribute filters).
+      // descendant ancestry, pseudo-classes, attribute filters), and drop any
+      // whose @media condition doesn't currently hold.
       for Rule in Candidates do
-        if SelectorMatches(Rule, Tag) then
+        if SelectorMatches(Rule, Tag) and
+           ((Rule.MediaCond = '') or MatchesMedia(Rule.MediaCond)) then
           MatchedRules.Add(Rule);
     finally
       Seen.Free;
