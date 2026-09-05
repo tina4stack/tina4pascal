@@ -1,0 +1,40 @@
+<!doctype html>
+<html><head><style>
+body{font-family:sans-serif;background:#fbfaf7;color:#15162e;margin:0;padding:20px}
+h1{font-size:23px;margin:0 0 2px;color:#2b41e6}
+.sub{color:#5b5c78;font-size:13px;margin:0 0 16px}
+.btn{display:inline-block;background:#2b41e6;color:#ffffff;border-radius:11px;
+     padding:12px 16px;font-weight:bold;font-size:15px;margin:0 8px 10px 0}
+.btn:active{background:#ff5aa0}          /* real CSS :active — hot pink on press */
+.btn2{display:inline-block;background:#f3f2fb;color:#15162e;border:1px solid #e6e5f0;
+      border-radius:11px;padding:12px 16px;font-size:15px;margin:0 8px 10px 0}
+.btn2:active{background:#ffd23c;border-color:#ffd23c}  /* yellow on press */
+.card{background:#ffffff;border:1px solid #e6e5f0;border-radius:16px;padding:16px;margin-top:6px}
+.lbl{color:#5b5c78;font-size:12px;font-weight:bold;margin-bottom:10px}
+#result{font-family:monospace;font-size:13px;white-space:pre-wrap;line-height:1.5;color:#15162e}
+.inc{font-family:monospace;font-size:12px;white-space:pre-wrap;line-height:1.5;color:#15162e}
+.seg{appearance:none;padding:11px 18px;margin-right:8px;background:#f3f2fb;color:#15162e;
+     border:1px solid #e6e5f0;border-radius:11px;font-weight:bold;font-size:15px}
+.seg:checked{background:#2b41e6;color:#ffffff;border-color:#2b41e6}   /* selected segment */
+</style></head><body>
+  <h1>HTTP + &lt;include&gt; · iOS</h1>
+  <p class="sub">OS TLS (NSURLSession) — real https on-device, nothing crypto shipped</p>
+  <div>
+    <span class="btn"  onclick="Http:Get(https://api.github.com/zen)">GitHub Zen</span>
+    <span class="btn2" onclick="Http:Get(https://httpbin.org/get)">httpbin GET</span>
+  </div>
+  <div class="card">
+    <div class="lbl">SEGMENTED · RADIOS STYLED AS BUTTONS (:checked)</div>
+    <input type="radio" name="view" value="Day" checked class="seg">
+    <input type="radio" name="view" value="Week" class="seg">
+    <input type="radio" name="view" value="Month" class="seg">
+  </div>
+  <div class="card">
+    <div class="lbl">TAP RESPONSE</div>
+    <div id="result">Tap a button — the reply lands here.</div>
+  </div>
+  <div class="card">
+    <div class="lbl">&lt;INCLUDE SRC&gt; · AUTHENTICATED, AUTO-LOADED</div>
+    <include src="https://httpbin.org/headers" authorization="Bearer TINA4-IOS-SECRET">
+  </div>
+</body></html>

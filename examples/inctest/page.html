@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><style>
+body{font-family:sans-serif;background:#fbfaf7;color:#15162e;margin:0;padding:18px}
+h3{color:#2b41e6;margin:0 0 4px}
+.sub{color:#5b5c78;font-size:12px;margin:0 0 12px}
+.frame{background:#fff;border:1px solid #e6e5f0;border-radius:14px;padding:12px}
+pre,code{font-family:monospace;font-size:11px;white-space:pre-wrap;color:#15162e}
+</style></head><body>
+  <h3>&lt;include src&gt; · authenticated</h3>
+  <p class="sub">The card below is fetched at runtime and spliced into this page. httpbin echoes our request headers — look for Authorization.</p>
+  <div class="frame">
+    <include src="https://httpbin.org/headers" authorization="Bearer TINA4-INCLUDE-SECRET">
+  </div>
+</body></html>

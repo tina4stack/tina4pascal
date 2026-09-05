@@ -663,9 +663,18 @@ begin
 
   case kind of
     ckCheckbox, ckRadio:
+      if St.AppearanceNone then
       begin
-        // 18px glyph (comfortable tap target); the control box is at least as
-        // tall as the text line box so it centres against the label.
+        // appearance:none → render as a styled button (segmented control / tab),
+        // captioned by the value attribute. Selection = the `checked` attribute,
+        // stylable with :checked. Falls through to the shared button sizing below.
+        txt := Trim(Tag.GetAttribute('value'));
+        if txt = '' then txt := InnerText(Tag);
+      end
+      else
+      begin
+        // native 18px glyph (comfortable tap target); at least as tall as the
+        // text line box so it centres against the label.
         Result.W := 18;
         Result.H := Max(18, lineH);
         Exit;
@@ -720,7 +729,7 @@ begin
   end
   else if wChars > 0 then
     Result.W := wChars + padH
-  else if kind = ckButton then
+  else if (kind = ckButton) or St.AppearanceNone then
     Result.W := FCanvas.MeasureText(txt, St.FontSize, FontStylesOf(St)).Width + padH
   else
     Result.W := Min(240 + padH, AvailW);
@@ -788,7 +797,7 @@ begin
     run.Y := Max(St.BorderWidths.Top,
       (Result.H - (m.Ascent + m.Descent)) / 2);
     if ph <> '' then run.Color := $FF9CA3AF else run.Color := St.Color; run.LetterSpacing := 0;
-    if kind = ckButton then    // centre button captions horizontally too
+    if (kind = ckButton) or St.AppearanceNone then    // centre the caption
       run.X := (Result.W - m.Width) / 2;
     Result.Runs.Add(run);
   end;
@@ -2056,6 +2065,19 @@ begin
   Result := (TTina4Color(a) shl 24) or (C and $00FFFFFF);
 end;
 
+{ Multiply RGB by factor (keep alpha) — the pressed/active feedback for a
+  tapped button darkens its fill toward black. Factor 0.85 ≈ a 15% press. }
+function Darken(C: TTina4Color; Factor: Single): TTina4Color;
+var r, g, b: Integer;
+begin
+  r := Round(((C shr 16) and $FF) * Factor);
+  g := Round(((C shr 8)  and $FF) * Factor);
+  b := Round(( C         and $FF) * Factor);
+  if r > 255 then r := 255; if g > 255 then g := 255; if b > 255 then b := 255;
+  Result := (C and $FF000000) or (TTina4Color(r) shl 16)
+            or (TTina4Color(g) shl 8) or TTina4Color(b);
+end;
+
 procedure PaintBoxEx(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single;
   Opacity: Single; Hidden: Boolean); forward;
 
@@ -2166,8 +2188,9 @@ begin
   end;
   // checkbox / radio: small drawn glyphs, state from the 'checked' attribute.
   // gy centres the 16px glyph within the (line-height-tall) control box so it
-  // lines up with the label text beside it.
-  if Box.ControlKind in [ckCheckbox, ckRadio] then
+  // lines up with the label text beside it. appearance:none opts out of the
+  // native glyph — it paints as a normal styled box (segmented button) below.
+  if (Box.ControlKind in [ckCheckbox, ckRadio]) and not st.AppearanceNone then
   begin
     gy := y + (Box.H - 18) / 2;
     if Box.ControlKind = ckRadio then

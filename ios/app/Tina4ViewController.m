@@ -13,10 +13,10 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    NSString *path = [[NSBundle mainBundle] pathForResource:@"controls" ofType:@"html"];
+    NSString *path = [[NSBundle mainBundle] pathForResource:@"http_demo" ofType:@"html"];
     NSString *html = [NSString stringWithContentsOfFile:path
         encoding:NSUTF8StringEncoding error:nil];
-    if (!html) html = @"<body><h1>controls.html not found</h1></body>";
+    if (!html) html = @"<body><h1>http_demo.html not found</h1></body>";
     [_view loadHTML:html];
 }
 

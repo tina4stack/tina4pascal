@@ -60,6 +60,9 @@ function TinaTouch(Action: Integer; X, Y: Single): Integer;
 { Wheel/trackpad scroll by (DX,DY) at (X,Y) device px — scrolls the box under
   the cursor, or the page. (Desktop shells deliver deltas; the engine scrolls.) }
 procedure TinaScrollBy(X, Y, DX, DY: Single);
+{ Cursor moved (desktop mouse, no button) → drives the :hover pseudo-class.
+  Pass device px, like TinaTouch. Never called on touch platforms. }
+procedure TinaHover(X, Y: Single);
 { Advance momentum one frame; 1 = keep animating. }
 function TinaTick: Integer;
 { 1 once if the just-loaded document autofocused an input (raise the keyboard). }
@@ -79,11 +82,16 @@ procedure TinaSetFile(const Name: string);
 { A captured photo path → <img id="shot"> (and stamps the camera control). }
 procedure TinaSetPhoto(const Path: string);
 
+{ Set a default HTTP header sent on every request — Http:Get, API calls, and
+  <include> fetches. Call once after login, e.g.
+  TinaSetHeader('Authorization', 'Bearer ' + token). '' value clears it. }
+procedure TinaSetHeader(const Name, Value: string);
+
 implementation
 
 uses
-  SysUtils, Classes, Math, fpjson, jsonparser,
-  Tina4HTMLDom, Tina4HTMLLayout, Tina4Events, Tina4Frond, Tina4Http;
+  SysUtils, Classes, Math, Generics.Collections, fpjson, jsonparser,
+  Tina4HTMLDom, Tina4HTMLLayout, Tina4Events, Tina4Frond, Tina4Http, Tina4Services;
 
 var
   GFrond: TFrond = nil;         // the template engine (created on first use)
@@ -184,7 +192,7 @@ begin
 end;
 
 { Collect focusable text/textarea controls (skipping disabled) in doc order. }
-procedure CollectInputs(Node: THTMLTag; List: TList);
+procedure CollectInputs(Node: THTMLTag; List: Classes.TList);
 var c: THTMLTag;
 begin
   if Node = nil then Exit;
@@ -238,6 +246,66 @@ begin
   if lbl.Parent <> nil then           // a control beside it in the same row
     for c in lbl.Parent.Children do
       if CtrlKind(c) <> ckNone then Exit(c);
+end;
+
+{ The actionable element under a point — an onclick target or a button/checkbox/
+  radio — for :active-style press feedback. Text inputs are excluded (they get a
+  caret, not a press fill). Platform-agnostic: same result on every shell. }
+function PressTargetAt(cx, cy: Single): THTMLTag;
+var hit, ctrl: THTMLTag; k: TControlKind;
+begin
+  Result := nil;
+  if GRoot = nil then Exit;
+  hit := HitTest(GRoot, cx, cy + GScrollY);
+  ctrl := LabelTarget(hit);
+  if ctrl = nil then
+  begin
+    ctrl := hit;
+    while (ctrl <> nil) and (CtrlKind(ctrl) = ckNone) and
+          not ctrl.HasAttribute('onclick') do
+      ctrl := ctrl.Parent;
+  end;
+  if ctrl = nil then Exit;
+  k := CtrlKind(ctrl);
+  if ctrl.HasAttribute('onclick') or (k = ckButton) or (k = ckCheckbox)
+     or (k = ckRadio) or (k = ckFile) then
+    Result := ctrl;
+end;
+
+var
+  GActiveTag: THTMLTag = nil;    // element with the :active pseudo-class (pressed)
+  GHoverTag: THTMLTag = nil;     // element with the :hover pseudo-class (cursor/finger over)
+
+{ Dirty layout so a pseudo-class change re-applies its CSS — but only when the
+  sheet actually uses :hover/:active/:focus, so a normal page pays nothing. }
+procedure PseudoDirty;
+begin
+  if (GSheet <> nil) and GSheet.HasInteractiveSelectors then GLayoutDirty := True;
+end;
+
+{ Set the :hover element (nil to clear). }
+procedure SetHoverTag(T: THTMLTag);
+begin
+  if T = GHoverTag then Exit;
+  if GHoverTag <> nil then GHoverTag.IsHovered := False;
+  GHoverTag := T;
+  if GHoverTag <> nil then GHoverTag.IsHovered := True;
+  PseudoDirty;
+end;
+
+{ Set the :active element (nil to clear). A press is the touch equivalent of a
+  hover, so it drives BOTH :active and :hover — a page styled with either gives
+  feedback on touch. On desktop the cursor already set hover; this is a no-op there. }
+procedure SetActiveTag(T: THTMLTag);
+begin
+  if T <> GActiveTag then
+  begin
+    if GActiveTag <> nil then GActiveTag.IsActive := False;
+    GActiveTag := T;
+    if GActiveTag <> nil then GActiveTag.IsActive := True;
+    PseudoDirty;
+  end;
+  SetHoverTag(T);
 end;
 
 { Clear `checked` from every radio in the same name-group as Tag. }
@@ -361,11 +429,191 @@ begin
     if AutofocusFirst(c) then Exit(True);
 end;
 
+{ ---- <include src="…"> — fetch an HTML snippet and splice it into the DOM ----
+
+  <include> is replaced (not wrapped) by the fetched fragment, so its content
+  joins the parent flow naturally. The fetch is async; a stable marker attribute
+  lets the callback re-find the node, so an intervening re-parse can't dangle.
+  Auth travels as headers: a global default (HttpSetHeader) OR per-tag
+  attributes — authorization="Bearer …" / bearer="…" — which Frond can template
+  in. `sandbox` neutralises a remote/untrusted snippet (drops script/iframe/
+  object/embed and every on* handler) for adverts and third-party content. }
+
+var
+  GIncSeq: Integer = 0;                 // unique marker per include
+  GIncPending: TStringList = nil;       // reqId → "marker|src"
+
+procedure LoadIncludes(Root: THTMLTag); forward;
+procedure InjectInclude(const Marker, Html: string); forward;
+procedure OnIncludeResult(const R: TTina4HttpResponse); forward;
+
+{ Strip interactivity from an untrusted subtree: dangerous tags + on* handlers. }
+procedure SandboxSubtree(Node: THTMLTag);
+var i: Integer; c: THTMLTag; keys: array of string; k: string;
+begin
+  if Node = nil then Exit;
+  for i := Node.Children.Count - 1 downto 0 do
+  begin
+    c := Node.Children[i];
+    if SameText(c.TagName, 'script') or SameText(c.TagName, 'iframe')
+       or SameText(c.TagName, 'object') or SameText(c.TagName, 'embed') then
+    begin
+      Node.Children.Delete(i); c.Parent := nil; c.Free; Continue;
+    end;
+    SandboxSubtree(c);
+  end;
+  if Node.Attributes <> nil then
+  begin
+    SetLength(keys, 0);
+    for k in Node.Attributes.Keys do
+      if (Length(k) >= 2) and SameText(Copy(k, 1, 2), 'on') then
+      begin SetLength(keys, Length(keys) + 1); keys[High(keys)] := k; end;
+    for k in keys do Node.Attributes.Remove(k);
+  end;
+end;
+
+function FindByMarker(Node: THTMLTag; const Marker: string): THTMLTag;
+var c: THTMLTag;
+begin
+  Result := nil;
+  if Node = nil then Exit;
+  if Node.GetAttribute('data-tina4-inc') = Marker then Exit(Node);
+  for c in Node.Children do
+  begin
+    Result := FindByMarker(c, Marker);
+    if Result <> nil then Exit;
+  end;
+end;
+
+{ Per-include auth header, from attributes (Frond can template the value in). }
+function IncHeadersOf(Node: THTMLTag): string;
+begin
+  if Node.HasAttribute('authorization') then
+    Result := 'Authorization: ' + Node.GetAttribute('authorization')
+  else if Node.HasAttribute('bearer') then
+    Result := 'Authorization: Bearer ' + Node.GetAttribute('bearer')
+  else
+    Result := '';
+end;
+
+procedure InjectInclude(const Marker, Html: string);
+var
+  inc, parent, c: THTMLTag; fragP: THTMLParser; newNodes: TList<THTMLTag>;
+  i, idx, k: Integer; sandboxed: Boolean;
+begin
+  if GParser = nil then Exit;
+  inc := FindByMarker(GParser.Root, Marker);
+  if inc = nil then Exit;                 // node gone (a re-parse happened)
+  parent := inc.Parent;
+  if parent = nil then Exit;
+  idx := parent.Children.IndexOf(inc);
+  if idx < 0 then Exit;
+  sandboxed := inc.HasAttribute('sandbox');
+  fragP := THTMLParser.Create;
+  newNodes := TList<THTMLTag>.Create;
+  try
+    fragP.Parse(Html);
+    for i := 0 to fragP.StyleBlocks.Count - 1 do   // fragment's own <style>
+      GSheet.AddCSS(fragP.StyleBlocks[i]);
+    while fragP.Root.Children.Count > 0 do          // detach so Free won't take them
+    begin
+      c := fragP.Root.Children[0];
+      fragP.Root.Children.Delete(0);
+      c.Parent := nil;
+      if sandboxed then SandboxSubtree(c);
+      newNodes.Add(c);
+    end;
+    parent.Children.Delete(idx);                    // replace <include> with the nodes
+    inc.Parent := nil;
+    for k := newNodes.Count - 1 downto 0 do
+    begin
+      newNodes[k].Parent := parent;
+      parent.Children.Insert(idx, newNodes[k]);
+    end;
+    inc.Free;
+    for k := 0 to newNodes.Count - 1 do             // includes nested in the fragment
+      LoadIncludes(newNodes[k]);
+  finally
+    newNodes.Free;
+    fragP.Free;
+  end;
+  GLayoutDirty := True;
+end;
+
+procedure OnIncludeResult(const R: TTina4HttpResponse);
+var v, marker, src, msg: string; p: Integer;
+begin
+  if GIncPending = nil then Exit;
+  v := GIncPending.Values[IntToStr(R.Id)];
+  if v = '' then Exit;
+  GIncPending.Values[IntToStr(R.Id)] := '';
+  p := Pos('|', v);
+  marker := Copy(v, 1, p - 1); src := Copy(v, p + 1, MaxInt);
+  if R.Ok then
+  begin
+    CachePut('inc:' + src, R.Body, 300);            // 5-min cache
+    InjectInclude(marker, R.Body);
+  end
+  else
+  begin
+    if R.Error <> '' then msg := R.Error else msg := 'HTTP ' + IntToStr(R.Status);
+    InjectInclude(marker,
+      '<div style="color:#b00020;font-size:12px;padding:6px">include failed: '
+      + msg + '</div>');
+  end;
+end;
+
+procedure CollectIncludes(Node: THTMLTag; List: TList<THTMLTag>);
+var c: THTMLTag;
+begin
+  if Node = nil then Exit;
+  if SameText(Node.TagName, 'include') and Node.HasAttribute('src')
+     and not Node.HasAttribute('data-tina4-inc') then
+  begin
+    Inc(GIncSeq);
+    Node.Attributes.AddOrSetValue('data-tina4-inc', IntToStr(GIncSeq));
+    List.Add(Node);
+  end;
+  for c in Node.Children do CollectIncludes(c, List);
+end;
+
+procedure ProcessInclude(Node: THTMLTag);
+var src, hdrs, cached, marker: string; reqId: Integer;
+begin
+  marker := Node.GetAttribute('data-tina4-inc');
+  src := Trim(Node.GetAttribute('src'));
+  if src = '' then Exit;
+  if CacheGet('inc:' + src, cached) then
+  begin
+    InjectInclude(marker, cached);                  // instant, from cache
+    Exit;
+  end;
+  if GIncPending = nil then GIncPending := TStringList.Create;
+  hdrs := IncHeadersOf(Node);
+  reqId := HttpGetEx(src, hdrs, @OnIncludeResult);
+  GIncPending.Values[IntToStr(reqId)] := marker + '|' + src;
+end;
+
+{ Scan the tree, mark every un-loaded <include>, then fetch/inject each. Marking
+  before processing keeps the traversal clean of the mutations inject causes. }
+procedure LoadIncludes(Root: THTMLTag);
+var list: TList<THTMLTag>; i: Integer;
+begin
+  list := TList<THTMLTag>.Create;
+  try
+    CollectIncludes(Root, list);
+    for i := 0 to list.Count - 1 do ProcessInclude(list[i]);
+  finally
+    list.Free;
+  end;
+end;
+
 { Full re-parse: build DOM + stylesheet + engine + layout. }
 procedure ParseDoc(W: Single);
 var i: Integer;
 begin
   BlurAll;
+  GActiveTag := nil; GHoverTag := nil;   // old DOM about to be freed — drop refs
   if GParser <> nil then FreeAndNil(GParser);
   if GSheet <> nil then FreeAndNil(GSheet);
   if GEngine <> nil then FreeAndNil(GEngine);
@@ -380,6 +628,7 @@ begin
   GLayoutW := W;
   GDocDirty := False; GLayoutDirty := False;
   if AutofocusFirst(GParser.Root) then GAutoKeyboard := True;
+  LoadIncludes(GParser.Root);            // fetch + splice any <include src="…">
 end;
 
 { Layout-only rebuild: keep the (mutated) DOM, rebuild boxes from it. }
@@ -440,14 +689,14 @@ const
   CHECK = #$E2#$9C#$93;   // ✓
   INK = $FF15162E; BLUE = $FF2B41E6; TINT = $FFEFF1FE; BORDER = $FFE6E5F0;
 var
-  box: TLayoutBox; opts: TList; c: THTMLTag; i: Integer;
+  box: TLayoutBox; opts: Classes.TList; c: THTMLTag; i: Integer;
   bx, by, bw, panelH, rowY, textY, lblX: Single; cur, txt: string; sel: Boolean;
 begin
   GOptCount := 0;
   if (GOpenSelect = nil) or (GRoot = nil) then Exit;
   box := FindBoxForTag(GRoot, GOpenSelect);
   if box = nil then begin CloseSelect; Exit; end;
-  opts := TList.Create;
+  opts := Classes.TList.Create;
   try
     for c in GOpenSelect.Children do
       if SameText(c.TagName, 'option') then opts.Add(c);
@@ -490,13 +739,13 @@ end;
 
 { A tap at (cx,cy) screen px while the dropdown is open: pick a row or dismiss. }
 procedure HandleOverlayTap(cx, cy: Single);
-var opts: TList; i: Integer; c: THTMLTag; v: string;
+var opts: Classes.TList; i: Integer; c: THTMLTag; v: string;
 begin
   if (cx >= GOverX) and (cx <= GOverX + GOverW) then
     for i := 0 to GOptCount - 1 do
       if (cy >= GOptTop[i]) and (cy < GOptTop[i] + GOptRowH) then
       begin
-        opts := TList.Create;
+        opts := Classes.TList.Create;
         try
           for c in GOpenSelect.Children do
             if SameText(c.TagName, 'option') then opts.Add(c);
@@ -663,10 +912,12 @@ begin
            GDragBox := sb
          else
            GDragBox := nil;
+         SetActiveTag(PressTargetAt(cx, cy));    // :active pseudo-class on press
        end;
     2: begin
          dx := cx - GLastX; dy := cy - GLastY; GLastX := cx; GLastY := cy;
-         if (Abs(cx - GDownX) > 4) or (Abs(cy - GDownY) > 4) then GMoved := True;
+         if (Abs(cx - GDownX) > 4) or (Abs(cy - GDownY) > 4) then
+         begin GMoved := True; SetActiveTag(nil); end;   // a drag cancels :active
          GVelX := GVelX * 0.5 + dx * 0.5;      // responsive velocity
          GVelY := GVelY * 0.5 + dy * 0.5;
          if GDragBox <> nil then
@@ -682,6 +933,7 @@ begin
          end;
        end;
     1: begin
+         SetActiveTag(nil);               // release: drop :active
          if GMoved then
          begin
            if (Abs(GVelX) > 1) or (Abs(GVelY) > 1) then
@@ -713,6 +965,15 @@ begin
          end;
        end;
   end;
+end;
+
+procedure TinaHover(X, Y: Single);
+var cx, cy: Single;
+begin
+  if GRoot = nil then Exit;
+  if (GSheet = nil) or not GSheet.HasInteractiveSelectors then Exit;  // nothing hovers
+  cx := X / GDensity; cy := Y / GDensity;
+  SetHoverTag(HitTest(GRoot, cx, cy + GScrollY));
 end;
 
 procedure TinaScrollBy(X, Y, DX, DY: Single);
@@ -811,11 +1072,11 @@ begin
 end;
 
 function TinaFocusNext: Integer;
-var list: TList; idx: Integer;
+var list: Classes.TList; idx: Integer;
 begin
   Result := 0;
   if GParser = nil then Exit;
-  list := TList.Create;
+  list := Classes.TList.Create;
   try
     CollectInputs(GParser.Root, list);
     idx := list.IndexOf(GFocusedTag);
@@ -847,7 +1108,13 @@ begin
   GLayoutDirty := True;
 end;
 
+procedure TinaSetHeader(const Name, Value: string);
+begin
+  HttpSetHeader(Name, Value);
+end;
+
 finalization
   GFrond.Free;
+  GIncPending.Free;
 
 end.

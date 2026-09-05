@@ -253,6 +253,7 @@ type
     Display: string;
     WhiteSpace: string;
     BoxSizing: string;
+    AppearanceNone: Boolean;    // appearance:none — strip native control chrome
     CSSCursor: string;
     TextTransform: string;
     Opacity: Single;
@@ -636,7 +637,8 @@ begin
           SelLowerTmp := TrimmedSel.ToLower;
           if (Pos(':hover', SelLowerTmp) > 0) or
              (Pos(':active', SelLowerTmp) > 0) or
-             (Pos(':focus', SelLowerTmp) > 0) then
+             (Pos(':focus', SelLowerTmp) > 0) or
+             (Pos(':checked', SelLowerTmp) > 0) then
             FHasInteractiveSelectors := True;
         end
         else
@@ -780,7 +782,7 @@ function MatchesSingleSelector(const Sel: string; Tag: THTMLTag): Boolean;
 var
   SelTag, SelClass, SelId: string;
   DotPos, HashPos: Integer;
-  RequireHover, RequireActive, RequireFocus: Boolean;
+  RequireHover, RequireActive, RequireFocus, RequireChecked: Boolean;
   S, Suffix, Inner, V, Rest, TagClass, TagId, ClsPart: string;
   ColonIdx, BracketStart, BracketEnd, EqIdx: Integer;
   AttrChecks: array of TPair<string, string>;
@@ -800,6 +802,7 @@ begin
   RequireHover := False;
   RequireActive := False;
   RequireFocus := False;
+  RequireChecked := False;
   SetLength(AttrChecks, 0);
 
   S := Sel;
@@ -822,6 +825,7 @@ begin
       if Suffix = ':hover' then begin RequireHover := True; S := S.Substring(0, ColonIdx); end
       else if Suffix = ':active' then begin RequireActive := True; S := S.Substring(0, ColonIdx); end
       else if Suffix = ':focus' then begin RequireFocus := True; S := S.Substring(0, ColonIdx); end
+      else if Suffix = ':checked' then begin RequireChecked := True; S := S.Substring(0, ColonIdx); end
       else Break;
     end;
   end;
@@ -923,7 +927,7 @@ begin
   // case (e.g. `:hover` or `[disabled]`) is allowed when one of the
   // pseudo-class flags is required or an attribute check is in play.
   if (SelTag = '') and (SelClass = '') and (SelId = '') and
-     (not (RequireHover or RequireActive or RequireFocus)) and
+     (not (RequireHover or RequireActive or RequireFocus or RequireChecked)) and
      (Length(AttrChecks) = 0) then Exit;
 
   // Pseudo-class state checks. All required flags must currently be set
@@ -931,6 +935,7 @@ begin
   if RequireHover and (not Tag.IsHovered) then Exit;
   if RequireActive and (not Tag.IsActive) then Exit;
   if RequireFocus and (not Tag.IsFocused) then Exit;
+  if RequireChecked and (not Tag.HasAttribute('checked')) then Exit;
 
   // Attribute checks — `[name]` requires presence, `[name="val"]` requires
   // exact value match.
@@ -1445,7 +1450,7 @@ begin
     SameText(Name, 'col') or SameText(Name, 'area') or
     SameText(Name, 'base') or SameText(Name, 'embed') or
     SameText(Name, 'source') or SameText(Name, 'track') or
-    SameText(Name, 'wbr');
+    SameText(Name, 'wbr') or SameText(Name, 'include');
 end;
 
 class function THTMLParser.IsBlockTag(const Name: string): Boolean;
@@ -2722,6 +2727,9 @@ begin
     Style.WhiteSpace := Temp.Trim.ToLower;
   if Decls.TryGetValue('box-sizing', Temp) and not ShouldSkip(Temp) then
     Style.BoxSizing := Temp.ToLower;
+  if (Decls.TryGetValue('appearance', Temp) or Decls.TryGetValue('-webkit-appearance', Temp))
+     and not ShouldSkip(Temp) then
+    Style.AppearanceNone := SameText(Temp.Trim, 'none');
   if Decls.TryGetValue('cursor', Temp) and not ShouldSkip(Temp) then
     Style.CSSCursor := Temp.ToLower;
 
