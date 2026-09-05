@@ -71,6 +71,8 @@ type
     procedure mouseDragged(event: NSEvent); override;
     procedure scrollWheel(event: NSEvent); override;
     procedure keyDown(event: NSEvent); override;
+    { NSWindowDelegate: closing the window quits the app (no lingering process). }
+    procedure windowWillClose(notification: NSNotification); message 'windowWillClose:';
   end;
 
   TCocoaShell = class(TTina4Shell)
@@ -513,6 +515,11 @@ begin
   // deliberately not calling inherited: avoids the system beep
 end;
 
+procedure TTina4View.windowWillClose(notification: NSNotification);
+begin
+  NSApp.terminate(nil);   // closing the window quits the app
+end;
+
 procedure TTina4View.scrollWheel(event: NSEvent);
 var
   dx, dy: Single;
@@ -563,6 +570,7 @@ begin
   FView := TTina4View.alloc.initWithFrame(rect);
   FView.shell := Self;
   FWindow.setContentView(FView);
+  FWindow.setDelegate(NSWindowDelegateProtocol(FView));   // windowWillClose → quit
   FWindow.setAcceptsMouseMovedEvents(True);
   FWindow.makeFirstResponder(FView);
 

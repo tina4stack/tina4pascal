@@ -154,6 +154,7 @@ var
   GCalX, GCalW, GCalGridY, GCalCellW, GCalCellH: Single;
   GCalHdrY, GCalHdrH, GCalTodayY, GCalTodayH: Single;
   GCalFirstDow, GCalDays: Integer;    // weekday of the 1st (0=Sun), days in month
+  GYearMinusMs, GYearPlusMs: QWord;   // last « / » tap — a quick 2nd tap = ±10 years
 
 { ---- DOM helpers ------------------------------------------------------- }
 procedure SetAttr(Tag: THTMLTag; const Name, Value: string);
@@ -830,7 +831,7 @@ const
   MUTED=$FF9698B4; PAPER=$FFFFFFFF;
   DOW: array[0..6] of string = ('Su','Mo','Tu','We','Th','Fr','Sa');
 var
-  box: TLayoutBox; bx, by, pad, w, h, titleY, cx, cy: Single;
+  box: TLayoutBox; bx, by, pad, w, h, titleY, aY, cx, cy: Single;
   i, col, row, day, selY, selMo, selD, e, tY, tMo, tD: Integer;
   title, iso, cell: string; isToday, isSel: Boolean;
 begin
@@ -858,16 +859,18 @@ begin
   GCanvas.FillRoundRect(bx, by, w, h, 18, PAPER);
   GCanvas.StrokeRoundRect(bx, by, w, h, 18, 1, BORDER);
 
-  // header: « year‹ month  Title  month› year »
+  // header: « year‹ month  Title  month› year »  (arrows uniform size, all
+  // vertically centred on the title's line so they sit level)
   GCalHdrY := by;
-  titleY := by + (GCalHdrH - 18) / 2;
-  GCanvas.DrawText(bx + 10, titleY, #$C2#$AB, 18, [tfsBold], BLUE);       // « year prev
-  GCanvas.DrawText(bx + 34, titleY, #$E2#$80#$B9, 22, [tfsBold], BLUE);   // ‹ month prev
-  GCanvas.DrawText(bx + w - 40, titleY, #$E2#$80#$BA, 22, [tfsBold], BLUE); // › month next
-  GCanvas.DrawText(bx + w - 22, titleY, #$C2#$BB, 18, [tfsBold], BLUE);   // » year next
+  titleY := by + (GCalHdrH - 16) / 2;
+  aY := by + (GCalHdrH - 19) / 2;
+  GCanvas.DrawText(bx + 14, aY, #$C2#$AB, 19, [tfsBold], BLUE);          // « year prev
+  GCanvas.DrawText(bx + 38, aY, #$E2#$80#$B9, 19, [tfsBold], BLUE);      // ‹ month prev
+  GCanvas.DrawText(bx + w - 40, aY, #$E2#$80#$BA, 19, [tfsBold], BLUE);  // › month next
+  GCanvas.DrawText(bx + w - 26, aY, #$C2#$BB, 19, [tfsBold], BLUE);      // » year next
   title := MonName(GCalMonth) + ' ' + IntToStr(GCalYear);
   GCanvas.DrawText(bx + (w - GCanvas.MeasureText(title, 16, [tfsBold]).Width) / 2,
-    titleY + 1, title, 16, [tfsBold], INK);
+    titleY, title, 16, [tfsBold], INK);
 
   // weekday labels
   for i := 0 to 6 do
@@ -921,7 +924,12 @@ begin
   if (cy >= GCalHdrY) and (cy < GCalHdrY + GCalHdrH) then
   begin
     if (cx >= GCalX) and (cx < GCalX + 28) then
-    begin Dec(GCalYear); GLayoutDirty := True; Exit; end;           // «
+    begin                                                           // « year prev
+      if GetTickCount64 - GYearMinusMs < 400 then
+        begin GCalYear := GCalYear - 9; GYearMinusMs := 0; end      // 2nd tap → −10 total
+      else begin Dec(GCalYear); GYearMinusMs := GetTickCount64; end;
+      GLayoutDirty := True; Exit;
+    end;
     if (cx >= GCalX + 28) and (cx < GCalX + 56) then
     begin Dec(GCalMonth); if GCalMonth < 1 then begin GCalMonth := 12; Dec(GCalYear); end;
       GLayoutDirty := True; Exit; end;                              // ‹
@@ -929,7 +937,12 @@ begin
     begin Inc(GCalMonth); if GCalMonth > 12 then begin GCalMonth := 1; Inc(GCalYear); end;
       GLayoutDirty := True; Exit; end;                              // ›
     if (cx >= GCalX + GCalW - 28) and (cx < GCalX + GCalW) then
-    begin Inc(GCalYear); GLayoutDirty := True; Exit; end;           // »
+    begin                                                           // » year next
+      if GetTickCount64 - GYearPlusMs < 400 then
+        begin GCalYear := GCalYear + 9; GYearPlusMs := 0; end       // 2nd tap → +10 total
+      else begin Inc(GCalYear); GYearPlusMs := GetTickCount64; end;
+      GLayoutDirty := True; Exit;
+    end;
   end;
   // Today
   if (cy >= GCalTodayY) and (cy < GCalTodayY + GCalTodayH) and
