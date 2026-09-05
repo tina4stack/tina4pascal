@@ -80,7 +80,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | text-indent | 📦 | parsed, first-line indent never applied |
 | text-overflow | ✅ | ellipsis truncation (single nowrap line): truncates the crossing run + drops the rest |
 | text-shadow | 📦 | fully parsed, never rendered |
-| white-space | 🟡 | nowrap works; **pre/pre-wrap/pre-line collapse whitespace** (only `<pre>` element preserves) |
+| white-space | ✅ | normal/nowrap/pre/pre-wrap/pre-line; pre* preserve newlines (+ spaces for pre/pre-wrap) — parser keeps raw text for <pre> and inline white-space:pre* |
 | word-break, overflow-wrap | 📦 | parsed, long words never force-break |
 | vertical-align | 🟡 | sub/super/top/middle; no text-top/bottom/length |
 | list-style-type | ✅ | disc/circle/square/decimal/alpha/roman/none |

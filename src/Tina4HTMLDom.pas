@@ -1667,6 +1667,7 @@ var
   ChildTag: THTMLTag;
   SelfClose: Boolean;
   OldInPre: Boolean;
+  InlineWS: string;
   RawText, DecodedText, Collapsed: string;
   LastWasSpace: Boolean;
   C: Char;
@@ -1810,9 +1811,14 @@ begin
         if IsVoidTag(TagName) or SelfClose then
           Continue;
 
-        // Recurse children
+        // Recurse children. Preserve raw whitespace inside <pre>, and inside any
+        // element whose inline style asks for a preformatted white-space mode
+        // (so `<div style="white-space:pre-wrap">` keeps its newlines — the DOM
+        // stays collapsed everywhere else, which the layout re-processes).
         OldInPre := FInPre;
-        if SameText(TagName, 'pre') then
+        if SameText(TagName, 'pre') or
+           (ChildTag.Style.TryGetValue('white-space', InlineWS) and
+            LowerCase(Trim(InlineWS)).StartsWith('pre')) then
           FInPre := True;
         ParseChildren(ChildTag, TagName);
         FInPre := OldInPre;

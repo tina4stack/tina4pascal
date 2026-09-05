@@ -1343,6 +1343,89 @@ var
     items.Add(qi);
   end;
 
+  { Add one text token (a word, or a run of literal spaces for preformatted
+    text) as an inline item, measured in St's font with the shared-baseline
+    placement the normal word path uses. }
+  procedure AddTextItem(const W: string; const St: TComputedStyle; SpaceBefore: Boolean);
+  var ti: TInlineItem; tm: TTina4TextMetrics;
+  begin
+    FCanvas.LetterSpacing := St.LetterSpacing;
+    FCanvas.FontFamily := St.FontFamily;
+    tm := FCanvas.MeasureText(W, St.FontSize, FontStylesOf(St));
+    FCanvas.LetterSpacing := 0;
+    FCanvas.FontFamily := '';
+    ti.Text := W; ti.Box := nil; ti.W := tm.Width; ti.H := LineHeightOf(St);
+    ti.Ascent := (ti.H - (tm.Ascent + tm.Descent)) / 2 + tm.Ascent;
+    ti.FontAscent := tm.Ascent;
+    if SameText(St.VerticalAlign, 'sub') then
+    begin ti.Ascent := ti.Ascent - St.FontSize * 0.28; ti.FontAscent := ti.FontAscent - St.FontSize * 0.28; end
+    else if SameText(St.VerticalAlign, 'super') then
+    begin ti.Ascent := ti.Ascent + St.FontSize * 0.42; ti.FontAscent := ti.FontAscent + St.FontSize * 0.42; end;
+    ti.FontSize := St.FontSize; ti.Styles := FontStylesOf(St); ti.Color := St.Color;
+    ti.LetterSpacing := St.LetterSpacing; ti.FontFamily := St.FontFamily;
+    ti.SpaceBefore := SpaceBefore and (items.Count > 0);
+    ti.LineBreak := False;
+    items.Add(ti);
+  end;
+
+  { Emit a hard line break (\n in preformatted text, or <br>). }
+  procedure AddHardBreak(const St: TComputedStyle);
+  var bi: TInlineItem;
+  begin
+    bi.Text := ''; bi.Box := nil; bi.W := 0; bi.H := LineHeightOf(St);
+    bi.Ascent := bi.H; bi.FontAscent := bi.H;
+    bi.FontSize := St.FontSize; bi.Styles := []; bi.Color := 0;
+    bi.LetterSpacing := 0; bi.FontFamily := '';
+    bi.SpaceBefore := False; bi.LineBreak := True;
+    items.Add(bi);
+  end;
+
+  { white-space: pre / pre-wrap / pre-line. Newlines become hard breaks; pre and
+    pre-wrap also preserve runs of spaces (emitted as their own items); pre-line
+    collapses spaces. Wrapping is governed by noWrapFlow (off for pre-wrap/
+    pre-line, on for pre). }
+  procedure GatherPreText(const Raw: string; const St: TComputedStyle; const Mode: string);
+  var
+    s, seg, tok: string;
+    lines: TStringArray;
+    li, p: Integer;
+    inSpace: Boolean;
+  begin
+    s := StringReplace(Raw, #13#10, #10, [rfReplaceAll]);
+    s := StringReplace(s, #13, #10, [rfReplaceAll]);
+    lines := s.Split([#10]);
+    for li := 0 to High(lines) do
+    begin
+      if li > 0 then AddHardBreak(St);
+      seg := lines[li];
+      if Mode = 'pre-line' then
+      begin
+        seg := Trim(CollapseWS(seg));
+        if seg <> '' then
+        begin
+          for tok in seg.Split([' ']) do
+            if tok <> '' then AddTextItem(tok, St, False);
+        end;
+        Continue;
+      end;
+      // pre / pre-wrap: keep space runs as their own tokens
+      if seg = '' then Continue;
+      p := 1; tok := '';
+      inSpace := seg[1] = ' ';
+      while p <= Length(seg) do
+      begin
+        if (seg[p] = ' ') <> inSpace then
+        begin
+          AddTextItem(tok, St, False);
+          tok := ''; inSpace := seg[p] = ' ';
+        end;
+        tok := tok + seg[p];
+        Inc(p);
+      end;
+      if tok <> '' then AddTextItem(tok, St, False);
+    end;
+  end;
+
   procedure GatherInline(T: THTMLTag; const St: TComputedStyle);
   var
     c: THTMLTag;
@@ -1351,7 +1434,7 @@ var
     i: Integer;
     it: TInlineItem;
     m: TTina4TextMetrics;
-    disp, txt, qrText: string;
+    disp, txt, qrText, wsMode: string;
     leadingSpace: Boolean;
     iw, ih: Single;
   begin
@@ -1369,6 +1452,15 @@ var
     end;
     if IsTextNode(T) then
     begin
+      wsMode := LowerCase(St.WhiteSpace);
+      if (wsMode = 'pre') or (wsMode = 'pre-wrap') or (wsMode = 'pre-line') then
+      begin
+        txt := T.Text;
+        if (St.TextTransform <> '') and not SameText(St.TextTransform, 'none') then
+          txt := ApplyTextTransform(txt, St.TextTransform);
+        GatherPreText(txt, St, wsMode);
+        Exit;
+      end;
       txt := CollapseWS(T.Text);
       if (St.TextTransform <> '') and not SameText(St.TextTransform, 'none') then
         txt := ApplyTextTransform(txt, St.TextTransform);
@@ -1676,8 +1768,8 @@ var
       for i := 0 to items.Count - 1 do
       begin
         it := items[i];
-        if it.LineBreak and not noWrapFlow then
-        begin // <br>: hard break, even mid-line
+        if it.LineBreak then
+        begin // <br> or a preformatted \n: hard break even in nowrap/pre
           FlushLine(i, lineItems, y, Max(lineH, it.H));
           y := y + Max(lineH, it.H);
           curW := 0; lineH := 0;
