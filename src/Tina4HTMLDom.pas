@@ -266,6 +266,7 @@ type
     BackgroundColor: TAlphaColor;
     TextDecoration: string;
     TextAlign: TTextAlign;
+    TextJustify: Boolean;      // text-align: justify (spread slack across gaps)
     LineHeight: Single;
     VerticalAlign: string;
     CaptionSide: string;        // '' | 'top' | 'bottom' (table <caption> placement)
@@ -2028,6 +2029,7 @@ begin
   Result.BackgroundColor := TAlphaColors.Null;
   Result.TextDecoration := 'none';
   Result.TextAlign := TTextAlign.Leading;
+  Result.TextJustify := False;
   Result.LineHeight := 1.4;
   Result.VerticalAlign := 'baseline';
   Result.CaptionSide := 'top';
@@ -2316,6 +2318,7 @@ begin
   Result.Italic := ParentStyle.Italic;
   Result.Color := ParentStyle.Color;
   Result.TextAlign := ParentStyle.TextAlign;
+  Result.TextJustify := ParentStyle.TextJustify;
   Result.LineHeight := ParentStyle.LineHeight;
   Result.WhiteSpace := ParentStyle.WhiteSpace;
   Result.ListStyleType := ParentStyle.ListStyleType;
@@ -2888,6 +2891,7 @@ begin
     else if Temp = 'right' then Style.TextAlign := TTextAlign.Trailing
     else if Temp = 'justify' then Style.TextAlign := TTextAlign.Leading
     else Style.TextAlign := TTextAlign.Leading;
+    Style.TextJustify := (Temp = 'justify');
   end;
   if Decls.TryGetValue('line-height', Temp) and not ShouldSkip(Temp) then
   begin

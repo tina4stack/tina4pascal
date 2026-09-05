@@ -8,8 +8,8 @@ checklist for "implement everything" — the goal is to move every row to ✅.
 **Re-audited 2026-09-05 against the actual source** (parse in
 `Tina4HTMLDom.ApplyDeclarations`, layout in `Tina4HTMLLayout`, paint in
 `PaintBoxEx`). Many rows the old tracker listed as missing are in fact done
-(flex, overflow-x, opacity, transform, visibility); several it listed as
-supported are only parsed (font-family, text-shadow, text-indent, outline).
+(flex, overflow-x, opacity, transform, visibility, outline, text-shadow,
+text-align:justify, overline, position:sticky, cursor).
 
 Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 `TComputedStyle`, never laid out/painted) · ❌ Missing (not parsed).
@@ -41,7 +41,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 |---|---|---|
 | position static/relative/absolute | ✅ | relative offsets in flow; absolute out-of-flow with top/right/bottom/left + `inset` |
 | position fixed | ✅ | viewport-pinned (origin 0,0 + top/left/right); stays put on scroll |
-| position sticky | 📦 | parsed, falls back to static |
+| position sticky | ✅ | pins at `top` once scrolled past its natural spot; `top:auto` never sticks (page-scroll case; verified interactively) |
 | top, right, bottom, left, inset | ✅ | consumed by relative/absolute |
 | z-index | ✅ | stable paint-order sort among siblings (ties keep tree order) |
 | float, clear | 📦 | parsed, no float/clear layout |
@@ -74,8 +74,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | line-height | ✅ | unitless, px, em, % (÷100), rem (×16 root) |
 | letter-spacing | ✅ | applied in measure AND paint |
 | word-spacing | ❌ | |
-| text-align | 🟡 | left/center/right; **justify falls back to left** |
-| text-decoration | 🟡 | underline + line-through; no overline; no color/style longhands |
+| text-align | ✅ | left/center/right/justify (justify spreads slack across word gaps; last line stays left) |
+| text-decoration | 🟡 | underline + line-through (native) + overline (hand-ruled); no color/style longhands |
 | text-transform | ✅ | uppercase/lowercase/capitalize applied to painted glyphs |
 | text-indent | ✅ | first formatted line indented (left-aligned blocks) |
 | text-overflow | ✅ | ellipsis truncation (single nowrap line): truncates the crossing run + drops the rest |
@@ -130,7 +130,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 |---|---|---|
 | :hover / :active / :focus / :checked | ✅ | matcher + runtime state, end-to-end |
 | appearance: none | ✅ | radios/checkboxes render as styled boxes |
-| cursor | 📦 | parsed, no OS cursor set |
+| cursor | ✅ | desktop shells set the native OS pointer (pointer/text/move/grab/resize/crosshair/not-allowed/none…); inherits down the DOM. Touch shells ignore it |
 | pointer-events, user-select, resize | ❌ | |
 | accent-color, caret-color | ❌ | hard-coded to theme accent |
 
@@ -155,32 +155,27 @@ fixed/relative/absolute, z-index, `font-family` + numeric weight, `text-overflow
 `letter-spacing`, `line-height` %/rem, and the full tables set (rowspan,
 caption + caption-side, col/colgroup, tfoot-to-bottom, th bold/center).
 
-**Outstanding — quick wins (parsed or nearly, pure paint/wire):**
-1. **outline** paint — still parsed-only (📦); mirror the border stroke, offset
-   outward. Focus rings.
-2. **text-shadow** paint — fully parsed (📦), never rendered.
-3. **text-align: justify** — currently falls back to left.
-4. **text-decoration: overline** + color/style longhands (underline/line-through
-   done; overline needs a manual rule since no native font attribute exists).
-5. **position: sticky** — parsed (📦), falls back to static.
-6. **cursor** — parsed (📦); set the OS cursor in the shells.
+**Quick wins — done** (outline, text-shadow, text-align:justify,
+text-decoration:overline, position:sticky, cursor). Remaining longhands:
+text-decoration color/style; the sub-keyword resize cursors beyond
+col/row-resize.
 
 **Outstanding — bigger rocks:**
-7. **float / clear** — parsed (📦), no float layout.
-8. **aspect-ratio** — not parsed.
-9. **Flexbox faithfulness**: reverse directions, wrap-reverse, `align-content` /
+1. **float / clear** — parsed (📦), no float layout.
+2. **aspect-ratio** — not parsed.
+3. **Flexbox faithfulness**: reverse directions, wrap-reverse, `align-content` /
    `align-self` / `order`, per-axis `row-gap`/`column-gap`.
-10. **Grid**: explicit line placement, `grid-template-rows`/`areas`, multi-row span.
-11. **calc()** `*` `/` and %/vw/vh terms; **clamp() / min() / max() / env()** (all 0 today).
-12. **border-collapse / border-spacing / table-layout / empty-cells**.
-13. **transitions / animations** + `@keyframes` (needs the ticker + a timeline);
+4. **Grid**: explicit line placement, `grid-template-rows`/`areas`, multi-row span.
+5. **calc()** `*` `/` and %/vw/vh terms; **clamp() / min() / max() / env()** (all 0 today).
+6. **border-collapse / border-spacing / table-layout / empty-cells**.
+7. **transitions / animations** + `@keyframes` (needs the ticker + a timeline);
     `@supports` / `@import`.
-14. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
+8. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
     backdrop-filter / clip-path / mask**; blend-modes.
-15. Typography long tail: `font`/`font-variant`/`font-stretch` shorthands,
+9. Typography long tail: `font`/`font-variant`/`font-stretch` shorthands,
     `word-spacing`, `direction`/`writing-mode` (bidi), `list-style` shorthand +
     position/image, `vertical-align` text-top/bottom/length.
-16. **accent-color / caret-color**; **pointer-events / user-select / resize**.
+10. **accent-color / caret-color**; **pointer-events / user-select / resize**.
 
 Each item ships with a reftest under `examples/compliance/` and flips its row
 here and in `CONFORMANCE.md`.

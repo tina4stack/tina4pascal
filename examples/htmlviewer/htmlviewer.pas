@@ -424,6 +424,8 @@ begin
     end;
     Exit;
   end;
+  // OS pointer shape from the hovered element's CSS `cursor`
+  Shell.SetCursor(CursorAt(RootBox, X, Y + ScrollY));
   hit := HitTest(RootBox, X, Y + ScrollY);
   if hit = HoverTag then Exit;
   SetChain(HoverTag, True, False, False);

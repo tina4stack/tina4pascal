@@ -12,7 +12,9 @@ interface
 type
   TTina4Color = Cardinal; // $AARRGGBB
 
-  TTina4FontStyle = (tfsBold, tfsItalic, tfsUnderline, tfsStrike);
+  // tfsOverline has no native font attribute — the layer paints it manually,
+  // so shells may ignore it in DrawText (they draw underline/strike natively).
+  TTina4FontStyle = (tfsBold, tfsItalic, tfsUnderline, tfsStrike, tfsOverline);
   TTina4FontStyles = set of TTina4FontStyle;
 
   TTina4TextMetrics = record
@@ -117,6 +119,11 @@ const
   TK_LEFT = 5; TK_RIGHT = 6; TK_UP = 7; TK_DOWN = 8; TK_DELETE = 9;
 
 type
+  { OS pointer shapes a shell can show for the CSS `cursor` property. Desktop
+    shells map these to native cursors; touch shells ignore them. }
+  TTina4Cursor = (tcDefault, tcPointer, tcText, tcMove, tcGrab, tcGrabbing,
+    tcCrosshair, tcNotAllowed, tcColResize, tcRowResize, tcWait, tcHelp, tcNone);
+
   TTina4Shell = class
   public
     OnPaint: TTina4PaintEvent;
@@ -136,6 +143,8 @@ type
     procedure Run; virtual; abstract;          // enter event loop
     procedure Quit; virtual; abstract;
     procedure SetTitle(const Title: string); virtual;
+    { Set the OS pointer shape (CSS `cursor`). Default: no-op (touch shells). }
+    procedure SetCursor(C: TTina4Cursor); virtual;
     { Open the OS file picker; returns the chosen path or '' if cancelled.
       Default '' (no picker); backends override with the native dialog. }
     function PickFile: string; virtual;
@@ -151,6 +160,11 @@ implementation
 procedure TTina4Shell.SetTitle(const Title: string);
 begin
   // optional per shell
+end;
+
+procedure TTina4Shell.SetCursor(C: TTina4Cursor);
+begin
+  // optional per shell (desktop shells override with native cursors)
 end;
 
 procedure TTina4Shell.StartTicker(IntervalMs: Integer);

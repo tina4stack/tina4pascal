@@ -137,6 +137,12 @@ function PickFromSrcset(const Srcset: string; TargetW: Single): string;
 function EvalMediaQuery(const MQ: string; ViewportW: Single): Boolean;
 function ResolveImgSrc(T: THTMLTag; ViewportW, ElemW: Single): string;
 
+{ Map a CSS `cursor` keyword to the shell's pointer-shape enum. }
+function CursorKindFor(const CSS: string): TTina4Cursor;
+{ Pointer shape for the element at (docX, docY) in the given tree, honouring
+  `cursor` inheritance up the DOM. tcDefault when nothing sets one. }
+function CursorAt(Root: TLayoutBox; DocX, DocY: Single): TTina4Cursor;
+
 implementation
 
 const
@@ -316,6 +322,7 @@ begin
   td := LowerCase(St.TextDecoration);
   if Pos('underline', td) > 0 then Include(Result, tfsUnderline);
   if Pos('line-through', td) > 0 then Include(Result, tfsStrike);
+  if Pos('overline', td) > 0 then Include(Result, tfsOverline);
 end;
 
 function TLayoutEngine.LineHeightOf(const St: TComputedStyle): Single;
@@ -636,6 +643,40 @@ begin
     if Result <> '' then Exit;
   end;
   Result := T.GetAttribute('src');
+end;
+
+function CursorKindFor(const CSS: string): TTina4Cursor;
+var c: string;
+begin
+  c := LowerCase(Trim(CSS));
+  if c = 'pointer' then Result := tcPointer
+  else if c = 'text' then Result := tcText
+  else if c = 'move' then Result := tcMove
+  else if c = 'grab' then Result := tcGrab
+  else if c = 'grabbing' then Result := tcGrabbing
+  else if c = 'crosshair' then Result := tcCrosshair
+  else if (c = 'not-allowed') or (c = 'no-drop') then Result := tcNotAllowed
+  else if (c = 'col-resize') or (c = 'ew-resize') or (c = 'e-resize') or (c = 'w-resize') then Result := tcColResize
+  else if (c = 'row-resize') or (c = 'ns-resize') or (c = 'n-resize') or (c = 's-resize') then Result := tcRowResize
+  else if (c = 'wait') or (c = 'progress') then Result := tcWait
+  else if c = 'help' then Result := tcHelp
+  else if c = 'none' then Result := tcNone
+  else Result := tcDefault;   // auto / default / unknown
+end;
+
+function CursorAt(Root: TLayoutBox; DocX, DocY: Single): TTina4Cursor;
+var t: THTMLTag; b: TLayoutBox;
+begin
+  Result := tcDefault;
+  if Root = nil then Exit;
+  t := HitTest(Root, DocX, DocY);
+  while t <> nil do          // cursor inherits — walk up until one is set
+  begin
+    b := FindBoxForTag(Root, t);
+    if (b <> nil) and (b.Style.CSSCursor <> '') then
+      Exit(CursorKindFor(b.Style.CSSCursor));
+    t := t.Parent;
+  end;
 end;
 
 { UA fallback chrome for controls the stylesheet didn't style; also the
@@ -2034,10 +2075,11 @@ var
   end;
 
   procedure FlushLine(startIdx: Integer; var lineItems: TList<Integer>;
-    lineTop, lineH: Single);
+    lineTop, lineH: Single; justify: Boolean = False);
   var
     idx, k: Integer;
-    lineW, xShift, x, maxAscent: Single;
+    lineW, xShift, x, maxAscent, gapExtra: Single;
+    gaps: Integer;
     it: TInlineItem;
     run: TTextRun;
     r: TTextRun;
@@ -2059,6 +2101,17 @@ var
     else
       xShift := 0;
     end;
+    // text-align: justify — spread the slack across the line's word gaps (each
+    // SpaceBefore boundary). Only non-final wrapped lines are justified; the
+    // last line of a block and lines ending in <br> stay left-aligned.
+    gapExtra := 0;
+    if justify then
+    begin
+      gaps := 0;
+      for k := 1 to lineItems.Count - 1 do
+        if items[lineItems[k]].SpaceBefore then Inc(gaps);
+      if (gaps > 0) and (CW > lineW) then gapExtra := (CW - lineW) / gaps;
+    end;
     // shared baseline: the line's baseline sits maxAscent below its top;
     // every baseline-aligned item (text of any size, inline-block) hangs
     // its own ascent above it, so they line up on one baseline.
@@ -2079,7 +2132,7 @@ var
     begin
       it := items[lineItems[k]];
       if it.SpaceBefore and (k > 0) then
-        x := x + FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width;
+        x := x + FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width + gapExtra;
       if it.Box <> nil then
       begin
         if SameText(it.Box.Style.VerticalAlign, 'top') then
@@ -2158,7 +2211,7 @@ var
               carrySpacer := spIdx;
           end;
           if carrySpacer >= 0 then lineItems.Delete(lineItems.Count - 1);
-          FlushLine(i, lineItems, y, lineH);
+          FlushLine(i, lineItems, y, lineH, ParentStyle.TextJustify);
           y := y + lineH;
           curW := 0; lineH := 0;
           spaceW := 0;
@@ -3113,6 +3166,12 @@ begin
   // position: fixed — viewport-pinned: ignore the inherited scroll offset for
   // this box and its subtree so it stays put while the page scrolls.
   if SameText(st.CSSPosition, 'fixed') then OffsetY := 0;
+  // position: sticky — flows normally until scrolling would carry the box above
+  // its `top` line, then it holds there. Modelled by shrinking the effective
+  // scroll offset so the box's screen-top pins at `top` (never pulled upward
+  // from its natural spot). `top:auto` (unset) never sticks.
+  if SameText(st.CSSPosition, 'sticky') and (st.CSSTop > -9990) then
+    if (Box.Y - OffsetY) < st.CSSTop then OffsetY := Box.Y - st.CSSTop;
   // transform: translate — shift this box + subtree, unshift after paint
   tx := st.TransformTranslateX;
   ty := st.TransformTranslateY;
@@ -3419,6 +3478,12 @@ begin
         Canvas.DrawText(r.X - sx + r.ShadowDX, r.Y - innerOfs + r.ShadowDY, drawTxt,
           r.FontSize, r.Styles, ScaleAlpha(r.ShadowColor, op));
       Canvas.DrawText(r.X - sx, r.Y - innerOfs, drawTxt, r.FontSize, r.Styles, fg);
+      // overline: no native font attribute, so rule it by hand across the run,
+      // just inside the top of the em box (matches Chrome's placement closely).
+      if tfsOverline in r.Styles then
+        Canvas.FillRect(r.X - sx, r.Y - innerOfs + r.FontSize * 0.06,
+          Canvas.MeasureText(drawTxt, r.FontSize, r.Styles).Width,
+          Max(1, r.FontSize / 14), fg);
       Canvas.LetterSpacing := 0;
       Canvas.FontFamily := '';
       Canvas.FontWeight := 0;

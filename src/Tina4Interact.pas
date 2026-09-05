@@ -63,6 +63,10 @@ procedure TinaScrollBy(X, Y, DX, DY: Single);
 { Cursor moved (desktop mouse, no button) → drives the :hover pseudo-class.
   Pass device px, like TinaTouch. Never called on touch platforms. }
 procedure TinaHover(X, Y: Single);
+{ OS pointer shape for the element under (X,Y) in device px — the CSS `cursor`
+  of the hovered element, inheriting from its ancestors. Desktop shells feed
+  this straight to Shell.SetCursor on mouse move. }
+function TinaCursorAt(X, Y: Single): TTina4Cursor;
 { Advance momentum one frame; 1 = keep animating. }
 function TinaTick: Integer;
 { 1 once if the just-loaded document autofocused an input (raise the keyboard). }
@@ -1354,6 +1358,13 @@ begin
   if (GSheet = nil) or not GSheet.HasInteractiveSelectors then Exit;  // nothing hovers
   cx := X / GDensity; cy := Y / GDensity;
   SetHoverTag(HitTest(GRoot, cx, cy + GScrollY));
+end;
+
+function TinaCursorAt(X, Y: Single): TTina4Cursor;
+begin
+  Result := tcDefault;
+  if GRoot = nil then Exit;
+  Result := CursorAt(GRoot, X / GDensity, Y / GDensity + GScrollY);
 end;
 
 procedure TinaScrollBy(X, Y, DX, DY: Single);

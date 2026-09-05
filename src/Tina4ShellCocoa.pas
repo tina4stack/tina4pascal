@@ -89,6 +89,8 @@ type
     FWindow: NSWindow;
     FView: TTina4View;
     FCanvas: TCocoaCanvas;
+    FCursor: TTina4Cursor;    // last-set cursor (avoid re-setting every move)
+    FCursorHidden: Boolean;   // cursor:none hide/unhide is stacked — track it
   public
     { When non-empty, the next completed paint is written to this PNG path
       (then cleared). Seed of the headless render-to-image mode. }
@@ -105,6 +107,7 @@ type
     procedure Run; override;
     procedure Quit; override;
     procedure SetTitle(const Title: string); override;
+    procedure SetCursor(C: TTina4Cursor); override;
     procedure StartTicker(IntervalMs: Integer); override;
     function PickFile: string; override;
     function CaptureCamera: string; override;
@@ -940,6 +943,34 @@ end;
 procedure TCocoaShell.SetTitle(const Title: string);
 begin
   if FWindow <> nil then FWindow.setTitle(NSStr(Title));
+end;
+
+procedure TCocoaShell.SetCursor(C: TTina4Cursor);
+var cur: NSCursor;
+begin
+  if C = FCursor then Exit;               // unchanged since last move — skip
+  FCursor := C;
+  if FCursorHidden and (C <> tcNone) then // leaving cursor:none — show it again
+  begin NSCursor.unhide; FCursorHidden := False; end;
+  case C of
+    tcPointer:    cur := NSCursor.pointingHandCursor;
+    tcText:       cur := NSCursor.IBeamCursor;
+    tcMove,
+    tcGrab:       cur := NSCursor.openHandCursor;
+    tcGrabbing:   cur := NSCursor.closedHandCursor;
+    tcCrosshair:  cur := NSCursor.crosshairCursor;
+    tcNotAllowed: cur := NSCursor.operationNotAllowedCursor;
+    tcColResize:  cur := NSCursor.resizeLeftRightCursor;
+    tcRowResize:  cur := NSCursor.resizeUpDownCursor;
+    tcNone:
+      begin
+        if not FCursorHidden then begin NSCursor.hide; FCursorHidden := True; end;
+        Exit;
+      end;
+  else
+    cur := NSCursor.arrowCursor;          // default / wait / help
+  end;
+  if cur <> nil then cur.set_;
 end;
 
 function TCocoaShell.PickFile: string;
