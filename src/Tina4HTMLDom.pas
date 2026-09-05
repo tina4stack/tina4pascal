@@ -187,9 +187,12 @@ type
     FUniversalRules: TList<TCSSRule>;  // rules with empty RoutingKey
     // @media-conditional :root custom props: (condition, name, value)
     FMediaCustom: array of record Cond, Name, Val: string; end;
+    // @font-face declarations: (css family name, src url) for the engine to fetch
+    FFontFaces: array of record Family, Url: string; end;
     FHasMediaRules: Boolean;
     FMediaW: Single;                   // current viewport width for @media eval
     FMediaDark: Boolean;               // prefers-color-scheme: dark active?
+    procedure ParseFontFace(const DeclBlock: string);
     procedure ParseCSS(const CSSText: string); overload;
     procedure ParseBlock(const CSSText, MediaCond: string);
     function SelectorMatches(Rule: TCSSRule; Tag: THTMLTag): Boolean;
@@ -211,6 +214,12 @@ type
     { True if any @media rule was seen — lets the shell skip re-layout on a
       scheme/size change when nothing depends on it. }
     property HasMediaRules: Boolean read FHasMediaRules;
+    { Downloadable-font declarations gathered from @font-face rules. The engine
+      iterates these after parse, fetches each Url (async, disk-cached like an
+      <img>), and calls Canvas.RegisterFont(Family, localPath) so the family
+      name resolves to the fetched face. }
+    function FontFaceCount: Integer;
+    procedure GetFontFace(Index: Integer; out Family, Url: string);
     function ResolveVar(const Value: string): string;
     function ResolveVarWith(const Value: string; Props: TDictionary<string, string>): string;
     property Rules: TObjectList<TCSSRule> read FRules;
@@ -458,6 +467,7 @@ begin
   FRules.Clear;
   FCustomProps.Clear;
   SetLength(FMediaCustom, 0);
+  SetLength(FFontFaces, 0);
   FHasMediaRules := False;
   ClearRuleIndex;
 end;
@@ -605,7 +615,9 @@ begin
         // inner block content between BraceStart+1 and the matching close (J-1)
         ParseBlock(S.Substring(BraceStart + 1, (J - 1) - (BraceStart + 1)),
           Trim(InnerCond));
-      end;
+      end
+      else if SelectorPart.ToLower.StartsWith('@font-face') then
+        ParseFontFace(DeclBlock);   // capture font-family + src url for download
       I := J;
       Continue;
     end;
@@ -706,6 +718,76 @@ procedure TCSSStyleSheet.SetMediaContext(ViewportW: Single; Dark: Boolean);
 begin
   FMediaW := ViewportW;
   FMediaDark := Dark;
+end;
+
+{ Extract the first url(...) target from a `src:` declaration. Handles the CSS
+  forms  src: url("x.ttf")  |  url('x.ttf') format('truetype')  |  url(x.ttf) .
+  Data: URIs and local(...) names are skipped (we only fetch real URLs). }
+function ExtractFontSrcUrl(const Src: string): string;
+var
+  p, q: Integer;
+  raw: string;
+begin
+  Result := '';
+  p := Pos('url(', LowerCase(Src));
+  if p <= 0 then Exit;
+  p := p + 4;                          // past "url("
+  q := p;
+  while (q <= Length(Src)) and (Src[q] <> ')') do Inc(q);
+  raw := Trim(Copy(Src, p, q - p));
+  // strip matching quotes
+  if (Length(raw) >= 2) and ((raw[1] = '"') or (raw[1] = '''')) then
+    raw := Copy(raw, 2, Length(raw) - 2);
+  Result := Trim(raw);
+end;
+
+procedure TCSSStyleSheet.ParseFontFace(const DeclBlock: string);
+var
+  Decls: TStringArray;
+  D, PropName, PropVal, Fam, Url: string;
+  ColonPos, I: Integer;
+begin
+  Fam := '';
+  Url := '';
+  Decls := DeclBlock.Split([';']);
+  for D in Decls do
+  begin
+    ColonPos := Pos(':', D);
+    if ColonPos <= 0 then Continue;
+    PropName := LowerCase(Trim(Copy(D, 1, ColonPos - 1)));
+    PropVal := Trim(Copy(D, ColonPos + 1, MaxInt));
+    if PropName = 'font-family' then
+    begin
+      Fam := PropVal;
+      // dequote
+      if (Length(Fam) >= 2) and ((Fam[1] = '"') or (Fam[1] = '''')) then
+        Fam := Copy(Fam, 2, Length(Fam) - 2);
+      Fam := Trim(Fam);
+    end
+    else if PropName = 'src' then
+      Url := ExtractFontSrcUrl(PropVal);
+  end;
+  if (Fam = '') or (Url = '') then Exit;
+  // de-dup on (family,url)
+  for I := 0 to High(FFontFaces) do
+    if SameText(FFontFaces[I].Family, Fam) and (FFontFaces[I].Url = Url) then Exit;
+  SetLength(FFontFaces, Length(FFontFaces) + 1);
+  FFontFaces[High(FFontFaces)].Family := Fam;
+  FFontFaces[High(FFontFaces)].Url := Url;
+end;
+
+function TCSSStyleSheet.FontFaceCount: Integer;
+begin
+  Result := Length(FFontFaces);
+end;
+
+procedure TCSSStyleSheet.GetFontFace(Index: Integer; out Family, Url: string);
+begin
+  Family := '';
+  Url := '';
+  if (Index < 0) or (Index > High(FFontFaces)) then Exit;
+  Family := FFontFaces[Index].Family;
+  Url := FFontFaces[Index].Url;
 end;
 
 { px value after the ':' in a media feature like "min-width: 768px". }

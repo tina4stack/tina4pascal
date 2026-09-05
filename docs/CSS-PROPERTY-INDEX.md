@@ -139,8 +139,9 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 |---|---|---|
 | `--custom` + var() | ✅ | scoped 2-pass, fallback + recursion (colours included) |
 | calc() | 🟡 | additive only (+/-); **no \* /**, drops %/vw/vh terms |
-| `@media` (in `<style>`) | ❌ | **ParseCSS skips every @-rule block** — breakpoints AND dark-mode `prefers-color-scheme` discarded. `EvalMediaQuery` exists but is only wired to `<img srcset>`/`<picture>` |
-| `@font-face`, `@keyframes`, `@supports`, `@import` | ❌ | skipped with the @-rule block |
+| `@media` (in `<style>`) | ✅ | min/max-width breakpoints + `prefers-color-scheme` dark (incl. dark `:root` var swaps), live via `SetMediaContext` |
+| `@font-face` | ✅ | downloadable fonts: parse family + `src url()`, fetch (async/disk-cached like `<img>`) + register on all 3 shells (Cocoa/iOS CoreText, Android Typeface); CSS family aliased to the face's real name |
+| `@keyframes`, `@supports`, `@import` | ❌ | skipped with the @-rule block |
 | env(), clamp(), min(), max() | ❌ | evaluate to 0 |
 
 ## Prioritised roadmap (by real-world impact ÷ effort)

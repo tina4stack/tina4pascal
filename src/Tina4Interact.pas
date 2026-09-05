@@ -120,6 +120,7 @@ var
   GEngine: TLayoutEngine = nil;
   GRoot: TLayoutBox = nil;
   GHtml: string = '';
+  GFontsDone: TStringList = nil; // @font-face families already registered (this canvas)
   GDocDirty: Boolean = True;     // needs a full re-parse (new document)
   GLayoutDirty: Boolean = False; // DOM mutated → re-run layout only
   GLayoutW: Single = -1;
@@ -635,6 +636,33 @@ begin
 end;
 
 { Full re-parse: build DOM + stylesheet + engine + layout. }
+{ @font-face: hand each declared (family, url) to the canvas so the shell can
+  fetch + disk-cache it (like an <img>) and make the family name resolvable.
+  Registration is idempotent per family — the shell caches the file, and we
+  skip families already handed over this session. }
+procedure LoadFontFaces;
+var
+  i: Integer;
+  fam, url, key: string;
+begin
+  if (GSheet = nil) or (GCanvas = nil) then Exit;
+  if GFontsDone = nil then
+  begin
+    GFontsDone := TStringList.Create;
+    GFontsDone.Sorted := True;
+    GFontsDone.Duplicates := dupIgnore;
+  end;
+  for i := 0 to GSheet.FontFaceCount - 1 do
+  begin
+    GSheet.GetFontFace(i, fam, url);
+    if (fam = '') or (url = '') then Continue;
+    key := LowerCase(fam) + '|' + url;
+    if GFontsDone.IndexOf(key) >= 0 then Continue;
+    GFontsDone.Add(key);
+    GCanvas.RegisterFont(fam, url);   // shell fetches/caches + registers
+  end;
+end;
+
 procedure ParseDoc(W: Single);
 var i: Integer;
 begin
@@ -650,6 +678,7 @@ begin
   for i := 0 to GParser.StyleBlocks.Count - 1 do
     GSheet.AddCSS(GParser.StyleBlocks[i]);
   GSheet.SetMediaContext(W, GDarkMode);   // @media: viewport width + dark scheme
+  LoadFontFaces;                          // @font-face: register downloadable fonts
   GEngine := TLayoutEngine.Create(GCanvas, GSheet);
   GRoot := GEngine.Build(GParser.Root, W);
   GLayoutW := W;

@@ -209,6 +209,7 @@ const
     '    input[type="email"] { border-color: purple; }' + #10 +
     '    h1, h2 { letter-spacing: 2px; }' + #10 +
     '    @media (max-width: 600px) { .card { display: none; } }' + #10 +
+    '    @font-face { font-family: "Inter"; src: url(https://x/inter.ttf) format(''truetype''); }' + #10 +
     '  </style>' + #10 +
     '</head>' + #10 +
     '<body>' + #10 +
@@ -240,7 +241,7 @@ var
   Container, Headline, NoteP, OutsideP, CardDiv, BtnA, EmailInput,
     PlainInput, PreTag, ImgTag, BrTag: THTMLTag;
   Decls: TCSSDeclarations;
-  Val, CardText, PreText: string;
+  Val, CardText, PreText, FontFam, FontUrl: string;
   ParentStyle, CardStyle, H1Style, BtnStyle: TComputedStyle;
   Edges: TEdgeValues;
   DeclPair: TPair<string, string>;
@@ -365,6 +366,15 @@ begin
     Check(Sheet.HasInteractiveSelectors, ':hover rule sets HasInteractiveSelectors');
     Check(Err.Count = 1, 'OnParseError fired exactly once (:root rule has only custom props)');
     CheckEqualsStr(':root', Err.LastSelector, 'OnParseError reported the :root selector');
+
+    // @font-face: downloadable font captured (family + url) for the engine to fetch
+    Check(Sheet.FontFaceCount = 1, '@font-face rule captured exactly one downloadable font');
+    if Sheet.FontFaceCount = 1 then
+    begin
+      Sheet.GetFontFace(0, FontFam, FontUrl);
+      CheckEqualsStr('Inter', FontFam, '@font-face font-family dequoted');
+      CheckEqualsStr('https://x/inter.ttf', FontUrl, '@font-face src url() extracted, format() ignored');
+    end;
 
     // var() resolution helpers
     CheckEqualsStr('#ff0000', Sheet.ResolveVar('var(--main-color)'), 'ResolveVar hit');

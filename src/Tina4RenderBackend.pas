@@ -54,10 +54,12 @@ type
       Styles: TTina4FontStyles; Color: TTina4Color); virtual; abstract;
     function MeasureText(const Text: string; FontSize: Single;
       Styles: TTina4FontStyles): TTina4TextMetrics; virtual; abstract;
-    { Register a downloaded font file (ttf/otf/woff) under `Family` so
-      FontFamily can resolve it (for @font-face). Default: no-op (returns
-      False); shells that can load fonts override. }
-    function RegisterFont(const Family, Path: string): Boolean; virtual;
+    { Register a font (ttf/otf) under the CSS `Family` name so FontFamily can
+      resolve it (for @font-face). `Src` is either a local file path or an
+      http(s) URL — the shell fetches + disk-caches a URL the same way it does
+      an <img>. Default: no-op (returns False); shells that can load fonts
+      override. }
+    function RegisterFont(const Family, Src: string): Boolean; virtual;
     procedure SetClip(X, Y, W, H: Single); virtual; abstract;
     procedure ClearClip; virtual; abstract;
     { Transform stack for CSS transforms (rotate/scale). Default no-ops so
@@ -246,7 +248,7 @@ begin
   Result := False;
 end;
 
-function TTina4Canvas.RegisterFont(const Family, Path: string): Boolean;
+function TTina4Canvas.RegisterFont(const Family, Src: string): Boolean;
 begin
   Result := False;   // backends that can load fonts override this
 end;
