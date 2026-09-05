@@ -84,7 +84,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | Element | Status | Note |
 |---|---|---|
 | table | ✅ | auto/explicit column sizing, `border` attr |
-| thead, tbody, tfoot | 🟡 | rows flattened in **source order** — **tfoot not moved to bottom**, no sticky/repeat |
+| thead, tbody, tfoot | ✅ | tfoot rows moved to the bottom regardless of source order; no sticky/repeat |
 | tr, td | ✅ | |
 | th | 🟡 | renders as a cell; **no default bold/center** |
 | colspan (attr) | ✅ | both layout passes |

@@ -2402,6 +2402,7 @@ function TLayoutEngine.LayoutTable(Parent: TLayoutBox; Tag: THTMLTag;
   const Style: TComputedStyle; X, Y, AvailW: Single): Single;
 var
   rows: TList<THTMLTag>;
+  footRows: TList<THTMLTag>;
   prefW: array of Single;
   ncols, i, ci: Integer;
   r, cell: THTMLTag;
@@ -2430,13 +2431,19 @@ var
   colW: array of Single;                  // explicit per-column width from <col>/<colgroup>
   colIdx: Integer;
 
-  procedure CollectRows(T: THTMLTag);
+  // Collect <tr> in visual order: thead/tbody/loose rows first, <tfoot> rows
+  // last regardless of where the tfoot sits in source (per CSS table model).
+  procedure CollectRows(T: THTMLTag; IntoFoot: Boolean);
   var c: THTMLTag;
   begin
     for c in T.Children do
-      if SameText(c.TagName, 'tr') then rows.Add(c)
-      else if SameText(c.TagName, 'thead') or SameText(c.TagName, 'tbody') or
-              SameText(c.TagName, 'tfoot') then CollectRows(c);
+      if SameText(c.TagName, 'tr') then
+      begin
+        if IntoFoot then footRows.Add(c) else rows.Add(c);
+      end
+      else if SameText(c.TagName, 'tfoot') then CollectRows(c, True)
+      else if SameText(c.TagName, 'thead') or SameText(c.TagName, 'tbody') then
+        CollectRows(c, IntoFoot);
   end;
 
   // Apply one <col>/<colgroup> element's width across the columns it spans.
@@ -2479,8 +2486,10 @@ var
 
 begin
   rows := TList<THTMLTag>.Create;
+  footRows := TList<THTMLTag>.Create;
   try
-    CollectRows(Tag);
+    CollectRows(Tag, False);
+    for r in footRows do rows.Add(r);   // tfoot rows always at the bottom
     if rows.Count = 0 then Exit(0);
     ncols := 0;
     for r in rows do
@@ -2715,6 +2724,7 @@ begin
     Result := tbox.H + Style.Margin.Vert;
   finally
     rows.Free;
+    footRows.Free;
   end;
 end;
 
