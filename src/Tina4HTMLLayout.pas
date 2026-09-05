@@ -2550,9 +2550,11 @@ var
   m: TTina4TextMetrics;
   didClip: Boolean;
   op, tx, ty, sx, rcx, rcy, ox: Single;
-  shifted, hasRS, ellip, ellipDone: Boolean;
+  shifted, hasRS, ellip, ellipDone, anyZ: Boolean;
   rightEdge, avail: Single;
   drawTxt: string;
+  zorder: array of Integer;
+  zi, zj, ztmp: Integer;
   bg, bd, fg: TTina4Color;
 begin
   st := Box.Style;
@@ -2757,8 +2759,29 @@ begin
       Canvas.LetterSpacing := 0;
       Canvas.FontFamily := '';
     end;
+  // z-index: paint children ordered by z-index (stable — ties keep tree order),
+  // so positioned overlays layer correctly. Fast path when nothing sets it.
+  SetLength(zorder, Box.Children.Count);
+  anyZ := False;
   for i := 0 to Box.Children.Count - 1 do
   begin
+    zorder[i] := i;
+    if Box.Children[i].Style.ZIndex <> 0 then anyZ := True;
+  end;
+  if anyZ then
+    for zi := 1 to High(zorder) do   // stable insertion sort by z-index
+    begin
+      zj := zi;
+      while (zj > 0) and
+            (Box.Children[zorder[zj - 1]].Style.ZIndex > Box.Children[zorder[zj]].Style.ZIndex) do
+      begin
+        ztmp := zorder[zj - 1]; zorder[zj - 1] := zorder[zj]; zorder[zj] := ztmp;
+        Dec(zj);
+      end;
+    end;
+  for zi := 0 to High(zorder) do
+  begin
+    i := zorder[zi];
     if sx <> 0 then ShiftBoxTree(Box.Children[i], -sx, 0);
     PaintBoxEx(Canvas, Box.Children[i], innerOfs, op, Hidden);
     if sx <> 0 then ShiftBoxTree(Box.Children[i], sx, 0);

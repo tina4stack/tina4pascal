@@ -43,7 +43,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | position fixed | 🟡 | treated as absolute — **not viewport-pinned on scroll** |
 | position sticky | 📦 | parsed, falls back to static |
 | top, right, bottom, left, inset | ✅ | consumed by relative/absolute |
-| z-index | ❌ | paint order = tree order |
+| z-index | ✅ | stable paint-order sort among siblings (ties keep tree order) |
 | float, clear | 📦 | parsed, no float/clear layout |
 
 ## Flexbox & Grid

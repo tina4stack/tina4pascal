@@ -307,6 +307,7 @@ type
     CSSLeft: Single;
     CSSRight: Single;
     CSSBottom: Single;
+    ZIndex: Integer;       // paint order among siblings (0 = auto/default)
     OutlineWidth: Single;
     OutlineColor: TAlphaColor;
     OutlineStyle: string;       // 'solid' | 'dashed' | 'dotted' | 'none'
@@ -2050,6 +2051,7 @@ begin
   Result.BackgroundImage := '';
   Result.BackgroundSize := 'auto';
   Result.CSSPosition := 'static';
+  Result.ZIndex := 0;
   Result.CSSTop := -9999;
   Result.CSSLeft := -9999;
   Result.CSSRight := -9999;
@@ -2332,6 +2334,7 @@ begin
   Result.BackgroundImage := '';
   Result.BackgroundSize := 'auto';
   Result.CSSPosition := 'static';
+  Result.ZIndex := 0;
   Result.CSSTop := -9999;
   Result.CSSLeft := -9999;
   Result.CSSRight := -9999;
@@ -2936,6 +2939,8 @@ begin
 
   if Decls.TryGetValue('position', Temp) and not ShouldSkip(Temp) then
     Style.CSSPosition := Temp.Trim.ToLower;
+  if Decls.TryGetValue('z-index', Temp) and not ShouldSkip(Temp) then
+    Style.ZIndex := StrToIntDef(Trim(Temp), 0);
   if Decls.TryGetValue('top', Temp) and not ShouldSkip(Temp) then
     Style.CSSTop := ParseLength(Temp, Style.FontSize);
   if Decls.TryGetValue('left', Temp) and not ShouldSkip(Temp) then
