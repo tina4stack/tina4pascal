@@ -1310,6 +1310,7 @@ var
   items: TList<TInlineItem>;
   pendingSpace: Boolean;   // trailing whitespace carried across inline nodes
   noWrapFlow: Boolean;     // white-space:nowrap → keep inline items on one line
+  firstInlineLine: Boolean; // text-indent applies to the first formatted line only
 
   function HasBlockChild(T: THTMLTag; const St: TComputedStyle): Boolean;
   var
@@ -1766,6 +1767,11 @@ var
       if it.Ascent > maxAscent then maxAscent := it.Ascent;
     end;
     x := CX + xShift;
+    // text-indent: shift the first formatted line of the block
+    if firstInlineLine and (ParentStyle.TextIndent <> 0) and
+       (ParentStyle.TextAlign = TTextAlign.Leading) then
+      x := x + ParentStyle.TextIndent;
+    firstInlineLine := False;
     for k := 0 to lineItems.Count - 1 do
     begin
       it := items[lineItems[k]];
@@ -1876,6 +1882,7 @@ begin
   prevMB := 0;
   hadInline := False;
   pendingSpace := False;
+  firstInlineLine := True;
   noWrapFlow := SameText(ParentStyle.WhiteSpace, 'nowrap') or
                 SameText(ParentStyle.WhiteSpace, 'pre');
   items := TList<TInlineItem>.Create;

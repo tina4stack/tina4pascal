@@ -77,7 +77,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | text-align | 🟡 | left/center/right; **justify falls back to left** |
 | text-decoration | 🟡 | underline + line-through; no overline; no color/style longhands |
 | text-transform | ✅ | uppercase/lowercase/capitalize applied to painted glyphs |
-| text-indent | 📦 | parsed, first-line indent never applied |
+| text-indent | ✅ | first formatted line indented (left-aligned blocks) |
 | text-overflow | ✅ | ellipsis truncation (single nowrap line): truncates the crossing run + drops the rest |
 | text-shadow | 📦 | fully parsed, never rendered |
 | white-space | ✅ | normal/nowrap/pre/pre-wrap/pre-line; pre* preserve newlines (+ spaces for pre/pre-wrap) — parser keeps raw text for <pre> and inline white-space:pre* |
