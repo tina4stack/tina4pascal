@@ -1664,7 +1664,7 @@ var
 
   procedure FlowInlineItems;
   var
-    i: Integer;
+    i, carrySpacer, spIdx: Integer;
     it: TInlineItem;
     curW, lineH, spaceW: Single;
     lineItems: TList<Integer>;
@@ -1688,10 +1688,29 @@ var
           spaceW := FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width;
         if (not noWrapFlow) and (lineItems.Count > 0) and (curW + spaceW + it.W > CW) then
         begin
+          // A trailing margin-left spacer (synthetic: no box, no text, zero
+          // height, positive width) belongs to THIS wrapping item — carry it to
+          // the new line so the item keeps its left margin instead of hugging
+          // the line start.
+          carrySpacer := -1;
+          if lineItems.Count > 0 then
+          begin
+            spIdx := lineItems[lineItems.Count - 1];
+            if (items[spIdx].Box = nil) and (items[spIdx].Text = '') and
+               (items[spIdx].W > 0) and (items[spIdx].H = 0) and
+               not items[spIdx].LineBreak then
+              carrySpacer := spIdx;
+          end;
+          if carrySpacer >= 0 then lineItems.Delete(lineItems.Count - 1);
           FlushLine(i, lineItems, y, lineH);
           y := y + lineH;
           curW := 0; lineH := 0;
           spaceW := 0;
+          if carrySpacer >= 0 then
+          begin
+            lineItems.Add(carrySpacer);
+            curW := curW + items[carrySpacer].W;
+          end;
         end;
         lineItems.Add(i);
         curW := curW + spaceW + it.W;
