@@ -27,8 +27,8 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 |---|---|---|
 | header, footer, main, section, article, aside, nav | ✅ | block |
 | h1–h6 | ✅ | UA sizes + weight + margins |
-| hgroup | 🟡 | **computes inline** (tracker said block); heading children still stack |
-| address | 🟡 | block; italic UA not applied |
+| hgroup | ✅ | block; heading children stack |
+| address | ✅ | block + italic UA |
 
 ## Text content
 
@@ -36,13 +36,13 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 |---|---|---|
 | div, p | ✅ | block + margins |
 | ul, ol | ✅ | block + indent + markers |
-| menu | ❌ | **not rendered as a list** (tracker wrongly said ✅) — no block/indent/markers |
+| menu | ✅ | renders as a list (block + indent + disc markers), like ul |
 | li | ✅ | list-item + marker |
 | dl, dt, dd | ✅ | bold term, indented def |
 | blockquote | ✅ | indent + left border |
 | pre | ✅ | monospace, whitespace preserved |
 | hr | 🟡 | thin bordered block; no dedicated rule line |
-| figure, figcaption | 🟡 | block; default 40px margins not applied |
+| figure, figcaption | ✅ | block; figure has UA 1em/40px margins |
 
 ## Inline text semantics
 
@@ -51,7 +51,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | a, span | ✅ | inline; a emits link events |
 | b, strong, i, em, u, ins | ✅ | bold/italic/underline |
 | s, del | ✅ | line-through |
-| strike | ❌ | **no strikethrough** (tracker wrongly said ✅) — legacy tag unwired |
+| strike | ✅ | line-through (legacy alias of s/del) |
 | small, mark, code, kbd, samp, var | ✅ | mark = yellow bg; code/kbd/samp mono |
 | sub, sup | ✅ | baseline shift + smaller |
 | abbr, cite, dfn, q, br | ✅ | q = auto quotes |

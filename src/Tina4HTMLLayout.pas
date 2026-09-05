@@ -2298,7 +2298,8 @@ begin
 
   // list-item marker, honouring the list's list-style-type
   if SameText(Tag.TagName, 'li') and (Tag.Parent <> nil) and
-     (SameText(Tag.Parent.TagName, 'ul') or SameText(Tag.Parent.TagName, 'ol')) then
+     (SameText(Tag.Parent.TagName, 'ul') or SameText(Tag.Parent.TagName, 'ol') or
+      SameText(Tag.Parent.TagName, 'menu')) then
   begin
     liIdx := 0;
     for liSib in Tag.Parent.Children do

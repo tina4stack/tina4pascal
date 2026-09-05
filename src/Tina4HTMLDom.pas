@@ -1665,7 +1665,9 @@ begin
     SameText(Name, 'figcaption') or SameText(Name, 'dl') or
     SameText(Name, 'dt') or SameText(Name, 'dd') or
     SameText(Name, 'details') or SameText(Name, 'summary') or
-    SameText(Name, 'address') or SameText(Name, 'fieldset');
+    SameText(Name, 'address') or SameText(Name, 'fieldset') or
+    SameText(Name, 'menu') or SameText(Name, 'hgroup') or
+    SameText(Name, 'dialog') or SameText(Name, 'caption');
 end;
 
 class function THTMLParser.IsIgnoredTag(const Name: string): Boolean;
@@ -2457,7 +2459,7 @@ begin
     Result.Italic := True
   else if TN = 'u' then
     Result.TextDecoration := 'underline'
-  else if (TN = 'del') or (TN = 's') then
+  else if (TN = 'del') or (TN = 's') or (TN = 'strike') then
     Result.TextDecoration := 'line-through'
   else if TN = 'a' then
   begin
@@ -2478,7 +2480,7 @@ begin
     Result.FontSize := ParentStyle.FontSize * 0.75;
     Result.VerticalAlign := 'super';
   end
-  else if TN = 'ul' then
+  else if (TN = 'ul') or (TN = 'menu') then
   begin
     Result.Margin.Top := ParentStyle.FontSize * 0.5;
     Result.Margin.Bottom := ParentStyle.FontSize * 0.5;
@@ -2521,6 +2523,19 @@ begin
     Result.Display := 'block';
     Result.TextAlign := TTextAlign.Center;
     Result.Padding.SetAll(2);
+  end
+  else if TN = 'figure' then
+  begin
+    Result.Display := 'block';
+    Result.Margin.Top := ParentStyle.FontSize;    // UA: 1em 40px
+    Result.Margin.Bottom := ParentStyle.FontSize;
+    Result.Margin.Left := 40;
+    Result.Margin.Right := 40;
+  end
+  else if TN = 'address' then
+  begin
+    Result.Display := 'block';
+    Result.Italic := True;                         // UA: font-style italic
   end
   else if TN = 'hr' then
   begin
