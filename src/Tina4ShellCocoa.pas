@@ -718,6 +718,7 @@ begin
   end;
   // remove players whose <video> is no longer laid out
   keys := GVideoViews.allKeys;
+  if keys.count = 0 then Exit;      // NB: count is unsigned — never do count-1 at 0
   for k := 0 to keys.count - 1 do
   begin
     key := NSString(keys.objectAtIndex(k));
