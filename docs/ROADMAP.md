@@ -109,6 +109,15 @@ CLI drives FPC; the engine renders live) — the IDE assembles them.
 
 ## Cross-cutting
 
+- **iOS Simulator + Android emulator build targets** — FPC 3.2.2 only targets iOS
+  *device* (`AARCH64IOS`), so the engine can't run in the iOS Simulator today (device
+  deploy only); a simulator build (FPC trunk's simulator target, or an SDK/ABI shim) is
+  required so the dev loop doesn't need a physical iPhone. Android device builds
+  (`-Tandroid -Paarch64`) already run on an **arm64 Android emulator** image — wire that
+  into the tooling as a first-class test target too.
+- **iOS/Android paint parity** — native gradients (CGGradient / Android shaders) and
+  numeric font-weight on those shells; they use the flat-average / binary-bold
+  fallbacks today.
 - **Windows + Linux shells** (tina4pascal has macOS/iOS/Android today; the core is
   portable and ready). Windows especially matters for parity with tina4delphi.
 - **Upstream parity** — port wins here (capture protection, pseudo-classes, cached
