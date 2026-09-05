@@ -97,13 +97,13 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | Element | Status | Note |
 |---|---|---|
 | form | ✅ | block; submit collects name=value |
-| input[text/email/password/search/number] | 🟡 | all collapse to one text input; **no password masking**, no number stepper |
+| input[text/email/password/search/number] | 🟡 | password now masks (•); text otherwise; no number stepper |
 | input[checkbox] | ✅ | draw + toggle, `:checked` stylable |
 | input[radio] | ✅ | draw + group exclusivity by name |
 | input[submit/button] | ✅ | drawn button + press feedback |
 | input[file] | ✅ | "Choose File" → shell picker; shows filename |
 | **input[date]** | ✅ | **native calendar picker** — formatted display (`format` attr), month nav, today, ISO value (see examples/datepicker) |
-| input[color/range/tel/url/…] | 🟡 | editable plain text; no swatch/slider |
+| input[color/range/tel/url/…] | ✅/🟡 | color swatch + range slider drawn; tel/url as text |
 | textarea | 🟡 | multi-line + line-aware caret; **append/backspace-at-end only** (no mid-text edit) |
 | select, option | ✅ | drawn dropdown overlay with ✓ |
 | optgroup | ❌ | grouped options **not shown** (only direct `<option>` read) |
@@ -112,7 +112,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | fieldset, legend | 🟡 | border + bold legend (not notched) |
 | datalist | ❌ | **leaks its options as visible text** (should be invisible) |
 | output | 🟡 | text renders; no form binding |
-| progress, meter | ❌ | render nothing (no bar) |
+| progress, meter | ✅ | drawn bars (progress accent, meter green) from value/max |
 
 ## Interactive & scripting
 

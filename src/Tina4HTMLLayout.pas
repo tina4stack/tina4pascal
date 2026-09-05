@@ -29,7 +29,7 @@ type
     lives in the DOM: input/textarea in 'value', checkbox/radio in 'checked',
     select in 'value'. The app mutates attributes and rebuilds. }
   TControlKind = (ckNone, ckTextInput, ckTextarea, ckCheckbox, ckRadio,
-    ckSelect, ckButton, ckFile, ckDate);
+    ckSelect, ckButton, ckFile, ckDate, ckRange, ckColor, ckProgress, ckMeter);
 
   TLayoutBox = class
   public
@@ -183,7 +183,8 @@ function IsFormControlTag(const Name: string): Boolean;
 begin
   Result := SameText(Name, 'input') or SameText(Name, 'textarea') or
     SameText(Name, 'select') or SameText(Name, 'button') or
-    SameText(Name, 'camera');
+    SameText(Name, 'camera') or SameText(Name, 'progress') or
+    SameText(Name, 'meter');
 end;
 
 function ToRoman(N: Integer): string;
@@ -396,11 +397,15 @@ begin
   if SameText(Tag.TagName, 'textarea') then Result := ckTextarea
   else if SameText(Tag.TagName, 'select') then Result := ckSelect
   else if SameText(Tag.TagName, 'button') then Result := ckButton
+  else if SameText(Tag.TagName, 'progress') then Result := ckProgress
+  else if SameText(Tag.TagName, 'meter') then Result := ckMeter
   else if typ = 'checkbox' then Result := ckCheckbox
   else if typ = 'radio' then Result := ckRadio
   else if (typ = 'file') or SameText(Tag.TagName, 'camera') then Result := ckFile
   else if (typ = 'submit') or (typ = 'button') then Result := ckButton
   else if typ = 'date' then Result := ckDate
+  else if typ = 'range' then Result := ckRange
+  else if typ = 'color' then Result := ckColor
   else Result := ckTextInput;
 end;
 
@@ -778,8 +783,40 @@ begin
         else
           txt := #$F0#$9F#$93#$85' ' + Tag.GetAttribute('placeholder', 'Select date');
       end;
+    ckProgress, ckMeter:
+      begin
+        // a horizontal bar; painted from value/max in PaintBoxEx
+        ew := ResolveSize(St.ExplicitWidth, AvailW);
+        if ew >= 0 then Result.W := ew else Result.W := Min(160, AvailW);
+        Result.H := ResolveSize(St.ExplicitHeight, 0);
+        if Result.H < 0 then Result.H := 12;
+        Exit;
+      end;
+    ckRange:
+      begin
+        // a slider track + thumb; painted from value/min/max in PaintBoxEx
+        ew := ResolveSize(St.ExplicitWidth, AvailW);
+        if ew >= 0 then Result.W := ew else Result.W := Min(180, AvailW);
+        Result.H := Max(20, lineH);
+        Exit;
+      end;
+    ckColor:
+      begin
+        // a colour swatch showing the value
+        ew := ResolveSize(St.ExplicitWidth, AvailW);
+        if ew >= 0 then Result.W := ew else Result.W := 48;
+        Result.H := ResolveSize(St.ExplicitHeight, 0);
+        if Result.H < 0 then Result.H := Max(24, lineH);
+        Exit;
+      end;
   else // ckTextInput
     txt := Tag.GetAttribute('value');
+    if (LowerCase(Tag.GetAttribute('type')) = 'password') and (txt <> '') then
+    begin
+      seg := '';
+      for i := 1 to Length(txt) do seg := seg + #$E2#$80#$A2;  // • per byte (ASCII pw)
+      txt := seg;
+    end;
   end;
 
   // width: explicit/% (resolved against AvailW) → size attr (chars) → default
@@ -2657,6 +2694,55 @@ begin
       end;
 end;
 
+{ Parse a #rgb / #rrggbb hex colour to an opaque TTina4Color (for <input color>). }
+function ParseHexColor(const S: string): TTina4Color;
+var h: string; v: Int64; e: Integer;
+begin
+  Result := $FF000000;
+  h := Trim(S);
+  if (h <> '') and (h[1] = '#') then Delete(h, 1, 1);
+  if Length(h) = 3 then h := h[1]+h[1]+h[2]+h[2]+h[3]+h[3];
+  if Length(h) >= 6 then
+  begin
+    Val('$' + Copy(h, 1, 6), v, e);
+    if e = 0 then Result := TTina4Color($FF000000 or Cardinal(v));
+  end;
+end;
+
+{ <progress>/<meter>: a rounded track with a filled portion from value/max. }
+procedure PaintBarControl(Canvas: TTina4Canvas; Box: TLayoutBox; y: Single);
+var val, mx, frac, r: Single; fill: TTina4Color;
+begin
+  val := StrToFloatDef(Box.Tag.GetAttribute('value'), 0);
+  mx := StrToFloatDef(Box.Tag.GetAttribute('max'), 1);
+  if mx <= 0 then mx := 1;
+  frac := val / mx;
+  if frac < 0 then frac := 0; if frac > 1 then frac := 1;
+  r := Box.H / 2;
+  Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, r, TC_BORDER);          // track
+  if Box.ControlKind = ckMeter then fill := $FF33AA55 else fill := TC_ACCENT;
+  if frac > 0 then
+    Canvas.FillRoundRect(Box.X, y, Max(Box.H, Box.W * frac), Box.H, r, fill);
+end;
+
+{ <input type=range>: a thin track, a filled left portion, and a round thumb. }
+procedure PaintRangeControl(Canvas: TTina4Canvas; Box: TLayoutBox; y: Single);
+var mn, mx, val, frac, ty, cx, cy: Single;
+begin
+  mn := StrToFloatDef(Box.Tag.GetAttribute('min'), 0);
+  mx := StrToFloatDef(Box.Tag.GetAttribute('max'), 100);
+  if mx <= mn then mx := mn + 1;
+  val := StrToFloatDef(Box.Tag.GetAttribute('value'), (mn + mx) / 2);
+  frac := (val - mn) / (mx - mn);
+  if frac < 0 then frac := 0; if frac > 1 then frac := 1;
+  ty := y + Box.H / 2 - 2;
+  Canvas.FillRoundRect(Box.X, ty, Box.W, 4, 2, TC_BORDER);            // track
+  if frac > 0 then Canvas.FillRoundRect(Box.X, ty, Box.W * frac, 4, 2, TC_ACCENT);
+  cx := Box.X + Box.W * frac; cy := y + Box.H / 2;
+  Canvas.FillRoundRect(cx - 8, cy - 8, 16, 16, 8, $FFFFFFFF);          // thumb
+  Canvas.StrokeRoundRect(cx - 8, cy - 8, 16, 16, 8, 1.5, TC_ACCENT);
+end;
+
 { Draw one border edge as a rectangle of the given style. `horiz` = the edge
   runs horizontally (top/bottom); its thickness is rh, length rw. For a vertical
   edge (left/right) thickness is rw, length rh. solid fills; double draws two
@@ -2899,6 +2985,26 @@ begin
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
         Canvas.DrawText(Box.X + 3, gy + 0.5, '✓', 13, [tfsBold], $FFFFFFFF);
     end;
+    Exit;
+  end;
+  // progress / meter: a rounded track with a filled portion from value/max.
+  if (Box.ControlKind in [ckProgress, ckMeter]) and (Box.Tag <> nil) then
+  begin
+    PaintBarControl(Canvas, Box, y);
+    Exit;
+  end;
+  // range: a track with a filled left portion and a round thumb (value/min/max).
+  if (Box.ControlKind = ckRange) and (Box.Tag <> nil) then
+  begin
+    PaintRangeControl(Canvas, Box, y);
+    Exit;
+  end;
+  // color: a rounded swatch of the value colour with a subtle border.
+  if (Box.ControlKind = ckColor) and (Box.Tag <> nil) then
+  begin
+    Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, 6,
+      $FF000000 or (ParseHexColor(Box.Tag.GetAttribute('value', '#000000')) and $FFFFFF));
+    Canvas.StrokeRoundRect(Box.X, y, Box.W, Box.H, 6, 1, TC_BORDER);
     Exit;
   end;
 
