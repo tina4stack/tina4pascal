@@ -85,6 +85,8 @@ type
       const St: TComputedStyle; X, Y, AvailW: Single): Single;
     function LayoutFlex(Parent: TLayoutBox; Tag: THTMLTag;
       const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
+    function LayoutGrid(Parent: TLayoutBox; Tag: THTMLTag;
+      const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
     procedure CollectInlineText(Tag: THTMLTag; SB: TStringBuilder);
   public
     constructor Create(Canvas: TTina4Canvas; Sheet: TCSSStyleSheet);
@@ -1262,6 +1264,231 @@ begin
   end;
 end;
 
+{ Expand repeat(n, tracklist) in a grid-template track spec into the flat list. }
+function ExpandGridRepeat(const Spec: string): string;
+var
+  p, depth, comma, close, n, j: Integer;
+  head, inner, cntStr, listStr, tail: string;
+begin
+  Result := Spec;
+  p := Pos('repeat(', LowerCase(Result));
+  while p > 0 do
+  begin
+    head := Copy(Result, 1, p - 1);
+    // find the matching ')'
+    depth := 0; close := 0; comma := 0;
+    for j := p + 6 to Length(Result) do   // p+6 is the '(' of repeat(
+    begin
+      if Result[j] = '(' then Inc(depth)
+      else if Result[j] = ')' then
+      begin Dec(depth); if depth = 0 then begin close := j; Break; end; end
+      else if (Result[j] = ',') and (depth = 1) and (comma = 0) then comma := j;
+    end;
+    if (close = 0) or (comma = 0) then Break;   // malformed — leave as-is
+    cntStr := Trim(Copy(Result, p + 7, comma - (p + 7)));
+    listStr := Trim(Copy(Result, comma + 1, close - comma - 1));
+    tail := Copy(Result, close + 1, MaxInt);
+    n := StrToIntDef(cntStr, 1);
+    inner := '';
+    for j := 1 to n do inner := inner + ' ' + listStr;
+    Result := head + inner + ' ' + tail;
+    p := Pos('repeat(', LowerCase(Result));
+  end;
+end;
+
+{ CSS Grid (subset): grid-template-columns (px/%/fr/auto/repeat), row/column
+  gaps, row-major auto-placement, grid-column/grid-row: span N. Rows are auto
+  (sized to the tallest item). Items stretch to fill their cell. }
+function TLayoutEngine.LayoutGrid(Parent: TLayoutBox; Tag: THTMLTag;
+  const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
+var
+  st, cs: TComputedStyle;
+  box, cb: TLayoutBox;
+  c: THTMLTag;
+  itemTags: TList<THTMLTag>;
+  mL, mR, mT, mB, availInner, ew, eh: Single;
+  edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
+  rowGap, colGap, frUnit, fixedSum, frSum, cellW, colXk, rowYr: Single;
+  trackW, trackFr, colX, rowH: array of Single;
+  trackFixed: array of Boolean;
+  ncols, nrows, i, curRow, curCol, span, k, spanRows: Integer;
+  toks: TStringArray;
+  tk: string;
+  iRow, iCol, iSpan: array of Integer;
+
+  procedure ParseColumns(const Spec: string);
+  var s: string; t: string; v: Single;
+  begin
+    ncols := 0;
+    SetLength(trackFixed, 0); SetLength(trackW, 0); SetLength(trackFr, 0);
+    s := Trim(ExpandGridRepeat(Spec));
+    if s = '' then Exit;
+    while Pos('  ', s) > 0 do s := StringReplace(s, '  ', ' ', [rfReplaceAll]);
+    toks := s.Split([' ']);
+    for t in toks do
+    begin
+      if Trim(t) = '' then Continue;
+      SetLength(trackFixed, ncols + 1); SetLength(trackW, ncols + 1); SetLength(trackFr, ncols + 1);
+      if t.EndsWith('fr') then
+      begin
+        trackFixed[ncols] := False;
+        trackFr[ncols] := StrToFloatDef(Copy(t, 1, Length(t) - 2), 1);
+        trackW[ncols] := 0;
+      end
+      else if t = 'auto' then
+      begin // treat auto as a flexible 1fr track (content-sizing not modelled)
+        trackFixed[ncols] := False; trackFr[ncols] := 1; trackW[ncols] := 0;
+      end
+      else if t.EndsWith('%') then
+      begin
+        v := StrToFloatDef(Copy(t, 1, Length(t) - 1), 0);
+        trackFixed[ncols] := True; trackW[ncols] := contentW * v / 100; trackFr[ncols] := 0;
+      end
+      else
+      begin
+        trackFixed[ncols] := True;
+        trackW[ncols] := StrToFloatDef(StringReplace(t, 'px', '', [rfReplaceAll, rfIgnoreCase]), 0);
+        trackFr[ncols] := 0;
+      end;
+      Inc(ncols);
+    end;
+  end;
+
+  function SpanOf(const Val: string): Integer;
+  var pS: Integer; nStr: string;
+  begin
+    Result := 1;
+    pS := Pos('span', LowerCase(Val));
+    if pS > 0 then
+    begin
+      nStr := Trim(Copy(Val, pS + 4, MaxInt));
+      Result := Max(1, StrToIntDef(Trim(nStr), 1));
+    end;
+  end;
+
+begin
+  st := TComputedStyle.ForTag(Tag, ParentStyle, FSheet);
+  if LowerCase(st.Display) = 'none' then Exit(0);
+  box := TLayoutBox.Create;
+  box.Tag := Tag; box.Style := st;
+  Parent.Children.Add(box);
+
+  mL := st.Margin.Left;  if mL = -1 then mL := 0;
+  mR := st.Margin.Right; if mR = -1 then mR := 0;
+  mT := st.Margin.Top;   if mT = -1 then mT := 0;
+  mB := st.Margin.Bottom; if mB = -1 then mB := 0;
+  availInner := AvailW - mL - mR;
+  box.X := X + mL; box.Y := Y + mT;
+  ew := ResolveSize(st.ExplicitWidth, availInner);
+  if ew >= 0 then
+  begin
+    if SameText(st.BoxSizing, 'border-box') then box.W := Min(ew, availInner)
+    else box.W := Min(ew + st.Padding.Horz + st.BorderWidths.Horz, availInner);
+  end
+  else box.W := availInner;
+
+  edgeL := st.BorderWidths.Left + st.Padding.Left;
+  edgeT := st.BorderWidths.Top + st.Padding.Top;
+  edgeR := st.BorderWidths.Right + st.Padding.Right;
+  edgeB := st.BorderWidths.Bottom + st.Padding.Bottom;
+  contentX := box.X + edgeL; contentY := box.Y + edgeT;
+  contentW := box.W - edgeL - edgeR;
+
+  colGap := st.ColGap; if colGap < 0 then colGap := 0;
+  rowGap := st.RowGap; if rowGap < 0 then rowGap := 0;
+
+  ParseColumns(st.GridTemplateColumns);
+  if ncols = 0 then
+  begin
+    ncols := 1; SetLength(trackFixed, 1); SetLength(trackW, 1); SetLength(trackFr, 1);
+    trackFixed[0] := False; trackFr[0] := 1; trackW[0] := 0;
+  end;
+
+  // resolve fr tracks against the free space after fixed tracks + column gaps
+  fixedSum := 0; frSum := 0;
+  for k := 0 to ncols - 1 do
+    if trackFixed[k] then fixedSum := fixedSum + trackW[k] else frSum := frSum + trackFr[k];
+  frUnit := 0;
+  if frSum > 0 then
+    frUnit := Max(0, (contentW - fixedSum - colGap * (ncols - 1))) / frSum;
+  for k := 0 to ncols - 1 do
+    if not trackFixed[k] then trackW[k] := trackFr[k] * frUnit;
+
+  // column X positions
+  SetLength(colX, ncols);
+  colXk := contentX;
+  for k := 0 to ncols - 1 do
+  begin colX[k] := colXk; colXk := colXk + trackW[k] + colGap; end;
+
+  // collect grid items
+  itemTags := TList<THTMLTag>.Create;
+  try
+    for c in Tag.Children do
+    begin
+      if IsTextNode(c) then Continue;
+      cs := TComputedStyle.ForTag(c, st, FSheet);
+      if LowerCase(cs.Display) = 'none' then Continue;
+      itemTags.Add(c);
+    end;
+
+    SetLength(iRow, itemTags.Count); SetLength(iCol, itemTags.Count);
+    SetLength(iSpan, itemTags.Count);
+    SetLength(rowH, 0);
+    curRow := 0; curCol := 0; nrows := 0;
+
+    for i := 0 to itemTags.Count - 1 do
+    begin
+      cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
+      span := Min(SpanOf(cs.GridColumn), ncols);
+      if curCol + span > ncols then begin curCol := 0; Inc(curRow); end;
+      // cell width across the spanned columns (+ the gaps they swallow)
+      cellW := colGap * (span - 1);
+      for k := curCol to curCol + span - 1 do cellW := cellW + trackW[k];
+
+      cs.ExplicitWidth := cellW; cs.BoxSizing := 'border-box';
+      cb := MakeReplacedBox(itemTags[i], cs, cellW);
+      if (cb = nil) and IsFormControlTag(itemTags[i].TagName) then
+        cb := MakeControl(itemTags[i], cs, cellW)
+      else if cb = nil then
+        cb := MakeInlineContainer(itemTags[i], cs, cellW);
+      box.Children.Add(cb);
+
+      iRow[i] := curRow; iCol[i] := curCol; iSpan[i] := span;
+      if curRow + 1 > nrows then
+      begin nrows := curRow + 1; SetLength(rowH, nrows); rowH[nrows - 1] := 0; end;
+      if cb.H > rowH[curRow] then rowH[curRow] := cb.H;
+
+      curCol := curCol + span;
+      if curCol >= ncols then begin curCol := 0; Inc(curRow); end;
+    end;
+
+    // place items: cell origin + stretch to the row height
+    contentH := 0;
+    for k := 0 to nrows - 1 do contentH := contentH + rowH[k];
+    contentH := contentH + rowGap * Max(0, nrows - 1);
+    eh := ResolveSize(st.ExplicitHeight, 0);
+    if eh >= 0 then
+    begin
+      if SameText(st.BoxSizing, 'border-box') then contentH := Max(contentH, eh - edgeT - edgeB)
+      else contentH := Max(contentH, eh);
+    end;
+
+    for i := 0 to itemTags.Count - 1 do
+    begin
+      cb := box.Children[i];
+      rowYr := contentY;
+      for k := 0 to iRow[i] - 1 do rowYr := rowYr + rowH[k] + rowGap;
+      if cb.H < rowH[iRow[i]] then cb.H := rowH[iRow[i]];   // stretch to the cell
+      ShiftBoxTree(cb, colX[iCol[i]] - cb.X, rowYr - cb.Y);
+    end;
+
+    box.H := contentH + edgeT + edgeB;
+    Result := box.H + mT + mB;
+  finally
+    itemTags.Free;
+  end;
+end;
+
 { A block-level form control (Bootstrap .form-control): full-width by
   default, honours margins, stacks vertically. }
 function TLayoutEngine.LayoutControlBlock(Parent: TLayoutBox; Tag: THTMLTag;
@@ -1957,6 +2184,8 @@ begin
           y := y - Min(prevMB, mTc);
         if (disp = 'flex') or (disp = 'inline-flex') then
           y := y + LayoutFlex(Box, c, ParentStyle, CX, y, CW)
+        else if (disp = 'grid') or (disp = 'inline-grid') then
+          y := y + LayoutGrid(Box, c, ParentStyle, CX, y, CW)
         else if IsFormControlTag(c.TagName) then
           y := y + LayoutControlBlock(Box, c, cs, CX, y, CW)
         else if SameText(c.TagName, 'table') then

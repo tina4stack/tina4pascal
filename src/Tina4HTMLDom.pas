@@ -322,6 +322,13 @@ type
     FlexShrink: Single;
     FlexBasis: Single;
     FlexGap: Single;
+    // CSS Grid (subset)
+    GridTemplateColumns: string;  // track list: px / % / fr / repeat(n, size) / auto
+    GridTemplateRows: string;
+    GridColumn: string;           // item placement: 'span N' (start/end lines TBD)
+    GridRow: string;
+    RowGap: Single;               // grid row / column gaps (independent)
+    ColGap: Single;
     // text-shadow: offsetX offsetY [blur] color
     TextShadowOffsetX: Single;
     TextShadowOffsetY: Single;
@@ -2069,6 +2076,9 @@ begin
   Result.FlexShrink := 1;
   Result.FlexBasis := -1;
   Result.FlexGap := 0;
+  Result.GridTemplateColumns := ''; Result.GridTemplateRows := '';
+  Result.GridColumn := ''; Result.GridRow := '';
+  Result.RowGap := 0; Result.ColGap := 0;
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
   Result.BgPosY := 0;
@@ -2352,6 +2362,9 @@ begin
   Result.FlexShrink := 1;
   Result.FlexBasis := -1;
   Result.FlexGap := 0;
+  Result.GridTemplateColumns := ''; Result.GridTemplateRows := '';
+  Result.GridColumn := ''; Result.GridRow := '';
+  Result.RowGap := 0; Result.ColGap := 0;
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
   Result.BgPosY := 0;
@@ -3135,11 +3148,23 @@ begin
   if Decls.TryGetValue('align-items', Temp) and not ShouldSkip(Temp) then
     Style.AlignItems := Temp.Trim.ToLower;
   if Decls.TryGetValue('gap', Temp) and not ShouldSkip(Temp) then
-    Style.FlexGap := ParseLength(Temp, Style.FontSize);
+  begin
+    Style.FlexGap := ParseLength(Temp, Style.FontSize);   // 'gap: R C' → first token
+    Style.RowGap := Style.FlexGap; Style.ColGap := Style.FlexGap;
+  end;
   if Decls.TryGetValue('column-gap', Temp) and not ShouldSkip(Temp) then
-    Style.FlexGap := ParseLength(Temp, Style.FontSize);
+  begin Style.FlexGap := ParseLength(Temp, Style.FontSize); Style.ColGap := Style.FlexGap; end;
   if Decls.TryGetValue('row-gap', Temp) and not ShouldSkip(Temp) then
-    Style.FlexGap := ParseLength(Temp, Style.FontSize);
+  begin Style.FlexGap := ParseLength(Temp, Style.FontSize); Style.RowGap := Style.FlexGap; end;
+  // CSS Grid templates + item placement
+  if Decls.TryGetValue('grid-template-columns', Temp) and not ShouldSkip(Temp) then
+    Style.GridTemplateColumns := Temp.Trim.ToLower;
+  if Decls.TryGetValue('grid-template-rows', Temp) and not ShouldSkip(Temp) then
+    Style.GridTemplateRows := Temp.Trim.ToLower;
+  if Decls.TryGetValue('grid-column', Temp) and not ShouldSkip(Temp) then
+    Style.GridColumn := Temp.Trim.ToLower;
+  if Decls.TryGetValue('grid-row', Temp) and not ShouldSkip(Temp) then
+    Style.GridRow := Temp.Trim.ToLower;
 
   // Flexbox item properties — `flex` is a shorthand for grow/shrink/basis.
   if Decls.TryGetValue('flex', Temp) and not ShouldSkip(Temp) then

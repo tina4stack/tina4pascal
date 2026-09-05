@@ -32,7 +32,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | visibility | ✅ | hidden hides self+subtree, keeps space (was mislabelled 📦) |
 | display block/inline/inline-block/none/list-item/table | ✅ | |
 | display flex / inline-flex | ✅ | LayoutFlex (was mislabelled "no flex") |
-| display grid | ❌ | falls back to block |
+| display grid | ✅ | grid-template-columns (px/%/fr/auto/repeat), row/column gaps, row-major auto-placement, grid-column/row: span N; auto rows |
 | aspect-ratio | ❌ | not parsed |
 
 ## Positioning
@@ -59,7 +59,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | align-items | ✅ | center/flex-end/stretch (the default, fills the cross axis); no baseline |
 | align-content, align-self, order | ❌ | no multi-line cross-align, per-item align, or reorder |
 | gap, row-gap, column-gap | 🟡 | one shared gap value (no per-axis distinction) |
-| grid + all grid-\* | ❌ | not started |
+| grid-template-columns, gap, grid-column span | ✅ | see display grid. TODO: explicit line placement, grid-template-rows/areas, multi-row span |
 
 ## Typography
 
