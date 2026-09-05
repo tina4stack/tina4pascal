@@ -105,13 +105,27 @@ procedure TinaSetColorScheme(Dark: Boolean);
   unaffected. Repaint after calling. }
 procedure TinaSetCaptureProtected(Protect: Boolean);
 
+{ ---- Native media embeds (shell-owned <video>) ------------------------
+  A <video> is laid out by the core as a sized black poster box; the shell
+  overlays a native player on top. After painting a frame, the shell calls
+  TinaEmbedCount (which snapshots the current layout), then reads each embed's
+  screen rect (CSS px = points, scroll already applied) and source URL to
+  create/position/reuse a native view. }
+function TinaEmbedCount: Integer;
+procedure TinaEmbedRect(Index: Integer; out X, Y, W, H: Single);
+function TinaEmbedSrc(Index: Integer): string;
+
 implementation
 
 uses
   SysUtils, Classes, Math, DateUtils, Generics.Collections, fpjson, jsonparser,
   Tina4HTMLDom, Tina4HTMLLayout, Tina4Events, Tina4Frond, Tina4Http, Tina4Services;
 
+type
+  TEmbedRec = record Src: string; X, Y, W, H: Single; end;
+
 var
+  GEmbeds: array of TEmbedRec; // shell-owned <video> boxes, refreshed by TinaEmbedCount
   GFrond: TFrond = nil;         // the template engine (created on first use)
   GTemplate: string = '';       // last template, for TinaRenderContext
   GCanvas: TTina4Canvas = nil;
@@ -1484,6 +1498,53 @@ begin
   if Dark = GDarkMode then Exit;
   GDarkMode := Dark;
   GLayoutDirty := True;   // re-cascade: @media prefers-color-scheme rules change
+end;
+
+{ ---- Native media embeds ---------------------------------------------- }
+
+procedure CollectEmbeds(Box: TLayoutBox);
+var c, sc: THTMLTag; b: TLayoutBox; src: string; n: Integer;
+begin
+  if Box = nil then Exit;
+  if (Box.Tag <> nil) and SameText(Box.Tag.TagName, 'video') then
+  begin
+    c := Box.Tag;
+    src := c.GetAttribute('src');
+    if src = '' then                      // else the first <source src>
+      for sc in c.Children do
+        if (src = '') and SameText(sc.TagName, 'source') then
+          src := sc.GetAttribute('src');
+    n := Length(GEmbeds); SetLength(GEmbeds, n + 1);
+    GEmbeds[n].Src := src;
+    GEmbeds[n].X := Box.X;
+    GEmbeds[n].Y := Box.Y - GScrollY;     // content → screen (scroll applied)
+    GEmbeds[n].W := Box.W;
+    GEmbeds[n].H := Box.H;
+  end;
+  for b in Box.Children do CollectEmbeds(b);
+end;
+
+function TinaEmbedCount: Integer;
+begin
+  SetLength(GEmbeds, 0);
+  CollectEmbeds(GRoot);
+  Result := Length(GEmbeds);
+end;
+
+procedure TinaEmbedRect(Index: Integer; out X, Y, W, H: Single);
+begin
+  X := 0; Y := 0; W := 0; H := 0;
+  if (Index >= 0) and (Index < Length(GEmbeds)) then
+  begin
+    X := GEmbeds[Index].X; Y := GEmbeds[Index].Y;
+    W := GEmbeds[Index].W; H := GEmbeds[Index].H;
+  end;
+end;
+
+function TinaEmbedSrc(Index: Integer): string;
+begin
+  if (Index >= 0) and (Index < Length(GEmbeds)) then Result := GEmbeds[Index].Src
+  else Result := '';
 end;
 
 finalization

@@ -2537,6 +2537,15 @@ begin
     Result.Display := 'block';
     Result.Italic := True;                         // UA: font-style italic
   end
+  else if TN = 'video' then
+  begin
+    // A shell-owned native player sits on top; the core reserves a correctly
+    // sized black box (HTML default intrinsic size 300x150) as the poster area.
+    Result.Display := 'inline-block';
+    Result.BackgroundColor := $FF000000;
+    if Result.ExplicitWidth < 0 then Result.ExplicitWidth := 300;
+    if Result.ExplicitHeight < 0 then Result.ExplicitHeight := 150;
+  end
   else if TN = 'dialog' then
   begin
     // UA: dialog:not([open]) { display:none }. An open dialog is a bordered,

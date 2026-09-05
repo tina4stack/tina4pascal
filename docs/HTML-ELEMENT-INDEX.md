@@ -69,7 +69,11 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | qrcode | ✅ | **Tina4 custom** — pure-Pascal QR encoder |
 | camera | ✅ | **Tina4 custom** — "Take Photo" → shell capture |
 | picture, source, srcset | ✅ | responsive selection (media/type/density/width/sizes) |
-| video, audio, canvas, iframe, object, map | ⬜ | shell-owned (out of core-renderer scope); needs a per-OS media/embed surface + canvas draw hook — see ROADMAP |
+| video | ✅ (iOS) | core lays out a sized poster box + exposes it via `tina4_embed_*`; iOS shell overlays an `AVPlayerViewController` with native controls (play/pause/scrub/skip/fullscreen/AirPlay), tracking scroll. Android/macOS shells: TODO |
+| audio | ❌ | outstanding — shell-owned native audio player over a core placeholder box |
+| canvas | ❌ | outstanding — needs a Tina4 native draw hook (no JS engine) |
+| iframe | ⬜ | **intentionally not supported** — Tina4 composes pages with `<include src>` (native HTML splice into the same render tree), not a foreign web view |
+| object, map | ⬜ | legacy embed / image maps — not planned |
 | track, area, embed | ⬜ | void children / not applicable |
 
 ## Tina4 custom tags
@@ -148,11 +152,16 @@ wishlist.
 3. **`<dialog>` modal** — backdrop + centering (`showModal`); needs the scripting
    model. Non-modal open/closed already works.
 
+**Media — outstanding HTML, shell-owned (NOT done):**
+4. **`video`** — in progress (iOS AVPlayer overlay over the core placeholder box).
+5. **`audio`** — native audio player over a core-laid box.
+6. **`canvas`** — a Tina4 native draw hook (no JS engine).
+   (`iframe` is intentionally not supported — use `<include src>`; `object`/`map`
+   are not planned.)
+
 **Deferred (need a larger subsystem, intentionally later):**
-4. **`bdi`/`bdo`** — bidi/direction override needs RTL support (engine is LTR).
-5. **`ruby`/`rt`/`rp`** — stacked CJK annotation positioning.
-6. **`video`/`audio`/`canvas`/`iframe`/`object`/`map`** — shell-owned media/embed
-   surfaces + a canvas draw hook (see `docs/ROADMAP.md`).
+6. **`bdi`/`bdo`** — bidi/direction override needs RTL support (engine is LTR).
+7. **`ruby`/`rt`/`rp`** — stacked CJK annotation positioning.
 
 **Done since the previous audit:** whole tables set (rowspan, caption+side,
 col/colgroup, tfoot, th); template/datalist inert; `<optgroup>`; `<dialog>`

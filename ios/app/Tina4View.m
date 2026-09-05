@@ -1,6 +1,8 @@
 #import "Tina4View.h"
 #import "tina4.h"
 #import <MobileCoreServices/MobileCoreServices.h>
+#import <AVFoundation/AVFoundation.h>
+#import <AVKit/AVKit.h>
 
 @interface Tina4View () <UIImagePickerControllerDelegate,
                          UINavigationControllerDelegate,
@@ -8,6 +10,11 @@
 @property (strong, nonatomic) CADisplayLink *fling;
 @property (strong, nonatomic) NSTimer *caret;
 @property (strong, nonatomic) CADisplayLink *pump;   // redraws while HTTP is in flight
+// native <video> overlays, keyed by source URL. Each is a full AVPlayerViewController
+// (native play/pause/scrub/fullscreen controls), positioned over the engine's black
+// poster box each frame (see -syncVideos:).
+@property (strong, nonatomic) NSMutableDictionary<NSString *, AVPlayerViewController *> *videoControllers;
+@property (strong, nonatomic) NSMutableDictionary<NSString *, id> *videoLoopObservers;
 @end
 
 @implementation Tina4View
@@ -16,6 +23,9 @@
     if ((self = [super initWithFrame:frame])) {
         self.contentMode = UIViewContentModeRedraw;   // redraw on resize/rotate
         self.multipleTouchEnabled = NO;
+        self.clipsToBounds = YES;                      // keep video views inside the view
+        _videoControllers = [NSMutableDictionary dictionary];
+        _videoLoopObservers = [NSMutableDictionary dictionary];
         // the engine paints the safe area; the status-bar / home-indicator strips
         // outside it show this colour — match the page background (--paper)
         self.backgroundColor = [UIColor colorWithRed:0.984 green:0.980 blue:0.969 alpha:1.0];
@@ -43,11 +53,85 @@
     tina4_frame(ctx, (int)(self.bounds.size.width  - s.left - s.right),
                      (int)(self.bounds.size.height - s.top  - s.bottom), 1.0f);
     CGContextRestoreGState(ctx);
+    // overlay/position native <video> players over their poster boxes. Do this
+    // OFF the drawRect pass — mutating the layer tree (addSublayer) inside
+    // drawRect is unreliable — so hop to the next main-loop turn.
+    dispatch_async(dispatch_get_main_queue(), ^{ [self syncVideos:s]; });
     // autofocus: the engine parses on the first frame, so poll here
     if (tina4_wants_keyboard()) [self showKeyboard];
     // a frame may have kicked off remote <img> downloads — keep repainting until
     // they arrive (no touch needed on page load).
     if (tina4_ios_images_pending() > 0) [self startPump];
+}
+
+// ---- native <video> overlays ------------------------------------------
+// The engine lays out each <video> as a sized black poster box and reports its
+// screen rect + source. We keep one AVPlayerLayer per source, position it over
+// the poster (offset into the safe area like the engine's content), and reuse
+// it across frames so scrolling just repositions — no reload.
+
+- (void)syncVideos:(UIEdgeInsets)s {
+    int n = tina4_embed_count();
+    NSMutableSet<NSString *> *live = [NSMutableSet set];
+    for (int i = 0; i < n; i++) {
+        char buf[2048];
+        int len = tina4_embed_src(i, buf, (int)sizeof(buf));
+        if (len <= 0) continue;
+        NSString *src = [NSString stringWithUTF8String:buf];
+        float x = 0, y = 0, w = 0, h = 0;
+        tina4_embed_rect(i, &x, &y, &w, &h);
+        if (w <= 0 || h <= 0) continue;
+        [live addObject:src];
+
+        AVPlayerViewController *vc = self.videoControllers[src];
+        if (!vc) {
+            NSURL *url = [NSURL URLWithString:src];
+            if (!url) continue;
+            AVPlayer *player = [AVPlayer playerWithURL:url];
+            player.muted = YES;                 // muted so autoplay is allowed; user can unmute
+            vc = [[AVPlayerViewController alloc] init];
+            vc.player = player;
+            vc.showsPlaybackControls = YES;     // native play / pause / scrubber (scan)
+            vc.videoGravity = AVLayerVideoGravityResizeAspect;
+            vc.view.backgroundColor = [UIColor blackColor];
+            if (self.host) [self.host addChildViewController:vc];
+            [self addSubview:vc.view];
+            if (self.host) [vc didMoveToParentViewController:self.host];
+            self.videoControllers[src] = vc;
+            // loop: on end, rewind and keep playing
+            __weak AVPlayer *wplayer = player;
+            id obs = [[NSNotificationCenter defaultCenter]
+                addObserverForName:AVPlayerItemDidPlayToEndTimeNotification
+                            object:player.currentItem
+                             queue:[NSOperationQueue mainQueue]
+                        usingBlock:^(NSNotification *note) {
+                            [wplayer seekToTime:kCMTimeZero];
+                            [wplayer play];
+                        }];
+            self.videoLoopObservers[src] = obs;
+            [player play];
+        }
+        // reposition to track scroll (no implicit animation)
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        vc.view.frame = CGRectMake(x + s.left, y + s.top, w, h);
+        [CATransaction commit];
+    }
+    // tear down controllers whose <video> is no longer laid out
+    NSMutableArray<NSString *> *dead = [NSMutableArray array];
+    for (NSString *src in self.videoControllers)
+        if (![live containsObject:src]) [dead addObject:src];
+    for (NSString *src in dead) {
+        AVPlayerViewController *vc = self.videoControllers[src];
+        [vc.player pause];
+        [vc willMoveToParentViewController:nil];
+        [vc.view removeFromSuperview];
+        [vc removeFromParentViewController];
+        id obs = self.videoLoopObservers[src];
+        if (obs) [[NSNotificationCenter defaultCenter] removeObserver:obs];
+        [self.videoLoopObservers removeObjectForKey:src];
+        [self.videoControllers removeObjectForKey:src];
+    }
 }
 
 // ---- touch → engine ----------------------------------------------------

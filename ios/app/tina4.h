@@ -25,4 +25,12 @@ int  tina4_focus_next(void);
 void tina4_set_file(const char *name);
 void tina4_set_photo(const char *path);
 
+// Native media embeds (<video>): after a frame, ask the engine which <video>
+// boxes are laid out and where (screen points, scroll applied), to overlay a
+// native AVPlayer over each. Call tina4_embed_count() first (it snapshots the
+// current layout), then read each embed's rect + source URL.
+int  tina4_embed_count(void);
+void tina4_embed_rect(int index, float *x, float *y, float *w, float *h);
+int  tina4_embed_src(int index, char *buf, int cap);   // fills buf, returns length
+
 #endif

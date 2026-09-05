@@ -80,10 +80,8 @@ cmd_doctor() {
   say "${B}iOS${Z}"
   command -v xcodebuild >/dev/null 2>&1 && ok "$(xcodebuild -version 2>/dev/null | head -1)" || warn "Xcode missing → install from the App Store"
   command -v xcodegen >/dev/null 2>&1 && ok "xcodegen" || warn "xcodegen missing → tina4pascal setup ios"
-  if command -v idevice_id >/dev/null 2>&1; then
-    u="$(idevice_id -l 2>/dev/null | head -1)"
-    [ -n "$u" ] && ok "device ${D}$u${Z}" || warn "no iOS device attached"
-  else warn "libimobiledevice missing → tina4pascal setup ios"; fi
+  u="$(ios_udid)"
+  [ -n "$u" ] && ok "device ${D}$u${Z}" || warn "no iOS device attached (idevice_id / devicectl)"
   { [ -x "$PMD3" ] || command -v pymobiledevice3 >/dev/null 2>&1; } && ok "pymobiledevice3 (device screenshots)" || warn "pymobiledevice3 missing → tina4pascal setup ios"
   say ""
   say "${B}Java${Z}"
@@ -280,7 +278,17 @@ cmd_deploy() {
 }
 
 # ---- iOS build / deploy ------------------------------------------------------
-ios_udid() { echo "${IOS_UDID:-$(idevice_id -l 2>/dev/null | head -1)}"; }
+# The device identifier for install/launch/screenshot. Everything goes through
+# `xcrun devicectl` (CoreDevice, iOS 17+), so prefer the devicectl identifier of
+# the first available iPhone/iPad; fall back to a USB idevice_id UDID.
+ios_udid() {
+  [ -n "${IOS_UDID:-}" ] && { echo "$IOS_UDID"; return; }
+  id="$(xcrun devicectl list devices 2>/dev/null \
+        | grep -iE 'available' | grep -iE 'iphone|ipad' \
+        | grep -oE '[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}' | head -1)"
+  [ -n "$id" ] && { echo "$id"; return; }
+  idevice_id -l 2>/dev/null | head -1
+}
 
 # static lib (Pascal engine) → xcodegen project → xcodebuild → install + launch
 cmd_ios() {
@@ -304,6 +312,26 @@ cmd_ios() {
     || die "install failed (is the iPhone unlocked?)"
   xcrun devicectl device process launch --device "$udid" "$IOS_BUNDLE" >/dev/null 2>&1 || true
   ok "launched on device"
+}
+
+# launch <target>  — bring the already-installed app to the foreground, no build.
+# (The IDE needs a fast "run" that skips the rebuild; also used to re-foreground
+#  the app before a screenshot.)
+cmd_launch() {
+  plat="${1:-ios}"
+  case "$plat" in
+    ios)
+      udid="$(ios_udid)"; [ -n "$udid" ] || die "no iOS device attached (idevice_id / devicectl)"
+      xcrun devicectl device process launch --terminate-existing --device "$udid" "$IOS_BUNDLE" >/dev/null 2>&1 \
+        || die "launch failed (installed? iPhone unlocked?)"
+      ok "launched $IOS_BUNDLE on device" ;;
+    android)
+      adb shell monkey -p "$ANDROID_PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 \
+        && ok "launched $ANDROID_PKG" || die "launch failed (installed? emulator/device up?)" ;;
+    macos)
+      open "$ROOT/examples/htmlviewer/htmlviewer" 2>/dev/null && ok "launched macOS viewer" || die "build macos first" ;;
+    *) die "launch: unsupported target '$plat' (ios|android|macos)" ;;
+  esac
 }
 
 cmd_clean() { rm -rf "$BUILD" "$ROOT/android/out" "$ROOT/android/tina4pascal-debug.apk" "$IOS_DIR/build" "$IOS_DIR/app/libtina4ios.a"; ok "cleaned"; }
@@ -508,6 +536,7 @@ case "$cmd" in
   apk)        cmd_apk "$@" ;;
   deploy)     case "${1:-}" in android|ios|macos|win64|windows|linux) cmd_run_target "$@" ;; *) cmd_deploy "$@" ;; esac ;;
   ios)        cmd_ios "$@" ;;
+  launch)     cmd_launch "$@" ;;
   debug)      cmd_debug "$@" ;;
   screenshot) cmd_screenshot "$@" ;;
   tap)        cmd_tap "$@" ;;

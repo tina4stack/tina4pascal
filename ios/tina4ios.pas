@@ -110,10 +110,41 @@ begin
   TinaSetPhoto(string(Path));
 end;
 
+{ ---- native media embeds (<video>) ----------------------------------- }
+
+function tina4_embed_count: cint; cdecl;
+begin
+  Result := TinaEmbedCount;
+end;
+
+procedure tina4_embed_rect(Index: cint; X, Y, W, H: PSingle); cdecl;
+var xx, yy, ww, hh: Single;
+begin
+  TinaEmbedRect(Index, xx, yy, ww, hh);
+  if X <> nil then X^ := xx;
+  if Y <> nil then Y^ := yy;
+  if W <> nil then W^ := ww;
+  if H <> nil then H^ := hh;
+end;
+
+function tina4_embed_src(Index: cint; Buf: PAnsiChar; Cap: cint): cint; cdecl;
+var s: AnsiString;
+begin
+  s := TinaEmbedSrc(Index);
+  Result := Length(s);
+  if (Buf <> nil) and (Cap > 0) then
+  begin
+    if Result > Cap - 1 then Result := Cap - 1;
+    if Result > 0 then Move(s[1], Buf^, Result);
+    Buf[Result] := #0;
+  end;
+end;
+
 exports
   tina4_set_html, tina4_frame, tina4_touch, tina4_tick, tina4_http_pending,
   tina4_wants_keyboard, tina4_blur, tina4_blink_caret, tina4_key,
-  tina4_focus_kind, tina4_focus_next, tina4_set_file, tina4_set_photo;
+  tina4_focus_kind, tina4_focus_next, tina4_set_file, tina4_set_photo,
+  tina4_embed_count, tina4_embed_rect, tina4_embed_src;
 
 begin
 end.
