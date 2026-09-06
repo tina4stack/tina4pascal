@@ -103,7 +103,8 @@ implementation
 {$linklib X11}
 
 uses
-  base64, md5, FPImage, FPReadPNG, FPReadJPEG, FPReadBMP;
+  base64, md5, FPImage, FPReadPNG, FPReadJPEG, FPReadBMP,
+  Types, freetypehdyn, freetype;   // scalable, Unicode, anti-aliased text
 
 type
   PXFontStruct = ^TXFontStruct;
@@ -238,6 +239,104 @@ begin
     else if (b and $F8) = $F0 then begin Result := Result + '?'; Inc(i, 4); end
     else begin Result := Result + '?'; Inc(i); end;
   end;
+end;
+
+{ ---- FreeType text (scalable, Unicode, anti-aliased) --------------------
+  The X core-font path only reaches 8-bit iso8859-1 fonts, so non-Latin-1 code
+  points (-, <->, ...) rendered as tofu. FreeType rasterises glyphs from a TTF
+  and we composite the coverage over the back-buffer. Fonts are resolved
+  bundled-first — a `fonts/` directory beside the executable ships with the app
+  and wins over system fonts, so rendering is identical everywhere (even minimal
+  containers). libfreetype is loaded by soname at runtime (no dev symlink, no
+  link-time dependency). }
+var
+  GFtMgr: TFontManager = nil;
+  GFtIds: TStringList = nil;    // ttf path -> font id (Objects hold id+1)
+  GFtTried: Boolean = False;
+  GFtReady: Boolean = False;
+
+function EnsureFt: Boolean;
+begin
+  if GFtTried then Exit(GFtReady);
+  GFtTried := True;
+  try
+    InitializeFreetype('libfreetype.so.6');   // by soname; present on all Linux
+    GFtMgr := TFontManager.Create;
+    GFtMgr.Resolution := 72;                   // point size == pixel size
+    GFtIds := TStringList.Create; GFtIds.Sorted := True; GFtIds.Duplicates := dupIgnore;
+    GFtReady := True;
+  except
+    GFtReady := False;
+  end;
+  Result := GFtReady;
+end;
+
+{ Ordered font search dirs: a `fonts/` folder beside the exe (bundled with the
+  app) first, then the common system locations across distros. }
+procedure FontDirs(out Dirs: TStringArray);
+begin
+  Dirs := TStringArray.Create(
+    IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) + 'fonts',
+    '/usr/share/fonts/truetype/dejavu',
+    '/usr/share/fonts/TTF',
+    '/usr/share/fonts/dejavu',
+    '/usr/local/share/fonts');
+end;
+
+{ Resolve a CSS family + style to a TTF path (bundled first). Falls back to the
+  regular weight, then to any .ttf in the bundled fonts dir. '' if none found. }
+function FtFontFile(const Family: string; Bold, Italic: Boolean): string;
+var first, base, suf, cand: string; p, i: Integer; dirs: TStringArray; sr: TSearchRec;
+begin
+  Result := '';
+  first := LowerCase(Trim(Family));
+  p := Pos(',', first); if p > 0 then first := Trim(Copy(first, 1, p - 1));
+  first := StringReplace(first, '"', '', [rfReplaceAll]);
+  first := StringReplace(first, '''', '', [rfReplaceAll]);
+  if first = 'serif' then base := 'DejaVuSerif'
+  else if (first = 'monospace') or (first = 'mono') or (first = 'consolas') or (first = 'courier') then base := 'DejaVuSansMono'
+  else base := 'DejaVuSans';
+  if base = 'DejaVuSerif' then
+  begin
+    if Bold and Italic then suf := '-BoldItalic' else if Bold then suf := '-Bold'
+    else if Italic then suf := '-Italic' else suf := '';
+  end
+  else
+  begin
+    if Bold and Italic then suf := '-BoldOblique' else if Bold then suf := '-Bold'
+    else if Italic then suf := '-Oblique' else suf := '';
+  end;
+  FontDirs(dirs);
+  for i := 0 to High(dirs) do
+  begin
+    cand := IncludeTrailingPathDelimiter(dirs[i]) + base + suf + '.ttf';
+    if FileExists(cand) then Exit(cand);
+  end;
+  if suf <> '' then
+    for i := 0 to High(dirs) do
+    begin
+      cand := IncludeTrailingPathDelimiter(dirs[i]) + base + '.ttf';
+      if FileExists(cand) then Exit(cand);
+    end;
+  // last resort: any .ttf a user dropped into the bundled fonts dir
+  if FindFirst(IncludeTrailingPathDelimiter(dirs[0]) + '*.ttf', faAnyFile, sr) = 0 then
+  begin
+    Result := IncludeTrailingPathDelimiter(dirs[0]) + sr.Name;
+    FindClose(sr);
+  end;
+end;
+
+function FtFontId(const Family: string; Bold, Italic: Boolean): Integer;
+var path: string; p: Integer;
+begin
+  Result := -1;
+  if not EnsureFt then Exit;
+  path := FtFontFile(Family, Bold, Italic);
+  if path = '' then Exit;
+  p := GFtIds.IndexOf(path);
+  if p >= 0 then Exit(PtrInt(GFtIds.Objects[p]) - 1);
+  Result := GFtMgr.RequestFont(path);
+  if Result >= 0 then GFtIds.AddObject(path, TObject(PtrInt(Result + 1)));
 end;
 
 constructor TX11Canvas.Create(ADpy: PXDisplay; AScreen: cint; AGC: TGC);
@@ -570,9 +669,74 @@ end;
 
 procedure TX11Canvas.DrawText(X, Y: Single; const Text: string; FontSize: Single;
   Styles: TTina4FontStyles; Color: TTina4Color);
-var f: PXFontStruct; s: AnsiString;
+var
+  f: PXFontStruct; s: AnsiString;
+  fid, i, gx, gy, sx0, sy0, sx1, sy1, bx, by, px, py, baseY, asc: Integer;
+  ub: TUnicodeStringBitmaps; b: PFontBitmap; img: PXImage;
+  cov: Byte; ca, sa, sr, sg, sb2: Single; bold, ital: Boolean;
 begin
   if Text = '' then Exit;
+  bold := (tfsBold in Styles) or (FontWeight >= 600);
+  ital := tfsItalic in Styles;
+  fid := FtFontId(FontFamily, bold, ital);
+  if fid >= 0 then
+  begin
+    asc := Round(FontSize * 0.8);            // matches MeasureText ascent
+    baseY := DY(Y) + asc;
+    ub := GFtMgr.GetStringGray(fid, UTF8Decode(Text), FontSize);
+    try
+      // union of glyph ink rects → the region to read/composite/write
+      sx0 := FW; sy0 := FH; sx1 := 0; sy1 := 0;
+      for i := 0 to ub.Count - 1 do
+      begin
+        b := ub.Bitmaps[i];
+        if (b^.width <= 0) or (b^.height <= 0) or (b^.data = nil) then Continue;
+        bx := DX(X) + b^.x; by := baseY + b^.y;
+        if bx < sx0 then sx0 := bx; if by < sy0 then sy0 := by;
+        if bx + b^.width > sx1 then sx1 := bx + b^.width;
+        if by + b^.height > sy1 then sy1 := by + b^.height;
+      end;
+      if sx1 <= sx0 then Exit;                // whitespace only, nothing to ink
+      if sx0 < 0 then sx0 := 0; if sy0 < 0 then sy0 := 0;
+      if sx1 > FW then sx1 := FW; if sy1 > FH then sy1 := FH;
+      if FCur.HasClip then
+      begin
+        if sx0 < FCur.X then sx0 := FCur.X; if sy0 < FCur.Y then sy0 := FCur.Y;
+        if sx1 > FCur.X + FCur.W then sx1 := FCur.X + FCur.W;
+        if sy1 > FCur.Y + FCur.H then sy1 := FCur.Y + FCur.H;
+      end;
+      if (sx1 <= sx0) or (sy1 <= sy0) then Exit;
+      img := XGetImage(FDpy, FDraw, sx0, sy0, sx1 - sx0, sy1 - sy0, AllPlanes, ZPixmap);
+      if img = nil then Exit;
+      ca := ((Color shr 24) and $FF) / 255; if ca <= 0 then ca := 1;  // FF=opaque; 0 treated opaque (matches core)
+      for i := 0 to ub.Count - 1 do
+      begin
+        b := ub.Bitmaps[i];
+        if (b^.width <= 0) or (b^.height <= 0) or (b^.data = nil) then Continue;
+        bx := DX(X) + b^.x; by := baseY + b^.y;
+        for gy := 0 to b^.height - 1 do
+          for gx := 0 to b^.width - 1 do
+          begin
+            cov := b^.data^[gy * b^.pitch + gx];
+            if cov = 0 then Continue;
+            px := bx + gx; py := by + gy;
+            if (px < sx0) or (px >= sx1) or (py < sy0) or (py >= sy1) then Continue;
+            sa := ca * (cov / 255);
+            sr := (((Color shr 16) and $FF) / 255) * sa;
+            sg := (((Color shr 8) and $FF) / 255) * sa;
+            sb2 := ((Color and $FF) / 255) * sa;
+            SetPx(img, px - sx0, py - sy0,
+              BlendRGB(GetPx(img, px - sx0, py - sy0), sr, sg, sb2, sa, ''));
+          end;
+      end;
+      XPutImage(FDpy, FDraw, FGC, img, 0, 0, sx0, sy0, sx1 - sx0, sy1 - sy0);
+      DestroyImage(img);
+    finally
+      ub.Free;
+    end;
+    Exit;
+  end;
+  // fallback: 8-bit iso8859-1 core font
   f := PXFontStruct(FontFor(FontSize, Styles));
   if f = nil then Exit;
   XSetFont(FDpy, FGC, f^.fid);
@@ -583,8 +747,33 @@ end;
 
 function TX11Canvas.MeasureText(const Text: string; FontSize: Single;
   Styles: TTina4FontStyles): TTina4TextMetrics;
-var f: PXFontStruct; s: AnsiString;
+var
+  f: PXFontStruct; s: AnsiString; fid: Integer;
+  ub: TUnicodeStringBitmaps; b: PFontBitmap; bold, ital: Boolean;
 begin
+  bold := (tfsBold in Styles) or (FontWeight >= 600);
+  ital := tfsItalic in Styles;
+  fid := FtFontId(FontFamily, bold, ital);
+  if fid >= 0 then
+  begin
+    ub := GFtMgr.GetStringGray(fid, UTF8Decode(Text), FontSize);
+    try
+      if ub.Count > 0 then
+      begin
+        b := ub.Bitmaps[ub.Count - 1];
+        Result.Width := b^.x + b^.advanceX / 1024;   // advance width (incl. spaces)
+      end
+      else
+        Result.Width := 0;
+    finally
+      ub.Free;
+    end;
+    Result.Ascent := Round(FontSize * 0.8);
+    Result.Descent := Round(FontSize * 0.2);
+    Result.LineHeight := Result.Ascent + Result.Descent;
+    Exit;
+  end;
+  // fallback: 8-bit iso8859-1 core font
   f := PXFontStruct(FontFor(FontSize, Styles));
   s := ToLatin1(Text);
   if f <> nil then
