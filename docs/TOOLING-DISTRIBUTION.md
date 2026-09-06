@@ -86,22 +86,27 @@ reference app's Java + JNI + `aapt2/d8/apksigner`):
     the upload key → `bundletool validate`.  ✅
   - version from `tina4.json.android.versionCode`/`versionName` (Play needs them). ✅
   - signs from `TINA4_KEYSTORE`/`TINA4_KEY_ALIAS`/`TINA4_KS_PASS`.  ✅
-- **upload**: `tina4pascal publish android` via the Play Developer API (service
-  account JSON in `~/.tina4/`, never committed) → internal/closed/production track. ⬜
+- **upload**: `tina4pascal publish android` via the Play Developer API — wired ✅
+  (curl + openssl RS256 JWT → OAuth → edits.insert/upload/track/commit). Needs a
+  Play **service-account JSON** (`TINA4_PLAY_JSON`, in `~/.tina4/`, never
+  committed); optional `TINA4_PLAY_TRACK` (default `internal`).  ⬜ *(runs with
+  your Play account)*
 
-## iOS → .app / IPA / TestFlight / App Store ⬜
-- Generate `platforms/ios/` (xcodeproj via `xcodegen`, or a direct `xcodebuild`
-  project) linking the FPC-built static lib + the shared Cocoa/iOS shell.
-- **Signing** needs, from the Apple Developer account:
-  - an **Apple Team ID** (`tina4.json.ios.team` / `TINA4_IOS_TEAM`),
-  - a **signing certificate** (Apple Distribution) in the login keychain,
-  - a **provisioning profile** (App Store) matching the bundle id + entitlements.
-- `tina4pascal release ios` → `xcodebuild archive` → `-exportArchive` with an
-  `exportOptions.plist` → a signed **IPA**.
-- **TestFlight / App Store**: `tina4pascal publish ios` uploads the IPA with
-  `xcrun altool`/`notarytool` or the App Store Connect API (issuer id + key `.p8`
-  in `~/.tina4/`, never committed). TestFlight = upload to App Store Connect and
-  enable the beta; App Store = submit the build for review.
+## iOS → .app / IPA / TestFlight / App Store 🏗
+Per-project host staged from the reference app (`ios/`): the FPC engine `.a` +
+the shared Cocoa/iOS shell, `xcodegen`-generated project with the project's bundle
+id / version, bundling `--dump-html` as the UI.
+- `tina4pascal build ios` → **compiles + links + bundles** the device app unsigned
+  (`CODE_SIGNING_ALLOWED=NO`; the FPC engine is device-arm64, no simulator slice).
+  ✅ *(verified: a scaffolded project builds a `com.tina4.<name>` .app)*
+- `tina4pascal release ios` → `xcodebuild archive` → `-exportArchive` (app-store)
+  → signed **IPA**. Wired ✅ — needs an Apple **Team ID** (`TINA4_IOS_TEAM` /
+  `tina4.json ios.team`) + a distribution cert & provisioning profile.  ⬜ *(runs
+  with your Apple account)*
+- `tina4pascal publish ios` → `xcrun altool --upload-app` to App Store Connect.
+  Wired ✅ — needs an **ASC API key** (`TINA4_ASC_KEY_ID` + `TINA4_ASC_ISSUER` +
+  the `.p8` in `~/.appstoreconnect/private_keys/`). TestFlight = upload + enable
+  the beta; App Store = submit for review.  ⬜ *(runs with your ASC key)*
 
 ## What a user must supply for the stores (checklist)
 - **Play**: a Google Play Developer account; a **release keystore** (`tina4pascal

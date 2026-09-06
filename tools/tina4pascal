@@ -473,10 +473,82 @@ proj_android_aab() {
   say "  local test:  ${D}java -jar $bt_jar build-apks --bundle \"$aab\" --output app.apks --mode=universal${Z}"
 }
 
+# Stage a per-project iOS host from the reference app: build the engine .a, overlay
+# the project's rendered UI + icon, and generate an xcodeproj with the project's
+# bundle id / team / version. Sets globals ihost/iname/ibundle/iwork (NOT a
+# subshell — progress prints would otherwise pollute a captured value).
+proj_ios_stage() {
+  command -v xcodebuild >/dev/null 2>&1 || die "Xcode required — tina4pascal setup ios"
+  command -v xcodegen  >/dev/null 2>&1 || die "xcodegen required — tina4pascal setup ios"
+  iwork="$PWD/build/ios"; ihost="$iwork/host"; mkdir -p "$iwork"
+  proj_dump_html "$iwork/index.html"
+  iname="$(jget name "$(basename "$PWD")")"
+  ibundle="$(jget bundleId "com.tina4.$iname")"
+  iteam="${TINA4_IOS_TEAM:-}"
+  ivname="$(jget versionName 1.0)"; ivcode="$(jget_num versionCode 1)"
+  say "→ building iOS engine (libtina4ios.a)…"
+  PPC_CONFIG_PATH="$FPC_HOME/etc" PATH="$FPC_HOME/bin:$PATH" sh "$ROOT/ios/build.sh" >/dev/null 2>&1 \
+    || die "iOS engine build failed (run ios/build.sh to see errors)"
+  rm -rf "$ihost"; mkdir -p "$ihost"; cp -R "$ROOT/ios/." "$ihost/"
+  rm -rf "$ihost/build" "$ihost/Tina4Pascal.xcodeproj"
+  cp "$iwork/index.html" "$ihost/app/showcase.html"
+  cp "$ROOT/ios/app/libtina4ios.a" "$ihost/app/libtina4ios.a"
+  [ -f "$PWD/assets/icon.png" ] && cp "$PWD/assets/icon.png" \
+    "$ihost/app/Assets.xcassets/AppIcon.appiconset/icon_1024.png" 2>/dev/null || true
+  # project spec: project's bundle id + version, and team (env wins; else keep the
+  # spec's — Xcode signs with it or you set it in Xcode/CI).
+  sed -e "s#PRODUCT_BUNDLE_IDENTIFIER: .*#PRODUCT_BUNDLE_IDENTIFIER: $ibundle#" \
+      -e "s#MARKETING_VERSION: .*#MARKETING_VERSION: \"$ivname\"#" \
+      "$ROOT/ios/project.yml" > "$ihost/project.yml"
+  [ -n "$iteam" ] && sed -i.bak "s#DEVELOPMENT_TEAM: .*#DEVELOPMENT_TEAM: \"$iteam\"#" "$ihost/project.yml" && rm -f "$ihost/project.yml.bak"
+  ( cd "$ihost" && xcodegen >/dev/null ) || die "xcodegen failed"
+}
+
+# `build ios` for a scaffolded project — compile + link + bundle the DEVICE app
+# with signing disabled (the Pascal engine is device-arm64; FPC has no simulator
+# slice). This verifies the whole iOS app builds without needing a team. Signed
+# device install is `deploy ios`; a store IPA is `release ios`.
 proj_ios_build() {
-  warn "scaffolded-project iOS packaging is landing next (docs/TOOLING-DISTRIBUTION.md)."
-  say  "  For now use the reference app in ${D}$ROOT/ios${Z}."
-  return 0
+  proj_ios_stage    # sets ihost/iname/ibundle/iwork
+  say "${D}xcodebuild -sdk iphoneos (unsigned; compile+link check)${Z}"
+  xcodebuild -project "$ihost/Tina4Pascal.xcodeproj" -scheme Tina4Pascal \
+    -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -derivedDataPath "$iwork/dd" build 2>&1 \
+    | grep -qE "BUILD SUCCEEDED" \
+    || die "iOS build failed — retry to see errors: xcodebuild -project \"$ihost/Tina4Pascal.xcodeproj\" -scheme Tina4Pascal -sdk iphoneos CODE_SIGNING_ALLOWED=NO build"
+  app="$(find "$iwork/dd/Build/Products" -maxdepth 2 -name '*.app' -path '*iphoneos*' 2>/dev/null | head -1)"
+  ok "iOS .app (device, unsigned) → ${app#$PWD/}"
+  say "  bundle ${D}$ibundle${Z} · signed install: ${D}tina4pascal deploy ios${Z} · store IPA: ${D}tina4pascal release ios${Z}"
+}
+
+# `release ios` — signed .xcarchive → App Store .ipa. Needs an Apple team +
+# provisioning (TINA4_IOS_TEAM or tina4.json ios.team). Upload with `publish ios`.
+proj_ios_release() {
+  [ -n "${TINA4_IOS_TEAM:-}" ] || die "set TINA4_IOS_TEAM (your Apple Team ID) for a signed release"
+  proj_ios_stage    # sets ihost/iname/ibundle/iwork
+  arch="$iwork/$iname.xcarchive"
+  say "${D}xcodebuild archive (device, signed)${Z}"
+  xcodebuild -project "$ihost/Tina4Pascal.xcodeproj" -scheme Tina4Pascal \
+    -destination 'generic/platform=iOS' -archivePath "$arch" \
+    DEVELOPMENT_TEAM="$TINA4_IOS_TEAM" -allowProvisioningUpdates archive 2>&1 \
+    | grep -qE "ARCHIVE SUCCEEDED" || die "archive failed (signing/provisioning — set your team in App Store Connect)"
+  cat > "$iwork/exportOptions.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>method</key><string>app-store</string>
+  <key>teamID</key><string>$TINA4_IOS_TEAM</string>
+  <key>destination</key><string>export</string>
+</dict></plist>
+PLIST
+  say "${D}xcodebuild -exportArchive → IPA${Z}"
+  xcodebuild -exportArchive -archivePath "$arch" -exportPath "$iwork/export" \
+    -exportOptionsPlist "$iwork/exportOptions.plist" 2>&1 | grep -qE "EXPORT SUCCEEDED" \
+    || die "export failed"
+  ipa="$(find "$iwork/export" -maxdepth 1 -name '*.ipa' | head -1)"
+  [ -n "$ipa" ] && cp "$ipa" "$iwork/$iname.ipa"
+  ok "IPA (App Store) → build/ios/$iname.ipa"
+  say "  upload to TestFlight/App Store:  ${D}tina4pascal publish ios${Z}"
 }
 build_project_android() { proj_android_build "$@"; }
 build_project_ios()     { proj_ios_build "$@"; }
@@ -848,9 +920,73 @@ cmd_keygen() {
 proj_release() {
   case "${1:-android}" in
     android) TINA4_AAB=1 build_project android ;;
-    ios)     proj_ios_build ;;
+    ios)     proj_ios_release ;;
     *) die "release <android|ios>" ;;
   esac
+}
+
+# publish <android|ios> — upload the release artifact to the store.
+proj_publish() {
+  case "${1:-}" in
+    android) proj_publish_android ;;
+    ios)     proj_publish_ios ;;
+    *) die "publish <android|ios>" ;;
+  esac
+}
+
+# Upload the signed AAB to Google Play via the Developer API. Needs a Play
+# service-account JSON (TINA4_PLAY_JSON) — a SECRET, keep it in ~/.tina4/. Uses
+# curl + openssl for the RS256 JWT → OAuth token → edits.insert/upload/track/commit.
+proj_publish_android() {
+  name="$(jget name "$(basename "$PWD")")"; bundle="$(jget bundleId "com.tina4.$name")"
+  aab="$PWD/build/android/$name.aab"
+  track="${TINA4_PLAY_TRACK:-internal}"
+  [ -f "$aab" ] || die "no AAB — run: tina4pascal release android"
+  sa="${TINA4_PLAY_JSON:-}"
+  [ -n "$sa" ] && [ -f "$sa" ] || die "set TINA4_PLAY_JSON to your Play service-account key (keep it in ~/.tina4/, never commit)"
+  command -v curl >/dev/null 2>&1 || die "curl required"; command -v openssl >/dev/null 2>&1 || die "openssl required"
+  py="$(command -v python3 || command -v python || true)"; [ -n "$py" ] || die "python required to read the service-account JSON"
+  cemail="$("$py" -c "import json,sys;print(json.load(open(sys.argv[1]))['client_email'])" "$sa")"
+  "$py" -c "import json,sys;open(sys.argv[2],'w').write(json.load(open(sys.argv[1]))['private_key'])" "$sa" "$PWD/build/android/.pk.pem"
+  b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+  now="$(date +%s)"; exp="$((now+3600))"
+  hdr="$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)"
+  clm="$(printf '{"iss":"%s","scope":"https://www.googleapis.com/auth/androidpublisher","aud":"https://oauth2.googleapis.com/token","iat":%s,"exp":%s}' "$cemail" "$now" "$exp" | b64url)"
+  sig="$(printf '%s.%s' "$hdr" "$clm" | openssl dgst -sha256 -sign "$PWD/build/android/.pk.pem" | b64url)"
+  tok="$(curl -s -X POST https://oauth2.googleapis.com/token \
+    -d grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer \
+    --data-urlencode "assertion=$hdr.$clm.$sig" \
+    | "$py" -c "import json,sys;print(json.load(sys.stdin).get('access_token',''))")"
+  rm -f "$PWD/build/android/.pk.pem"
+  [ -n "$tok" ] || die "Play OAuth failed (check the service-account key + API access)"
+  api="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$bundle"
+  eid="$(curl -s -X POST "$api/edits" -H "Authorization: Bearer $tok" | "$py" -c "import json,sys;print(json.load(sys.stdin).get('id',''))")"
+  [ -n "$eid" ] || die "edits.insert failed (is $bundle registered in the Play Console?)"
+  say "→ uploading AAB (edit $eid)…"
+  vc="$(curl -s -X POST "https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/$bundle/edits/$eid/bundles?uploadType=media" \
+    -H "Authorization: Bearer $tok" -H "Content-Type: application/octet-stream" --data-binary "@$aab" \
+    | "$py" -c "import json,sys;print(json.load(sys.stdin).get('versionCode',''))")"
+  [ -n "$vc" ] || die "bundle upload failed"
+  curl -s -X PUT "$api/edits/$eid/tracks/$track" -H "Authorization: Bearer $tok" -H "Content-Type: application/json" \
+    -d "{\"track\":\"$track\",\"releases\":[{\"versionCodes\":[\"$vc\"],\"status\":\"draft\"}]}" >/dev/null
+  curl -s -X POST "$api/edits/$eid:commit" -H "Authorization: Bearer $tok" >/dev/null
+  ok "uploaded versionCode $vc to Play track '$track' (draft) — finish the rollout in the Play Console"
+}
+
+# Upload the IPA to App Store Connect / TestFlight with an ASC API key (.p8).
+# Needs TINA4_ASC_KEY_ID, TINA4_ASC_ISSUER, and the .p8 in ~/.appstoreconnect/private_keys/
+# (or point TINA4_ASC_KEY at it) — all SECRETS, never committed.
+proj_publish_ios() {
+  name="$(jget name "$(basename "$PWD")")"; ipa="$PWD/build/ios/$name.ipa"
+  [ -f "$ipa" ] || die "no IPA — run: tina4pascal release ios"
+  : "${TINA4_ASC_KEY_ID:?set TINA4_ASC_KEY_ID (App Store Connect API key id)}"
+  : "${TINA4_ASC_ISSUER:?set TINA4_ASC_ISSUER (App Store Connect issuer id)}"
+  command -v xcrun >/dev/null 2>&1 || die "Xcode command-line tools required"
+  say "→ xcrun altool --upload-app (App Store Connect)…"
+  xcrun altool --upload-app -f "$ipa" --type ios \
+    --apiKey "$TINA4_ASC_KEY_ID" --apiIssuer "$TINA4_ASC_ISSUER" \
+    || die "upload failed (key in ~/.appstoreconnect/private_keys/AuthKey_<id>.p8 ? app registered?)"
+  ok "uploaded to App Store Connect — enable it in TestFlight, or submit for App Store review"
 }
 
 # release — build a release-SIGNED APK (needs the TINA4_KEYSTORE env, see keygen)
@@ -1122,8 +1258,15 @@ ${B}deploy & run${Z}  (targets: android · ios · macos · win64 · linux)
 
 ${B}release signing${Z}  (Android)
   keygen [out.jks] [alias]   create a release keystore (one-time; keep it safe)
-  release                    build a release-SIGNED APK
-                             (needs TINA4_KEYSTORE / TINA4_KEY_ALIAS / TINA4_KS_PASS)
+  release                    build a release-SIGNED APK (reference app)
+
+${B}store builds${Z}  (inside a project dir)
+  build android|ios          debug APK / unsigned device .app (compile+link check)
+  release android            Play-ready signed AAB   (TINA4_KEYSTORE/KEY_ALIAS/KS_PASS)
+  release ios                App Store signed IPA     (TINA4_IOS_TEAM)
+  publish android            upload the AAB to Play    (TINA4_PLAY_JSON [,TINA4_PLAY_TRACK])
+  publish ios                upload the IPA to TestFlight/App Store
+                             (TINA4_ASC_KEY_ID / TINA4_ASC_ISSUER + ~/.appstoreconnect key)
 
 ${B}debug loop${Z}
   debug <target>         build → install → launch → screenshot → tail log
@@ -1165,6 +1308,7 @@ case "$cmd" in
   apk)        cmd_apk "$@" ;;
   keygen)     cmd_keygen "$@" ;;
   release)    if is_project; then proj_release "$@"; else cmd_release "$@"; fi ;;
+  publish)    if is_project; then proj_publish "$@"; else die "publish: run inside a project dir (publish <android|ios>)"; fi ;;
   deploy)     case "${1:-}" in android|ios|macos|win64|windows|linux) cmd_run_target "$@" ;; *) cmd_deploy "$@" ;; esac ;;
   ios)        cmd_ios "$@" ;;
   launch)     cmd_launch "$@" ;;
