@@ -214,6 +214,9 @@ build_prog() {
   # shellcheck disable=SC2086
   "$FPC" -Mdelphi -O2 -Xs $flags $xflags -Fu"$SRC" -FE"$outdir" -FU"$outdir" "$prog" 2>&1 \
     | grep -Ei "error|fatal" && die "build failed" || true
+  # bundle the project's fonts/ next to the desktop binary so the shell can
+  # register them at startup (docs/BUNDLED-FONTS.md).
+  if [ -d "$PWD/fonts" ]; then mkdir -p "$outdir/fonts"; cp "$PWD/fonts/"*.ttf "$outdir/fonts/" 2>/dev/null || true; fi
 }
 
 cmd_build() {
@@ -361,6 +364,9 @@ proj_android_build() {
   # bundle the project's assets (icon, images) into the APK; local-asset <img>
   # resolution on Android is a follow-up (see docs/TOOLING-DISTRIBUTION.md).
   [ -d "$PWD/assets" ] && cp -R "$PWD/assets/." "$APPDIR/assets/" 2>/dev/null || true
+  # bundle the project's fonts/ at assets/fonts/ so the shell can register them
+  # on-device (extracted under filesDir/assets); see docs/BUNDLED-FONTS.md.
+  [ -d "$PWD/fonts" ] && { mkdir -p "$APPDIR/assets/fonts"; cp "$PWD/fonts/"*.ttf "$APPDIR/assets/fonts/" 2>/dev/null; } || true
   [ -f "$PWD/assets/icon.png" ] && find "$APPDIR/res" -name 'ic_launcher*.png' \
     -exec cp "$PWD/assets/icon.png" {} \; 2>/dev/null || true
 
@@ -511,6 +517,9 @@ proj_ios_stage() {
   # bundle the project's assets/ as a FOLDER so a relative <img src="assets/…">
   # resolves against the app bundle's resourcePath (iOS asset base).
   if [ -d "$PWD/assets" ]; then rm -rf "$ihost/app/assets"; cp -R "$PWD/assets" "$ihost/app/assets"; fi
+  # bundle the project's fonts/ under assets/fonts so it rides the same folder
+  # reference into the .app; the iOS shell registers them (docs/BUNDLED-FONTS.md).
+  if [ -d "$PWD/fonts" ]; then mkdir -p "$ihost/app/assets/fonts"; cp "$PWD/fonts/"*.ttf "$ihost/app/assets/fonts/" 2>/dev/null || true; fi
   # project spec: project's bundle id + version, and team (env wins; else keep the
   # spec's — Xcode signs with it or you set it in Xcode/CI).
   sed -e "s#PRODUCT_BUNDLE_IDENTIFIER: .*#PRODUCT_BUNDLE_IDENTIFIER: $ibundle#" \

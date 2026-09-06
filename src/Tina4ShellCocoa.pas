@@ -146,6 +146,12 @@ var
   GFontAlias: TStringList = nil;
   { native <video> overlays, keyed by source URL (NSString -> AVPlayerView) }
   GVideoViews: NSMutableDictionary = nil;
+  { bundled fonts: scanned once, flags say which DejaVu generics shipped so
+    FontFor can back the CSS generics with them (see docs/BUNDLED-FONTS.md). }
+  GBundledScanned: Boolean = False;
+  GBundledSans: Boolean = False;
+  GBundledSerif: Boolean = False;
+  GBundledMono: Boolean = False;
 
 function FontAliasMap: TStringList;
 begin
@@ -156,6 +162,43 @@ begin
     GFontAlias.Duplicates := dupIgnore;
   end;
   Result := GFontAlias;
+end;
+
+{ Register every `fonts/*.ttf` shipped beside the binary (or in the .app's
+  Resources/fonts) with CoreText, process-scoped, and note which DejaVu generics
+  are present. Mirrors Tina4ShellWin.EnsureBundledWinFonts. }
+procedure EnsureBundledCocoaFonts;
+  procedure ScanDir(const dir: string);
+  var sr: TSearchRec; ln, full: string; url: CFURLRef; err: CFErrorRef;
+  begin
+    if not DirectoryExists(dir) then Exit;
+    if FindFirst(IncludeTrailingPathDelimiter(dir) + '*.ttf', faAnyFile, sr) = 0 then
+    begin
+      repeat
+        full := IncludeTrailingPathDelimiter(dir) + sr.Name;
+        url := CFURLCreateWithFileSystemPath(nil, CFStringRef(NSStr(full)),
+          kCFURLPOSIXPathStyle, False);
+        if url <> nil then
+        begin
+          err := nil;
+          CTFontManagerRegisterFontsForURL(url, kCTFontManagerScopeProcess, err);
+          CFRelease(url);
+        end;
+        ln := LowerCase(sr.Name);
+        if Pos('dejavusansmono', ln) = 1 then GBundledMono := True
+        else if Pos('dejavusans', ln) = 1 then GBundledSans := True;
+        if Pos('dejavuserif', ln) = 1 then GBundledSerif := True;
+      until FindNext(sr) <> 0;
+      FindClose(sr);
+    end;
+  end;
+var base: string;
+begin
+  if GBundledScanned then Exit;
+  GBundledScanned := True;
+  base := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0)));
+  ScanDir(base + 'fonts');                 // beside the executable (desktop)
+  ScanDir(base + '../Resources/fonts');    // inside a .app bundle (Contents/MacOS → Resources)
 end;
 
 function NSColorOf(C: TTina4Color): NSColor;
@@ -410,6 +453,7 @@ var
   fam, cand: string; parts: TStringArray; k, w: Integer; f: NSFont;
 begin
   Result := nil;
+  EnsureBundledCocoaFonts;   // register any fonts/*.ttf shipped with the app
   w := FontWeight; if w = 0 then w := 400;
   if (tfsBold in Styles) and (w < 700) then w := 700;   // bold flag ⇒ ≥700
   // Resolve the CSS font-family stack: first candidate that names a real font
@@ -428,11 +472,21 @@ begin
         cand := FontAliasMap.Values[LowerCase(cand)];
       if SameText(cand, 'system-ui') or SameText(cand, '-apple-system')
          or SameText(cand, 'sans-serif') then
-        Break   // fall through to the system font below
+      begin
+        // bundled DejaVu Sans backs the generic when shipped, else the system font
+        if GBundledSans then f := NSFont.fontWithName_size(NSStr('DejaVu Sans'), FontSize)
+        else Break;   // fall through to the system font below
+      end
       else if SameText(cand, 'serif') then
-        f := NSFont.fontWithName_size(NSStr('Times New Roman'), FontSize)
+      begin
+        if GBundledSerif then f := NSFont.fontWithName_size(NSStr('DejaVu Serif'), FontSize)
+        else f := NSFont.fontWithName_size(NSStr('Times New Roman'), FontSize);
+      end
       else if SameText(cand, 'monospace') then
-        f := NSFont.fontWithName_size(NSStr('Menlo'), FontSize)
+      begin
+        if GBundledMono then f := NSFont.fontWithName_size(NSStr('DejaVu Sans Mono'), FontSize)
+        else f := NSFont.fontWithName_size(NSStr('Menlo'), FontSize);
+      end
       else
         f := NSFont.fontWithName_size(NSStr(cand), FontSize);   // named/registered
       if f <> nil then begin Result := f; Break; end;

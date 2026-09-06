@@ -44,6 +44,10 @@ type
     clsTypeface: jclass;
     mSetTypeface, mTypefaceFromFile: jmethodID;
     tfSerif, tfMono, tfSans: jobject;        // static generic typefaces (global refs)
+    // bundled fonts (assets/fonts/*.ttf, extracted under FAssetBase): a shipped
+    // DejaVu generic backs the CSS generic. nil = not shipped. See docs/BUNDLED-FONTS.md.
+    tfBundledSans, tfBundledSerif, tfBundledMono: jobject;
+    FBundledScanned: Boolean;
     FRegFonts: TStringList;                  // @font-face: family(lower) → Typeface global ref
     // text paint-config cache — skip redundant JNI setX calls between runs that
     // share a font (the common case), and reuse ascent/descent instead of re-querying
@@ -76,6 +80,7 @@ type
     function EnumVal(const clsName, field, sig: string): jobject;
     function JStr(const S: string): jstring;
     function JResultStr(S: jobject): string;
+    procedure EnsureBundledFonts;
     function TypefaceFor(const Family: string): jobject;
     procedure ConfigurePaintText(FontSize: Single; Styles: TTina4FontStyles;
       Color: TTina4Color);
@@ -269,10 +274,45 @@ end;
 { Resolve the CSS font-family stack to an android.graphics.Typeface (or nil for
   the default). Registered @font-face faces win; then serif/monospace/sans-serif
   generics; a named face falls through to the default. }
+{ Load each bundled assets/fonts/*.ttf (extracted under FAssetBase) as a Typeface
+  and record which DejaVu generic it is, so TypefaceFor can back the CSS generics
+  with them. Mirrors EnsureBundledWinFonts / EnsureBundledCocoaFonts. }
+procedure TAndroidCanvas.EnsureBundledFonts;
+var
+  dir, full, ln: string; sr: TSearchRec; a: array[0..0] of jvalue;
+  s, tf, gtf: jobject;
+begin
+  if FBundledScanned then Exit;
+  if (FAssetBase = '') or (clsTypeface = nil) then Exit;   // retry once assets are extracted
+  FBundledScanned := True;
+  dir := FAssetBase + '/fonts';
+  if not DirectoryExists(dir) then Exit;
+  if FindFirst(IncludeTrailingPathDelimiter(dir) + '*.ttf', faAnyFile, sr) <> 0 then Exit;
+  try
+    repeat
+      full := IncludeTrailingPathDelimiter(dir) + sr.Name;
+      s := JStr(full); a[0].l := s;
+      tf := FEnv^.CallStaticObjectMethodA(FEnv, clsTypeface, mTypefaceFromFile, @a[0]);
+      FEnv^.DeleteLocalRef(FEnv, s);
+      if tf = nil then Continue;
+      gtf := FEnv^.NewGlobalRef(FEnv, tf);
+      FEnv^.DeleteLocalRef(FEnv, tf);
+      ln := LowerCase(sr.Name);
+      if Pos('dejavusansmono', ln) = 1 then tfBundledMono := gtf
+      else if Pos('dejavusans', ln) = 1 then tfBundledSans := gtf
+      else if Pos('dejavuserif', ln) = 1 then tfBundledSerif := gtf
+      else FEnv^.DeleteGlobalRef(FEnv, gtf);   // not a mapped generic; drop it
+    until FindNext(sr) <> 0;
+  finally
+    FindClose(sr);
+  end;
+end;
+
 function TAndroidCanvas.TypefaceFor(const Family: string): jobject;
 var cand: string; parts: TStringArray; k, idx: Integer;
 begin
   Result := nil;
+  EnsureBundledFonts;   // register any bundled assets/fonts/*.ttf (once assets exist)
   if Trim(Family) = '' then Exit;
   parts := Family.Split([',']);
   for k := 0 to High(parts) do
@@ -282,10 +322,14 @@ begin
     if cand = '' then Continue;
     if (FRegFonts <> nil) and FRegFonts.Find(cand, idx) then
       Exit(FRegFonts.Objects[idx]);                       // @font-face registered
-    if SameText(cand, 'serif') then Exit(tfSerif)
-    else if SameText(cand, 'monospace') then Exit(tfMono)
+    // a shipped DejaVu backs the CSS generic, else the platform generic typeface
+    if SameText(cand, 'serif') then
+    begin if tfBundledSerif <> nil then Exit(tfBundledSerif) else Exit(tfSerif); end
+    else if SameText(cand, 'monospace') then
+    begin if tfBundledMono <> nil then Exit(tfBundledMono) else Exit(tfMono); end
     else if SameText(cand, 'sans-serif') or SameText(cand, 'system-ui')
-         or SameText(cand, '-apple-system') then Exit(tfSans);
+         or SameText(cand, '-apple-system') then
+    begin if tfBundledSans <> nil then Exit(tfBundledSans) else Exit(tfSans); end;
     // a named face we don't have registered — keep looking down the stack
   end;
 end;

@@ -96,6 +96,13 @@ var
   { @font-face aliases: CSS family (lowercased) -> the font's real registered
     name. Process-global; registration is process-wide on iOS too. }
   GFontAlias: TStringList = nil;
+  { bundled fonts (fonts/ in the .app): scanned once, holds the real PostScript
+    name of each shipped DejaVu generic ('' = not shipped, use system fallback).
+    See docs/BUNDLED-FONTS.md. }
+  GBundledScanned: Boolean = False;
+  GBundledSansName: string = '';
+  GBundledSerifName: string = '';
+  GBundledMonoName: string = '';
 
 function FontAliasMap: TStringList;
 begin
@@ -106,6 +113,59 @@ begin
     GFontAlias.Duplicates := dupIgnore;
   end;
   Result := GFontAlias;
+end;
+
+{ Register every `fonts/*.ttf` bundled in the .app (next to the executable) with
+  CoreText via the CoreGraphics font path (the URL API is macOS-only on iOS), and
+  record each DejaVu generic's real PostScript name for the font selector.
+  Mirrors EnsureBundledCocoaFonts / EnsureBundledWinFonts. }
+procedure EnsureBundledIOSFonts;
+  procedure ScanDir(const dir: string);
+  var
+    sr: TSearchRec; full, ln, ps: string;
+    provider: CGDataProviderRef; cgFont: CGFontRef; err: CFErrorRef;
+    nameRef: CFStringRef; buf: array[0..255] of AnsiChar;
+  begin
+    if not DirectoryExists(dir) then Exit;
+    if FindFirst(IncludeTrailingPathDelimiter(dir) + '*.ttf', faAnyFile, sr) <> 0 then Exit;
+    try
+      repeat
+        full := IncludeTrailingPathDelimiter(dir) + sr.Name;
+        provider := CGDataProviderCreateWithFilename(PAnsiChar(full));
+        if provider = nil then Continue;
+        cgFont := CGFontCreateWithDataProvider(provider);
+        CGDataProviderRelease(provider);
+        if cgFont = nil then Continue;
+        err := nil;
+        CTFontManagerRegisterGraphicsFont(cgFont, err);
+        ps := '';
+        nameRef := CGFontCopyPostScriptName(cgFont);
+        if nameRef <> nil then
+        begin
+          if CFStringGetCString(nameRef, buf, SizeOf(buf), kCFStringEncodingUTF8) then
+            ps := string(buf);
+          CFRelease(nameRef);
+        end;
+        CGFontRelease(cgFont);
+        if ps <> '' then
+        begin
+          ln := LowerCase(sr.Name);
+          if Pos('dejavusansmono', ln) = 1 then GBundledMonoName := ps
+          else if Pos('dejavusans', ln) = 1 then GBundledSansName := ps;
+          if Pos('dejavuserif', ln) = 1 then GBundledSerifName := ps;
+        end;
+      until FindNext(sr) <> 0;
+    finally
+      FindClose(sr);
+    end;
+  end;
+var base: string;
+begin
+  if GBundledScanned then Exit;
+  GBundledScanned := True;
+  base := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0)));
+  ScanDir(base + 'fonts');            // fonts/ at the .app root
+  ScanDir(base + 'assets/fonts');     // or ride the already-bundled assets/ folder
 end;
 
 { ---- helpers ----------------------------------------------------------- }
@@ -269,6 +329,7 @@ function IOSBaseFontName(const Family: string): string;
 var cand: string; parts: TStringArray; k: Integer;
 begin
   Result := '';
+  EnsureBundledIOSFonts;   // register any fonts/*.ttf shipped in the .app
   if Trim(Family) = '' then Exit;
   parts := Family.Split([',']);
   for k := 0 to High(parts) do
@@ -279,10 +340,20 @@ begin
     // @font-face: map the CSS family to the font's real registered name.
     if FontAliasMap.IndexOfName(LowerCase(cand)) >= 0 then
       Exit(FontAliasMap.Values[LowerCase(cand)]);
+    // bundled DejaVu backs the CSS generic when shipped, else the system face
     if SameText(cand, 'system-ui') or SameText(cand, '-apple-system')
-       or SameText(cand, 'sans-serif') then Exit('')        // system Helvetica
-    else if SameText(cand, 'serif') then Exit('Georgia')
-    else if SameText(cand, 'monospace') then Exit('Menlo')
+       or SameText(cand, 'sans-serif') then
+    begin
+      if GBundledSansName <> '' then Exit(GBundledSansName) else Exit('');  // '' = system Helvetica
+    end
+    else if SameText(cand, 'serif') then
+    begin
+      if GBundledSerifName <> '' then Exit(GBundledSerifName) else Exit('Georgia');
+    end
+    else if SameText(cand, 'monospace') then
+    begin
+      if GBundledMonoName <> '' then Exit(GBundledMonoName) else Exit('Menlo');
+    end
     else Exit(cand);                                        // named/registered font
   end;
 end;
