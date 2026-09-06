@@ -33,7 +33,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | display block/inline/inline-block/none/list-item/table | ✅ | |
 | display flex / inline-flex | ✅ | LayoutFlex (was mislabelled "no flex") |
 | display grid | ✅ | grid-template-columns (px/%/fr/auto/repeat), row/column gaps, row-major auto-placement, grid-column/row: span N; auto rows |
-| aspect-ratio | ❌ | not parsed |
+| aspect-ratio | ✅ | `<w>/<h>` or a bare number; with a known width and auto height the block's height is derived (width ÷ ratio). Width-from-height is the rarer case (not re-laid-out) |
 
 ## Positioning
 
@@ -161,20 +161,19 @@ text-decoration color/style; the sub-keyword resize cursors beyond
 col/row-resize.
 
 **Outstanding — bigger rocks:**
-1. **aspect-ratio** — not parsed.
-2. **Flexbox faithfulness**: reverse directions, wrap-reverse, `align-content` /
+1. **Flexbox faithfulness**: reverse directions, wrap-reverse, `align-content` /
    `align-self` / `order`, per-axis `row-gap`/`column-gap`.
-3. **Grid**: explicit line placement, `grid-template-rows`/`areas`, multi-row span.
-4. **calc()** `*` `/` and %/vw/vh terms; **clamp() / min() / max() / env()** (all 0 today).
-5. **border-collapse / border-spacing / table-layout / empty-cells**.
-6. **transitions / animations** + `@keyframes` (needs the ticker + a timeline);
+2. **Grid**: explicit line placement, `grid-template-rows`/`areas`, multi-row span.
+3. **calc()** `*` `/` and %/vw/vh terms; **clamp() / min() / max() / env()** (all 0 today).
+4. **border-collapse / border-spacing / table-layout / empty-cells**.
+5. **transitions / animations** + `@keyframes` (needs the ticker + a timeline);
     `@supports` / `@import`.
-7. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
+6. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
     backdrop-filter / clip-path / mask**; blend-modes.
-8. Typography long tail: `font`/`font-variant`/`font-stretch` shorthands,
+7. Typography long tail: `font`/`font-variant`/`font-stretch` shorthands,
     `word-spacing`, `direction`/`writing-mode` (bidi), `list-style` shorthand +
     position/image, `vertical-align` text-top/bottom/length.
-9. **accent-color / caret-color**; **pointer-events / user-select / resize**.
+8. **accent-color / caret-color**; **pointer-events / user-select / resize**.
 
 **Float follow-ups (v1 caveats):** propagate a container's float bands into
 nested block children's inline flow (so text inside a `<p>` after a float wraps

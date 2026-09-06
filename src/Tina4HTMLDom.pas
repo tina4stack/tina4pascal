@@ -279,6 +279,7 @@ type
     BorderRadii: array[0..3] of Single;  // TL, TR, BR, BL — -1 means inherit from BorderRadius
     ExplicitWidth: Single;
     ExplicitHeight: Single;
+    AspectRatio: Single;   // width/height ratio (0 = none/auto)
     Display: string;
     WhiteSpace: string;
     BoxSizing: string;
@@ -2046,6 +2047,7 @@ begin
   Result.BorderRadii[3] := -1;
   Result.ExplicitWidth := -1;
   Result.ExplicitHeight := -1;
+  Result.AspectRatio := 0;
   Result.Display := 'block';
   Result.WhiteSpace := 'normal';
   Result.BoxSizing := 'content-box';
@@ -2347,6 +2349,7 @@ begin
   Result.BorderRadii[3] := -1;
   Result.ExplicitWidth := -1;
   Result.ExplicitHeight := -1;
+  Result.AspectRatio := 0;
   Result.Display := 'inline';
   Result.BoxSizing := 'content-box';
   Result.CSSCursor := '';
@@ -2827,6 +2830,27 @@ begin
   Inc(Style.GradStopCount);
 end;
 
+{ Parse an `aspect-ratio` value: "16 / 9", a bare number "1.5", or "auto" (0). }
+function ParseAspectRatio(const S: string): Single;
+var t: string; p: Integer; aw, ah: Single;
+begin
+  Result := 0;
+  t := Trim(LowerCase(S));
+  if (t = '') or (t = 'auto') then Exit;
+  p := Pos('/', t);
+  if p > 0 then
+  begin
+    aw := StrToFloatDef(Trim(Copy(t, 1, p - 1)), 0);
+    ah := StrToFloatDef(Trim(Copy(t, p + 1, MaxInt)), 0);
+    if (aw > 0) and (ah > 0) then Result := aw / ah;
+  end
+  else
+  begin
+    aw := StrToFloatDef(t, 0);
+    if aw > 0 then Result := aw;
+  end;
+end;
+
 class procedure TComputedStyle.ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle);
 var
   Temp: string;
@@ -3125,6 +3149,9 @@ begin
     Style.ExplicitWidth := ParseLength(Temp, Style.FontSize);
   if Decls.TryGetValue('height', Temp) and not ShouldSkip(Temp) then
     Style.ExplicitHeight := ParseLength(Temp, Style.FontSize);
+  // aspect-ratio: <w> [/ <h>]  — a single number is w/1
+  if Decls.TryGetValue('aspect-ratio', Temp) and not ShouldSkip(Temp) then
+    Style.AspectRatio := ParseAspectRatio(Temp);
   if Decls.TryGetValue('display', Temp) and not ShouldSkip(Temp) then
     Style.Display := Temp.Trim.ToLower;  // Trim: 'display: inline-block' → no leading space
   if Decls.TryGetValue('vertical-align', Temp) and not ShouldSkip(Temp) then
