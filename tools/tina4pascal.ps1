@@ -55,6 +55,12 @@ function Invoke-Doctor {
   Ok "GDI + GDI+ (gdiplus.dll): shapes, AA rounded rects, images"
   Ok "urlmon.dll: http(s) image fetch"
   Write-Host ""
+  Write-Host "Native debug (gdb):"
+  $g = Get-Command gdb -ErrorAction SilentlyContinue
+  if ($g) { Ok "gdb ($($g.Source)) - tina4pascal debug" }
+  elseif ($fpc -and (Test-Path (Join-Path (Split-Path -Parent $fpc) 'gdb.exe'))) { Ok "gdb (FPC bundled)" }
+  else { Miss "gdb not found - 'choco install mingw' to use tina4pascal debug" }
+  Write-Host ""
   Write-Host "Linux target via WSL:"
   if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
     Ok "wsl.exe present"

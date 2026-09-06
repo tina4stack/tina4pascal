@@ -122,6 +122,8 @@ cmd_doctor() {
   else
     bad "fpc missing → tina4pascal setup fpc"
   fi
+  command -v gdb >/dev/null 2>&1 && ok "gdb (native debug: tina4pascal debug)" \
+    || warn "gdb missing → apt install gdb / brew install gdb (for tina4pascal debug)"
   say ""
   say "${B}Android${Z}"
   [ -x "$ANDROID_SDK/build-tools/$BT_VER/aapt2" ] && ok "build-tools $BT_VER" || warn "SDK build-tools missing → tina4pascal setup android"

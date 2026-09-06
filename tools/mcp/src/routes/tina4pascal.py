@@ -148,9 +148,18 @@ def deploy(target: str):
     return _run(["deploy", target])
 
 
-@mcp_tool("tina4_debug", description="Full loop: build -> launch -> screenshot "
-          "-> tail log (android | ios | macos).", server=mcp)
-def debug(target: str):
+@mcp_tool("tina4_debug", description="With `project` set: NATIVE debug — build the "
+          "project with DWARF symbols, run one headless frame under gdb, and return "
+          "a Pascal backtrace (file:line) on any crash (or 'ran clean'). Optional "
+          "`breakpoint` (function or file:line). Without `project`: the on-device "
+          "build->launch->screenshot->tail-log loop for a target (android|ios|macos).",
+          server=mcp)
+def debug(target: str = "", project: str = "", breakpoint: str = ""):
+    if project:
+        args = ["debug"]
+        if breakpoint:
+            args += ["--break", breakpoint]
+        return _run(args, cwd=project)
     return _run(["debug", target])
 
 

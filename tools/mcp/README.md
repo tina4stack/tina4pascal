@@ -36,7 +36,7 @@ release binary. Never `python app.py`.)
 | `tina4_compliance` `{glob?}` | run the W3C reftest suite |
 | `tina4_deploy` `{target}` | build + install/open + launch |
 | `tina4_launch` `{target}` | re-foreground the installed app, no rebuild |
-| `tina4_debug` `{target}` | build → launch → screenshot → tail log |
+| `tina4_debug` `{project?, breakpoint?, target?}` | with `project`: native gdb debug (build w/ symbols, run headless, Pascal backtrace on crash); else on-device build→launch→screenshot→tail log |
 | `tina4_release` `{keystore,alias,store_pass,key_pass}` | build a release-signed Android APK |
 | `tina4_screenshot` `{target}` | grab the app screen → returns the PNG path |
 | `tina4_tap` `{target,x,y}` | click/tap at screen coords |
