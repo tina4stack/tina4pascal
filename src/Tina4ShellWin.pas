@@ -80,6 +80,8 @@ type
     procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); override;
     procedure BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); override;
     procedure EndLayer3D(Handle: Integer; const Corners: array of Single); override;
+    function SupportsRGBA: Boolean; override;
+    procedure DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single); override;
   end;
 
 { Decode an image file (png/jpg/ico/bmp) through GDI+ and hand back a Windows
@@ -382,19 +384,50 @@ begin
       end;
     end;
   end;
+  // GDI+ has no WebP codec — fall back to the base class's pure-Pascal decoder,
+  // which renders via DrawRGBA.
+  if Result < 0 then Result := inherited LoadImage(Src);
   FImageSrc.AddObject(Src, TObject(PtrInt(Result)));   // cache success or failure
 end;
 
 function TWinCanvas.ImageSize(Handle: Integer; out W, H: Single): Boolean;
 begin
   W := 0; H := 0;
+  if Handle >= WEBP_HANDLE_BASE then Exit(inherited ImageSize(Handle, W, H));
   Result := (Handle >= 0) and (Handle <= High(FImages)) and (FImages[Handle].Img <> nil);
   if Result then begin W := FImages[Handle].W; H := FImages[Handle].H; end;
+end;
+
+function TWinCanvas.SupportsRGBA: Boolean;
+begin
+  Result := True;
+end;
+
+{ Blit a straight-alpha $AARRGGBB buffer through GDI+. PixelFormat32bppARGB
+  stores B,G,R,A in memory — exactly a little-endian $AARRGGBB word — so the
+  buffer maps in with no per-pixel copy; GdipDrawImageRectRectI scales it. }
+procedure TWinCanvas.DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single);
+const PixelFormat32bppARGB = $26200A;
+var g, bmp: Pointer;
+begin
+  if (Buf = nil) or (BW <= 0) or (BH <= 0) or (DW <= 0) or (DH <= 0) then Exit;
+  EnsureGdiplus; if not GGdiplusOK then Exit;
+  if GdipCreateFromHDC(DC, g) <> 0 then Exit;
+  bmp := nil;
+  if GdipCreateBitmapFromScan0(BW, BH, BW * 4, PixelFormat32bppARGB, PByte(Buf), bmp) = 0 then
+  begin
+    GdipSetInterpolationMode(g, 7);   // HighQualityBicubic
+    GdipDrawImageRectRectI(g, bmp, Round(DX), Round(DY), Round(DW), Round(DH),
+      0, 0, BW, BH, 2 {UnitPixel}, nil, nil, nil);
+    GdipDisposeImage(bmp);
+  end;
+  GdipDeleteGraphics(g);
 end;
 
 procedure TWinCanvas.DrawImage(Handle: Integer; X, Y, W, H: Single);
 var g, attr: Pointer; iw, ih: LongWord;
 begin
+  if Handle >= WEBP_HANDLE_BASE then begin inherited DrawImage(Handle, X, Y, W, H); Exit; end;
   if (Handle < 0) or (Handle > High(FImages)) or (FImages[Handle].Img = nil) then Exit;
   if (W <= 0) or (H <= 0) then Exit;
   if GdipCreateFromHDC(DC, g) <> 0 then Exit;

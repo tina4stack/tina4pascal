@@ -74,6 +74,8 @@ type
     procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); override;
     procedure BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); override;
     procedure EndLayer3D(Handle: Integer; const Corners: array of Single); override;
+    function SupportsRGBA: Boolean; override;
+    procedure DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single); override;
   end;
 
   { NSTimer target bridging into the shell's OnTick }
@@ -341,6 +343,36 @@ begin
   if (Handle < 0) or (Handle >= FImages.Count) or (FImages[Handle] = nil) then Exit;
   NSImage(FImages[Handle]).drawInRect_fromRect_operation_fraction_respectFlipped_hints(
     NSMakeRect(X, Y, W, H), NSZeroRect, NSCompositeSourceOver, 1.0, True, nil);
+end;
+
+function TCocoaCanvas.SupportsRGBA: Boolean;
+begin
+  Result := True;
+end;
+
+{ Blit a straight-alpha $AARRGGBB buffer via a CGImage wrapped in an NSImage, so
+  it inherits the same flipped-coordinate handling as DrawImage. A little-endian
+  $AARRGGBB word is A,R,G,B in memory → AlphaFirst | ByteOrder32Little. }
+procedure TCocoaCanvas.DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single);
+var
+  cs: CGColorSpaceRef; provider: CGDataProviderRef; cgImg: CGImageRef; nsImg: NSImage;
+begin
+  if (Buf = nil) or (BW <= 0) or (BH <= 0) then Exit;
+  cs := CGColorSpaceCreateDeviceRGB;
+  provider := CGDataProviderCreateWithData(nil, Buf, BW * BH * 4, nil);
+  cgImg := CGImageCreate(BW, BH, 8, 32, BW * 4, cs,
+    CGBitmapInfo(Cardinal(kCGImageAlphaFirst) or Cardinal(kCGBitmapByteOrder32Little)),
+    provider, nil, 0, kCGRenderingIntentDefault);
+  if cgImg <> nil then
+  begin
+    nsImg := NSImage.alloc.initWithCGImage_size(cgImg, NSMakeSize(BW, BH));
+    nsImg.drawInRect_fromRect_operation_fraction_respectFlipped_hints(
+      NSMakeRect(DX, DY, DW, DH), NSZeroRect, NSCompositeSourceOver, 1.0, True, nil);
+    nsImg.release;
+    CGImageRelease(cgImg);
+  end;
+  CGDataProviderRelease(provider);
+  CGColorSpaceRelease(cs);
 end;
 
 { Map a CSS numeric weight (100..900) to an NSFontManager weight class

@@ -89,6 +89,8 @@ type
     procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); override;
     procedure BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); override;
     procedure EndLayer3D(Handle: Integer; const Corners: array of Single); override;
+    function SupportsRGBA: Boolean; override;
+    procedure DrawRGBA(Buf: Pointer; BW, BH: Integer; dstX, dstY, dstW, dstH: Single); override;
   end;
 
 { Grab the back-buffer pixels and write them to a 24-bit BMP — the headless
@@ -338,14 +340,56 @@ begin
       if fp <> nil then fp.Free;
     end;
   end;
+  // FPImage has no WebP reader — fall back to the base pure-Pascal decoder
+  // (renders via DrawRGBA).
+  if Result < 0 then Result := inherited LoadImage(Src);
   FImageSrc.AddObject(Src, TObject(PtrInt(Result)));
 end;
 
 function TX11Canvas.ImageSize(Handle: Integer; out W, H: Single): Boolean;
 begin
   W := 0; H := 0;
+  if Handle >= WEBP_HANDLE_BASE then Exit(inherited ImageSize(Handle, W, H));
   Result := (Handle >= 0) and (Handle <= High(FImages)) and (FImages[Handle].Data <> nil);
   if Result then begin W := FImages[Handle].W; H := FImages[Handle].H; end;
+end;
+
+function TX11Canvas.SupportsRGBA: Boolean;
+begin
+  Result := True;
+end;
+
+{ Blit a straight-alpha $AARRGGBB buffer by the same read-back/blend/put-image
+  path as DrawImage, sourcing pixels from the Cardinal buffer. }
+procedure TX11Canvas.DrawRGBA(Buf: Pointer; BW, BH: Integer; dstX, dstY, dstW, dstH: Single);
+var
+  dimg: PXImage; dx0, dy0, dw, dh, vx0, vy0, vx1, vy1: cint;
+  i, j, sx, sy: cint; sa: Single; sp, dpx: LongWord; p: PLongWord;
+begin
+  if (Buf = nil) or (BW <= 0) or (BH <= 0) or (dstW <= 0) or (dstH <= 0) then Exit;
+  p := PLongWord(Buf);
+  dx0 := Round(dstX) - FOrgX; dy0 := Round(dstY) - FOrgY; dw := Round(dstW); dh := Round(dstH);
+  vx0 := dx0; if vx0 < 0 then vx0 := 0;
+  vy0 := dy0; if vy0 < 0 then vy0 := 0;
+  vx1 := dx0 + dw; if vx1 > FW then vx1 := FW;
+  vy1 := dy0 + dh; if vy1 > FH then vy1 := FH;
+  if (vx1 <= vx0) or (vy1 <= vy0) then Exit;
+  dimg := XGetImage(FDpy, FDraw, vx0, vy0, vx1 - vx0, vy1 - vy0, AllPlanes, ZPixmap);
+  if dimg = nil then Exit;
+  for j := 0 to (vy1 - vy0) - 1 do
+    for i := 0 to (vx1 - vx0) - 1 do
+    begin
+      sx := ((vx0 + i - dx0) * BW) div dw; sy := ((vy0 + j - dy0) * BH) div dh;
+      if (sx < 0) or (sx >= BW) or (sy < 0) or (sy >= BH) then Continue;
+      sp := p[sy * BW + sx];                              // $AARRGGBB
+      sa := ((sp shr 24) and $FF) / 255;
+      if sa <= 0 then Continue;
+      dpx := GetPx(dimg, i, j);
+      SetPx(dimg, i, j, BlendRGB(dpx, (((sp shr 16) and $FF)/255)*sa,
+        (((sp shr 8) and $FF)/255)*sa, ((sp and $FF)/255)*sa, sa, ''));
+    end;
+  XPutImage(FDpy, FDraw, FGC, dimg, 0, 0, vx0, vy0, vx1 - vx0, vy1 - vy0);
+  DestroyImage(dimg);
 end;
 
 procedure TX11Canvas.DrawImage(Handle: Integer; X, Y, W, H: Single);
@@ -353,6 +397,7 @@ var
   img: TX11Image; dimg: PXImage; dx0, dy0, dw, dh, vx0, vy0, vx1, vy1: cint;
   i, j, sx, sy, so: cint; sa: Single; dpx: LongWord; d: PByte;
 begin
+  if Handle >= WEBP_HANDLE_BASE then begin inherited DrawImage(Handle, X, Y, W, H); Exit; end;
   if (Handle < 0) or (Handle > High(FImages)) or (FImages[Handle].Data = nil) then Exit;
   if (W <= 0) or (H <= 0) then Exit;
   img := FImages[Handle];
