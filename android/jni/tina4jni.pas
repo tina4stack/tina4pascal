@@ -89,6 +89,27 @@ end;
 
 { (profiling is compiled in only with -dTINA_PROFILE; release builds omit it) }
 
+{ Retained backing-store: repaint ONLY the animated region into the (view) canvas,
+  over the host's blitted cache of the last full frame. }
+procedure Java_com_tina4_pascal_Tina4View_nativePaintRegion(Env: PJNIEnv; This: jobject;
+  Canvas: jobject; W, H: jint; Density: jfloat); cdecl;
+begin
+  if GCanvas = nil then Exit;   // never region-painted before a full frame
+  GCanvas.BeginFrame(Env, Canvas);
+  {$IFDEF TINA_PROFILE}
+  GProfT0 := GetTickCount64;
+  TinaFrameRegion(W, H, Density);
+  AndroidLog(Format('nativePaintRegion %d ms', [GetTickCount64 - GProfT0]));
+  {$ELSE}
+  TinaFrameRegion(W, H, Density);
+  {$ENDIF}
+end;
+
+function Java_com_tina4_pascal_Tina4View_nativeAnimRegion(Env: PJNIEnv; This: jobject): jint; cdecl;
+begin
+  Result := TinaAnimRegionAvail;
+end;
+
 function Java_com_tina4_pascal_Tina4View_nativeTouch(Env: PJNIEnv; This: jobject;
   Action: jint; X, Y: jfloat): jint; cdecl;
 begin
@@ -195,6 +216,8 @@ exports
   Java_com_tina4_pascal_Tina4View_nativeTouch,
   Java_com_tina4_pascal_Tina4View_nativeTick,
   Java_com_tina4_pascal_Tina4View_nativeAnimActive,
+  Java_com_tina4_pascal_Tina4View_nativePaintRegion,
+  Java_com_tina4_pascal_Tina4View_nativeAnimRegion,
   Java_com_tina4_pascal_Tina4View_nativeSetAssetBase,
   Java_com_tina4_pascal_Tina4View_nativeWantsKeyboard,
   Java_com_tina4_pascal_Tina4View_nativeBlur,

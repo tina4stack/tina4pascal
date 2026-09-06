@@ -70,11 +70,19 @@ procedure TinaHover(X, Y: Single);
   of the hovered element, inheriting from its ancestors. Desktop shells feed
   this straight to Shell.SetCursor on mouse move. }
 function TinaCursorAt(X, Y: Single): TTina4Cursor;
-{ Advance momentum one frame; 1 = keep animating. }
+{ Advance momentum one frame; 0 = idle, 1 = animation only (a host may repaint just
+  the animated region), 2 = fling/content moving (needs a full repaint). }
 function TinaTick: Integer;
 { 1 if the last paint has live animation (does NOT advance the clock) — a host uses
   this to (re)start a throttled tick loop without double-advancing time. }
 function TinaAnimActive: Integer;
+{ Retained backing-store: repaint ONLY the last frame's animated region (clipped +
+  culled), leaving the rest of the frame to the host's cached bitmap. Falls back to
+  a full TinaFrame when there's no confined region. }
+procedure TinaFrameRegion(WPx, HPx: Integer; Density: Single);
+{ 1 if a confined animated region is available (a region repaint is possible), else
+  0 (the host must repaint fully). }
+function TinaAnimRegionAvail: Integer;
 { 1 once if the just-loaded document autofocused an input (raise the keyboard). }
 function TinaWantsKeyboard: Integer;
 { Drop input focus (e.g. the shell's keyboard was dismissed). }
@@ -1364,6 +1372,38 @@ begin
   if GDebugOverlay and (GRoot <> nil) then PaintDebugOverlay(GRoot, GScrollY);
 end;
 
+procedure TinaFrameRegion(WPx, HPx: Integer; Density: Single);
+var rx, ry, rw, rh: Single;
+begin
+  if GCanvas = nil then Exit;
+  // no confined region (nothing animating, or CSS anim needs a full frame) → full
+  if not AnimRegion(rx, ry, rw, rh) then begin TinaFrame(WPx, HPx, Density); Exit; end;
+  if Density > 0 then GDensity := Density;
+  GViewH := HPx / GDensity;
+  PaintDeviceScale := GDensity;
+  rx := rx - 3; ry := ry - 3; rw := rw + 6; rh := rh + 6;   // pad for AA/shadow bleed
+  if rx < 0 then begin rw := rw + rx; rx := 0; end;
+  if ry < 0 then begin rh := rh + ry; ry := 0; end;
+  GCanvas.Scale(GDensity, GDensity);          // CSS px → physical px
+  GCanvas.SetClip(rx, ry, rw, rh);            // nothing paints outside the region
+  AnimResetActive;                            // paint re-marks the region this frame
+  PaintClipActive := True;                    // cull boxes wholly outside the region
+  PaintClipX0 := rx; PaintClipY0 := ry; PaintClipX1 := rx + rw; PaintClipY1 := ry + rh;
+  GCanvas.FillRect(rx, ry, rw, rh, BodyBg);   // region ground (clipped)
+  try
+    if GRoot <> nil then PaintBox(GCanvas, GRoot, GScrollY);
+  finally
+    PaintClipActive := False;
+    GCanvas.ClearClip;
+  end;
+end;
+
+function TinaAnimRegionAvail: Integer;
+var rx, ry, rw, rh: Single;
+begin
+  if AnimRegion(rx, ry, rw, rh) then Result := 1 else Result := 0;
+end;
+
 function TinaWantsKeyboard: Integer;
 begin
   if GAutoKeyboard then begin GAutoKeyboard := False; Result := 1; end
@@ -1642,7 +1682,8 @@ begin
   GFlingVY := GFlingVY * FRICTION;
   if Abs(GFlingVX) < STOPV then GFlingVX := 0;
   if Abs(GFlingVY) < STOPV then GFlingVY := 0;
-  if (GFlingVX <> 0) or (GFlingVY <> 0) then Result := 1;
+  // a fling moved content this frame → full repaint (2); keep ticking while it runs
+  Result := 2;
 end;
 
 procedure TinaBlurInput;

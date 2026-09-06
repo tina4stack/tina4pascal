@@ -132,18 +132,55 @@ procedure AnimResetActive;
 function  AnimActive: Boolean;
 procedure AnimAdvance(dtSeconds: Double);
 function  AnimClock: Double;
+{ Mark a self-contained animated box (e.g. <lottie>) active AND record its screen
+  rect (CSS px). The union of these rects is the ONLY region a shell must repaint
+  on an animation-only frame — a retained backing-store blits the rest. Plain
+  AnimMarkActive (CSS transitions/keyframes) instead forces a full repaint, since
+  those effects aren't confined to a known box. }
+procedure AnimMarkRegion(X, Y, W, H: Single);
+{ The animated region from the last paint (CSS px). Result=False when there's no
+  animation, or when animated content needs a full repaint (AnimMarkActive). }
+function  AnimRegion(out X, Y, W, H: Single): Boolean;
 
 implementation
 
 var
   GAnimClock: Double = 0;
   GAnimActive: Boolean = False;
+  GAnimNeedsFull: Boolean = False;              // a full repaint is required (CSS anim)
+  GAnimRectValid: Boolean = False;
+  GAnimRX0, GAnimRY0, GAnimRX1, GAnimRY1: Single;
 
-procedure AnimMarkActive;  begin GAnimActive := True; end;
-procedure AnimResetActive; begin GAnimActive := False; end;
+procedure AnimMarkActive;  begin GAnimActive := True; GAnimNeedsFull := True; end;
+procedure AnimResetActive;
+begin
+  GAnimActive := False; GAnimNeedsFull := False; GAnimRectValid := False;
+end;
 function  AnimActive: Boolean; begin Result := GAnimActive; end;
 procedure AnimAdvance(dtSeconds: Double); begin GAnimClock := GAnimClock + dtSeconds; end;
 function  AnimClock: Double; begin Result := GAnimClock; end;
+
+procedure AnimMarkRegion(X, Y, W, H: Single);
+begin
+  GAnimActive := True;
+  if not GAnimRectValid then
+  begin GAnimRX0 := X; GAnimRY0 := Y; GAnimRX1 := X + W; GAnimRY1 := Y + H; GAnimRectValid := True; end
+  else
+  begin
+    if X < GAnimRX0 then GAnimRX0 := X;
+    if Y < GAnimRY0 then GAnimRY0 := Y;
+    if X + W > GAnimRX1 then GAnimRX1 := X + W;
+    if Y + H > GAnimRY1 then GAnimRY1 := Y + H;
+  end;
+end;
+
+function AnimRegion(out X, Y, W, H: Single): Boolean;
+begin
+  Result := GAnimRectValid and not GAnimNeedsFull;
+  if Result then
+  begin X := GAnimRX0; Y := GAnimRY0; W := GAnimRX1 - GAnimRX0; H := GAnimRY1 - GAnimRY0; end
+  else begin X := 0; Y := 0; W := 0; H := 0; end;
+end;
 
 { ---- painter registry ------------------------------------------------- }
 

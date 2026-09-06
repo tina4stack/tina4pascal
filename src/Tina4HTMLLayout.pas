@@ -117,6 +117,11 @@ var
     this each frame from its density so the core can rasterize time-driven canvas
     content (<lottie>) at native resolution before a single DrawRGBA blit. }
   PaintDeviceScale: Single = 1;
+  { Paint-clip for the retained backing-store: when active, PaintBox culls any box
+    whose screen rect (CSS px) lies wholly outside [X0,Y0]-[X1,Y1], so an
+    animation-only frame issues draw calls for the animated region only. }
+  PaintClipActive: Boolean = False;
+  PaintClipX0, PaintClipY0, PaintClipX1, PaintClipY1: Single;
 
 procedure PaintBox(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single);
 function HitTest(Box: TLayoutBox; X, Y: Single): THTMLTag;
@@ -4073,6 +4078,13 @@ begin
   if shifted then ShiftBoxTree(Box, tx, ty);
   try
   y := Box.Y - OffsetY;
+  // Retained backing-store cull: on an animation-only frame the shell repaints
+  // only the animated region — skip any box (and its subtree) wholly outside it,
+  // so the far side of the page costs no draw calls. (Full frames leave this off.)
+  if PaintClipActive and
+     ((Box.X >= PaintClipX1) or (Box.X + Box.W <= PaintClipX0) or
+      (y >= PaintClipY1) or (y + Box.H <= PaintClipY0)) then
+    Exit;
   // CSS 3D transform: capture the element into an offscreen layer, then map that
   // texture onto its perspective-projected quad (EndLayer3D). Takes precedence
   // over the 2D transform / filter paths for this element.
@@ -4351,7 +4363,7 @@ begin
           Canvas.RestoreState;
         end;
       end;
-      AnimMarkActive;   // keep repainting so it animates
+      AnimMarkRegion(Box.X, y, Box.W, Box.H);   // animate + record region for the backing-store
     end;
   end;
   if (not Hidden) and ((st.BorderWidths.Top > 0) or (st.BorderWidths.Right > 0) or
