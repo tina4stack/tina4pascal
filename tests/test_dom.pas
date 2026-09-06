@@ -213,7 +213,7 @@ const
     '  </style>' + #10 +
     '</head>' + #10 +
     '<body>' + #10 +
-    '  <!-- a comment that must vanish -->' + #10 +
+    '  <!-- a comment that must vanish <span id="ghost">tagInComment</span> -->' + #10 +
     '  <div id="container" class="wrapper main" data-role="app">' + #10 +
     '    <h1 id="headline" class="title">Hello &amp; welcome</h1>' + #10 +
     '    <p class="note">Nested   note with' + #10 +
@@ -338,6 +338,11 @@ begin
 
     // Comment and script content must not appear anywhere in the tree
     Check(Pos('a comment that must vanish', AllText(Parser.Root)) = 0, 'HTML comment skipped');
+    // tags inside a comment must NOT become element nodes, and their inner text
+    // must not leak (regression guard: comment content is dropped wholesale)
+    Check(Pos('tagInComment', AllText(Parser.Root)) = 0, 'text inside a comment does not leak');
+    Check(FindById(Parser.Root, 'ghost') = nil, 'a tag inside a comment is not parsed into a node');
+    Check(CountTag(Parser.Root, 'span') = 0, 'no <span> node created from comment markup');
     Check(Pos('not parsed', AllText(Parser.Root)) = 0, '<script> content skipped');
     Check(CountTag(Parser.Root, 'p') = 2, 'exactly 2 <p> elements (script''s "<p>" not parsed)');
     Check(CountTag(Parser.Root, 'script') = 0, 'no script node in the DOM');
