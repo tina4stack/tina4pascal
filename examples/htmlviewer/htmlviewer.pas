@@ -363,6 +363,10 @@ var
   txt, cur: string;
 begin
   ViewH := H;
+  // snapshot testing: TINA4_ANIM_CLOCK forces the animation clock to a fixed time
+  if GetEnvironmentVariable('TINA4_ANIM_CLOCK') <> '' then
+    AnimAdvance(StrToFloatDef(GetEnvironmentVariable('TINA4_ANIM_CLOCK'), 0) - AnimClock);
+  AnimResetActive;   // paint re-marks it if animated content is on screen
   if (RootBox = nil) or (Abs(W - LastW) > 0.5) then
   begin
     LastW := W;
@@ -501,6 +505,8 @@ procedure TViewer.MomentumTick;
 const
   DECAY = 0.92;
 begin
+  // CSS animation / <lottie>: advance the shared clock + repaint while active
+  if AnimActive then begin AnimAdvance(1 / 60); Shell.Invalidate; end;
   if MomentumBox = nil then Exit;
   if MomentumBox.ScrollableX and (MomentumBox.MaxScrollX > 0) then
     MomentumBox.ScrollLeft := Max(0, Min(MomentumBox.MaxScrollX,

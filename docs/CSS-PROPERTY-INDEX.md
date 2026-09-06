@@ -112,7 +112,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | transform-origin, perspective | ❌ | rotate/scale always pivot centre |
 | filter, backdrop-filter, clip-path, mask | ❌ | |
 | mix-blend-mode, background-blend-mode | ❌ | |
-| transition, animation | ❌ | no animation engine (ticker exists) |
+| animation, @keyframes | ✅ | `@keyframes` parsed; `animation` shorthand + longhands (name/duration/delay/timing/iteration/direction). Per-frame interpolation at paint off the ticker: transform (translate/rotate/scale), opacity, background-color, color; timing linear/ease/ease-in/-out; iteration + alternate/reverse |
+| transition | ❌ | still needs per-element change tracking |
 | will-change, contain | ❌ | |
 
 ## Tables
@@ -147,7 +148,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | calc() | ✅ | full expression eval: `+ − × ÷` with precedence + parens, px/em/rem/pt/vw/vh/vmin/vmax. `%` is resolved against the container for width/height (deferred to layout); in other properties a %-term is treated as 0 |
 | `@media` (in `<style>`) | ✅ | min/max-width breakpoints + `prefers-color-scheme` dark (incl. dark `:root` var swaps), live via `SetMediaContext` |
 | `@font-face` | ✅ | downloadable fonts: parse family + `src url()`, fetch (async/disk-cached like `<img>`) + register on all 3 shells (Cocoa/iOS CoreText, Android Typeface); CSS family aliased to the face's real name |
-| `@keyframes`, `@supports`, `@import` | ❌ | skipped with the @-rule block |
+| `@keyframes` | ✅ | parsed into named stops; drives `animation` |
+| `@supports`, `@import` | ❌ | skipped with the @-rule block |
 | clamp(), min(), max() | ✅ | evaluated via the calc() engine (nestable, same unit support). `env()` still 0 |
 
 ## Prioritised roadmap (by real-world impact ÷ effort)
@@ -169,8 +171,8 @@ col/row-resize.
 1. **Flexbox remainder**: `flex-wrap: wrap-reverse`; multi-line `align-content`
    distribution (reverse directions, `align-self`/`order`, per-axis gap done).
 2. **Grid**: explicit line placement, `grid-template-rows`/`areas`, multi-row span.
-3. **transitions / animations** + `@keyframes` (needs the ticker + a timeline);
-    `@supports` / `@import`.
+3. **transition** — per-element change tracking + interpolation on state change
+    (`@keyframes` animations are done); `@supports` / `@import`.
 4. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
     backdrop-filter / clip-path / mask**; blend-modes.
 5. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,

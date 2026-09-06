@@ -696,6 +696,72 @@ end;
 
 var
   GInModalPaint: Boolean = False;   // true while PaintModalOverlay draws the dialog
+  GAnimSheet: TCSSStyleSheet = nil;  // sheet for @keyframes lookup during paint
+
+{ Timing-function easing for a progress fraction (polynomial approximations). }
+function AnimEase(const Fn: string; t: Single): Single;
+begin
+  if (Fn = 'linear') or (Fn = 'step') then Result := t
+  else if Fn = 'ease-in' then Result := t * t
+  else if Fn = 'ease-out' then Result := t * (2 - t)
+  else Result := t * t * (3 - 2 * t);   // ease / ease-in-out ≈ smoothstep
+end;
+
+{ Interpolate two colours (ARGB) by t. }
+function LerpColor(A, B: TTina4Color; t: Single): TTina4Color;
+  function Ch(sh: Integer): Cardinal;
+  var ca, cb: Integer;
+  begin
+    ca := (A shr sh) and $FF; cb := (B shr sh) and $FF;
+    Result := Cardinal(Round(ca + (cb - ca) * t)) and $FF;
+  end;
+begin
+  Result := (Ch(24) shl 24) or (Ch(16) shl 16) or (Ch(8) shl 8) or Ch(0);
+end;
+
+{ Apply the element's @keyframes animation to its style for the current clock —
+  mutates transform/opacity/colours in-place, keeping the ticker alive. }
+procedure ApplyKeyframeAnim(var st: TComputedStyle);
+var
+  offs: TArray<Single>; blocks: TArray<string>;
+  t, frac, o0, o1, lt: Single;
+  iter, i, i0, i1: Integer;
+  s0, s1: TComputedStyle; rev: Boolean;
+begin
+  if (GAnimSheet = nil) or (st.AnimName = '') or (st.AnimDuration <= 0) then Exit;
+  if not GAnimSheet.KeyframeStops(st.AnimName, offs, blocks) then Exit;
+  t := (AnimClock - st.AnimDelay) / st.AnimDuration;
+  if t < 0 then t := 0;
+  iter := Trunc(t);
+  frac := t - iter;
+  if (st.AnimIterCount >= 0) and (t >= st.AnimIterCount) then
+  begin frac := 1; iter := Trunc(st.AnimIterCount); end;
+  rev := False;
+  if st.AnimDirection = 'reverse' then rev := True
+  else if st.AnimDirection = 'alternate' then rev := Odd(iter)
+  else if st.AnimDirection = 'alternate-reverse' then rev := not Odd(iter);
+  if rev then frac := 1 - frac;
+  frac := AnimEase(st.AnimTiming, frac);
+  // surrounding stops
+  i0 := 0; i1 := High(offs);
+  for i := 0 to High(offs) do if offs[i] <= frac then i0 := i;
+  for i := High(offs) downto 0 do if offs[i] >= frac then i1 := i;
+  o0 := offs[i0]; o1 := offs[i1];
+  if o1 > o0 then lt := (frac - o0) / (o1 - o0) else lt := 0;
+  s0 := TComputedStyle.ResolveBlock(blocks[i0], st);
+  s1 := TComputedStyle.ResolveBlock(blocks[i1], st);
+  st.TransformTranslateX := s0.TransformTranslateX + (s1.TransformTranslateX - s0.TransformTranslateX) * lt;
+  st.TransformTranslateY := s0.TransformTranslateY + (s1.TransformTranslateY - s0.TransformTranslateY) * lt;
+  st.TransformRotate := s0.TransformRotate + (s1.TransformRotate - s0.TransformRotate) * lt;
+  st.TransformScaleX := s0.TransformScaleX + (s1.TransformScaleX - s0.TransformScaleX) * lt;
+  st.TransformScaleY := s0.TransformScaleY + (s1.TransformScaleY - s0.TransformScaleY) * lt;
+  st.Opacity := s0.Opacity + (s1.Opacity - s0.Opacity) * lt;
+  if (s0.BackgroundColor <> st.BackgroundColor) or (s1.BackgroundColor <> st.BackgroundColor) then
+    st.BackgroundColor := LerpColor(s0.BackgroundColor, s1.BackgroundColor, lt);
+  if (s0.Color <> st.Color) or (s1.Color <> st.Color) then
+    st.Color := LerpColor(s0.Color, s1.Color, lt);
+  AnimMarkActive;
+end;
 
 function IsModalDialogBox(Box: TLayoutBox): Boolean;
 begin
@@ -3033,6 +3099,7 @@ begin
   SetLength(FFloats, 0);   // fresh float context per layout
   if ViewportH <= 0 then ViewportH := ViewportW * 0.66;   // rough default when unknown
   SetCalcContext(ViewportW, ViewportH);   // vw/vh + reset deferred calc() table
+  GAnimSheet := FSheet;                    // @keyframes lookup for paint-time animation
   body := FindBody(Root);
   if body = nil then body := Root;
   Result := TLayoutBox.Create;
@@ -3399,6 +3466,9 @@ var
   lotTotal, lotFrame: Single;
 begin
   st := Box.Style;
+  // CSS animation: interpolate this frame's transform/opacity/colours from the
+  // element's @keyframes (drives the ticker while it runs).
+  if st.AnimName <> '' then ApplyKeyframeAnim(st);
   // A modal <dialog> is skipped in the normal pass — PaintModalOverlay draws it
   // last, centred over a backdrop (GInModalPaint is set only during that pass).
   if IsModalDialogBox(Box) and not GInModalPaint then Exit;

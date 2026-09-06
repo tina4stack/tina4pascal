@@ -189,10 +189,17 @@ type
     FMediaCustom: array of record Cond, Name, Val: string; end;
     // @font-face declarations: (css family name, src url) for the engine to fetch
     FFontFaces: array of record Family, Url: string; end;
+    // @keyframes: name → stops (offset 0..1 + raw declaration block per stop)
+    FKeyframes: array of record
+      Name: string;
+      Offsets: array of Single;
+      Blocks: array of string;
+    end;
     FHasMediaRules: Boolean;
     FMediaW: Single;                   // current viewport width for @media eval
     FMediaDark: Boolean;               // prefers-color-scheme: dark active?
     procedure ParseFontFace(const DeclBlock: string);
+    procedure ParseKeyframes(const Name, Inner: string);
     procedure ParseCSS(const CSSText: string); overload;
     procedure ParseBlock(const CSSText, MediaCond: string);
     function SelectorMatches(Rule: TCSSRule; Tag: THTMLTag): Boolean;
@@ -220,6 +227,10 @@ type
       name resolves to the fetched face. }
     function FontFaceCount: Integer;
     procedure GetFontFace(Index: Integer; out Family, Url: string);
+    { @keyframes stops for an animation-name: the sorted offsets (0..1) and the
+      raw declaration block at each. False if the name is unknown. }
+    function KeyframeStops(const Name: string; out Offsets: TArray<Single>;
+      out Blocks: TArray<string>): Boolean;
     function ResolveVar(const Value: string): string;
     function ResolveVarWith(const Value: string; Props: TDictionary<string, string>): string;
     property Rules: TObjectList<TCSSRule> read FRules;
@@ -369,6 +380,13 @@ type
     TransformRotate: Single;       // degrees clockwise
     TransformScaleX: Single;
     TransformScaleY: Single;
+    // CSS animation (@keyframes-driven). Resolved per frame at paint time.
+    AnimName: string;
+    AnimDuration: Single;          // seconds (0 = no animation)
+    AnimDelay: Single;
+    AnimIterCount: Single;         // -1 = infinite
+    AnimTiming: string;            // linear/ease/ease-in/ease-out/ease-in-out
+    AnimDirection: string;         // normal/reverse/alternate/alternate-reverse
     CSSClear: string;   // 'none' (default) | 'left' | 'right' | 'both'
     procedure SetBorderWidth(W: Single);
     procedure SetBorderColor(C: TAlphaColor);
@@ -379,6 +397,9 @@ type
     class function Default: TComputedStyle; static;
     class function ForTag(Tag: THTMLTag; const ParentStyle: TComputedStyle; StyleSheet: TCSSStyleSheet = nil): TComputedStyle; static;
     class procedure ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle); static;
+    { Apply a raw "k:v;k:v" declaration block onto a copy of Base (used to resolve
+      a @keyframes stop's transform/opacity/colours). }
+    class function ResolveBlock(const Block: string; const Base: TComputedStyle): TComputedStyle; static;
     class procedure ExtractBgImageUrl(const Value: string; out Url: string); static;
     class function ParseColor(const S: string): TAlphaColor; static;
     class function ParseLength(const S: string; EmSize: Single = 14): Single; static;
@@ -651,7 +672,10 @@ begin
           Trim(InnerCond));
       end
       else if SelectorPart.ToLower.StartsWith('@font-face') then
-        ParseFontFace(DeclBlock);   // capture font-family + src url for download
+        ParseFontFace(DeclBlock)   // capture font-family + src url for download
+      else if SelectorPart.ToLower.StartsWith('@keyframes') then
+        ParseKeyframes(Trim(Copy(SelectorPart, 11, MaxInt)),
+          S.Substring(BraceStart + 1, (J - 1) - (BraceStart + 1)));
       I := J;
       Continue;
     end;
@@ -808,6 +832,72 @@ begin
   SetLength(FFontFaces, Length(FFontFaces) + 1);
   FFontFaces[High(FFontFaces)].Family := Fam;
   FFontFaces[High(FFontFaces)].Url := Url;
+end;
+
+procedure TCSSStyleSheet.ParseKeyframes(const Name, Inner: string);
+var
+  n, ki, kj, braceOpen, braceClose, p: Integer;
+  sel, decls, tok: string;
+  off, tmpO: Single; tmpB: string;
+  parts: TStringArray;
+begin
+  n := Length(FKeyframes); SetLength(FKeyframes, n + 1);
+  FKeyframes[n].Name := LowerCase(Trim(Name));
+  p := 1;
+  while p <= Length(Inner) do
+  begin
+    braceOpen := Pos('{', Inner, p);
+    if braceOpen = 0 then Break;
+    sel := Trim(Copy(Inner, p, braceOpen - p));
+    braceClose := Pos('}', Inner, braceOpen + 1);
+    if braceClose = 0 then Break;
+    decls := Trim(Copy(Inner, braceOpen + 1, braceClose - braceOpen - 1));
+    parts := sel.Split([',']);
+    for tok in parts do
+    begin
+      sel := Trim(LowerCase(tok));
+      if sel = 'from' then off := 0
+      else if sel = 'to' then off := 1
+      else if sel.EndsWith('%') then off := StrToFloatDef(Copy(sel, 1, Length(sel) - 1), 0) / 100
+      else Continue;
+      ki := Length(FKeyframes[n].Offsets);
+      SetLength(FKeyframes[n].Offsets, ki + 1);
+      SetLength(FKeyframes[n].Blocks, ki + 1);
+      FKeyframes[n].Offsets[ki] := off;
+      FKeyframes[n].Blocks[ki] := decls;
+    end;
+    p := braceClose + 1;
+  end;
+  // sort stops by offset (insertion sort — few stops)
+  for ki := 1 to High(FKeyframes[n].Offsets) do
+  begin
+    tmpO := FKeyframes[n].Offsets[ki]; tmpB := FKeyframes[n].Blocks[ki];
+    kj := ki;
+    while (kj > 0) and (FKeyframes[n].Offsets[kj - 1] > tmpO) do
+    begin
+      FKeyframes[n].Offsets[kj] := FKeyframes[n].Offsets[kj - 1];
+      FKeyframes[n].Blocks[kj] := FKeyframes[n].Blocks[kj - 1];
+      Dec(kj);
+    end;
+    FKeyframes[n].Offsets[kj] := tmpO; FKeyframes[n].Blocks[kj] := tmpB;
+  end;
+end;
+
+function TCSSStyleSheet.KeyframeStops(const Name: string; out Offsets: TArray<Single>;
+  out Blocks: TArray<string>): Boolean;
+var i, k: Integer; nm: string;
+begin
+  Result := False;
+  nm := LowerCase(Trim(Name));
+  for i := 0 to High(FKeyframes) do
+    if FKeyframes[i].Name = nm then
+    begin
+      SetLength(Offsets, Length(FKeyframes[i].Offsets));
+      SetLength(Blocks, Length(FKeyframes[i].Blocks));
+      for k := 0 to High(FKeyframes[i].Offsets) do
+      begin Offsets[k] := FKeyframes[i].Offsets[k]; Blocks[k] := FKeyframes[i].Blocks[k]; end;
+      Exit(Length(Offsets) > 0);
+    end;
 end;
 
 function TCSSStyleSheet.FontFaceCount: Integer;
@@ -2038,6 +2128,7 @@ begin
   Result.TransformTranslateX := 0;
   Result.TransformTranslateY := 0;
   Result.TransformRotate := 0;
+  Result.AnimName := ''; Result.AnimDuration := 0; Result.AnimDelay := 0; Result.AnimIterCount := -1; Result.AnimTiming := 'ease'; Result.AnimDirection := 'normal';
 
   Result.FontFamily := 'Segoe UI';
   Result.FontSize := 14;
@@ -2473,6 +2564,7 @@ begin
   Result.TransformTranslateX := 0;
   Result.TransformTranslateY := 0;
   Result.TransformRotate := 0;
+  Result.AnimName := ''; Result.AnimDuration := 0; Result.AnimDelay := 0; Result.AnimIterCount := -1; Result.AnimTiming := 'ease'; Result.AnimDirection := 'normal';
 
   // Inherit from parent
   Result.FontFamily := ParentStyle.FontFamily;
@@ -3017,6 +3109,26 @@ begin
   end;
 end;
 
+class function TComputedStyle.ResolveBlock(const Block: string; const Base: TComputedStyle): TComputedStyle;
+var d: TCSSDeclarations; p, key, val: string; ci: Integer;
+begin
+  Result := Base;
+  d := TCSSDeclarations.Create;
+  try
+    for p in Block.Split([';']) do
+    begin
+      ci := Pos(':', p);
+      if ci <= 0 then Continue;
+      key := LowerCase(Trim(Copy(p, 1, ci - 1)));
+      val := Trim(Copy(p, ci + 1, MaxInt));
+      if (key <> '') and (val <> '') then d.AddOrSetValue(key, val);
+    end;
+    if d.Count > 0 then ApplyDeclarations(d, Result, Base);
+  finally
+    d.Free;
+  end;
+end;
+
 class procedure TComputedStyle.ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle);
 var
   Temp: string;
@@ -3027,8 +3139,9 @@ var
   BP, BT, SP, ST, OP, OT, TsP, TsT, GArg, OvPart: string;
   R0, Ra, Rb, Rc, PL: Single;
   FParts: TStringArray;
-  fi, slashp, fj: Integer;
+  fi, slashp, fj, fTimeIdx: Integer;
   fLp, fSz, fLhs, fFam: string;
+  av: Single;
   Nums: array of Single;
   ShadowStr, OutlineStr, FloatStr, ClrStr, FlexStr, TsStr: string;
   InsT, InsR, InsB, InsL: string;
@@ -3405,6 +3518,56 @@ begin
 
   if Decls.TryGetValue('word-spacing', Temp) and not ShouldSkip(Temp) then
     Style.WordSpacing := ParseLength(Temp, Style.FontSize);
+
+  // animation shorthand: name duration timing delay iteration-count direction
+  if Decls.TryGetValue('animation', Temp) and not ShouldSkip(Temp) then
+  begin
+    fTimeIdx := 0;
+    for fLp in Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+    begin
+      if fLp.EndsWith('ms') then
+      begin
+        av := StrToFloatDef(Copy(fLp, 1, Length(fLp) - 2), 0) / 1000;
+        if fTimeIdx = 0 then Style.AnimDuration := av else Style.AnimDelay := av;
+        Inc(fTimeIdx);
+      end
+      else if fLp.EndsWith('s') and (StrToFloatDef(Copy(fLp, 1, Length(fLp) - 1), -9e9) > -9e9) then
+      begin
+        av := StrToFloatDef(Copy(fLp, 1, Length(fLp) - 1), 0);
+        if fTimeIdx = 0 then Style.AnimDuration := av else Style.AnimDelay := av;
+        Inc(fTimeIdx);
+      end
+      else if fLp = 'infinite' then Style.AnimIterCount := -1
+      else if (fLp = 'linear') or fLp.StartsWith('ease') or fLp.StartsWith('cubic-')
+              or fLp.StartsWith('steps') then Style.AnimTiming := fLp
+      else if (fLp = 'normal') or (fLp = 'reverse') or (fLp = 'alternate')
+              or (fLp = 'alternate-reverse') then Style.AnimDirection := fLp
+      else if fLp = 'none' then Style.AnimName := ''
+      else if StrToFloatDef(fLp, -9e9) > -9e9 then Style.AnimIterCount := StrToFloatDef(fLp, 1)
+      else Style.AnimName := fLp;
+    end;
+  end;
+  if Decls.TryGetValue('animation-name', Temp) and not ShouldSkip(Temp) then
+    if SameText(Trim(Temp), 'none') then Style.AnimName := '' else Style.AnimName := Trim(Temp).ToLower;
+  if Decls.TryGetValue('animation-duration', Temp) and not ShouldSkip(Temp) then
+  begin
+    Temp := Trim(Temp).ToLower;
+    if Temp.EndsWith('ms') then Style.AnimDuration := StrToFloatDef(Copy(Temp, 1, Length(Temp) - 2), 0) / 1000
+    else Style.AnimDuration := StrToFloatDef(Copy(Temp, 1, Length(Temp) - 1), 0);
+  end;
+  if Decls.TryGetValue('animation-delay', Temp) and not ShouldSkip(Temp) then
+  begin
+    Temp := Trim(Temp).ToLower;
+    if Temp.EndsWith('ms') then Style.AnimDelay := StrToFloatDef(Copy(Temp, 1, Length(Temp) - 2), 0) / 1000
+    else Style.AnimDelay := StrToFloatDef(Copy(Temp, 1, Length(Temp) - 1), 0);
+  end;
+  if Decls.TryGetValue('animation-timing-function', Temp) and not ShouldSkip(Temp) then
+    Style.AnimTiming := Trim(Temp).ToLower;
+  if Decls.TryGetValue('animation-iteration-count', Temp) and not ShouldSkip(Temp) then
+    if SameText(Trim(Temp), 'infinite') then Style.AnimIterCount := -1
+    else Style.AnimIterCount := StrToFloatDef(Trim(Temp), 1);
+  if Decls.TryGetValue('animation-direction', Temp) and not ShouldSkip(Temp) then
+    Style.AnimDirection := Trim(Temp).ToLower;
 
   // font shorthand: [style] [variant] [weight] size[/line-height] family
   if Decls.TryGetValue('font', Temp) and not ShouldSkip(Temp) then
