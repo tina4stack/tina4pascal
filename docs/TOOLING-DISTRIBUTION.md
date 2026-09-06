@@ -4,7 +4,7 @@ How a Tina4Pascal project stays **zip-portable / git-committable and builds on
 anyone's computer**, where the build tools and signing assets live, and what it
 takes to ship to the **Play Store**, **App Store** and **TestFlight**.
 
-Status legend: ✅ done · �build in progress · ⬜ planned.
+Status legend: ✅ done · 🏗 build in progress · ⬜ planned.
 
 ## Two roots: machine cache vs. portable project
 
