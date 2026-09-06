@@ -29,21 +29,33 @@ begin
 end;
 
 procedure PaintFrame(dc: HDC);
-var mem: HDC; bmp, oldb: HGDIOBJ; r: Windows.RECT; white: HBRUSH;
+var
+  mem: HDC; dib, oldb: HGDIOBJ; r: Windows.RECT; white: HBRUSH;
+  bmi: BITMAPINFO; bits: PByte; i: Integer;
 begin
-  // double buffer: render into a memory bitmap, then blit
+  // double buffer into a 32-bit top-down DIB section so the canvas has direct
+  // pixel access (blend modes, backdrop-filter, the offscreen compositor)
   mem := CreateCompatibleDC(dc);
-  bmp := CreateCompatibleBitmap(dc, GW, GH);
-  oldb := SelectObject(mem, bmp);
+  FillChar(bmi, SizeOf(bmi), 0);
+  bmi.bmiHeader.biSize := SizeOf(BITMAPINFOHEADER);
+  bmi.bmiHeader.biWidth := GW; bmi.bmiHeader.biHeight := -GH;   // top-down
+  bmi.bmiHeader.biPlanes := 1; bmi.bmiHeader.biBitCount := 32; bmi.bmiHeader.biCompression := BI_RGB;
+  bits := nil;
+  dib := CreateDIBSection(0, bmi, DIB_RGB_COLORS, bits, 0, 0);
+  oldb := SelectObject(mem, dib);
   r.Left := 0; r.Top := 0; r.Right := GW; r.Bottom := GH;
   white := CreateSolidBrush($00FFFFFF);
   Windows.FillRect(mem, r, white);
   DeleteObject(white);
-  GCanvas.BeginFrame(mem);
+  GdiFlush;
+  if bits <> nil then                       // give the white ground a solid alpha
+    for i := 0 to GW * GH - 1 do bits[i*4+3] := 255;
+  GCanvas.BeginFrame(mem, bits, GW, GH);
   TinaFrame(GW, GH, 1.0);
+  GdiFlush;
   BitBlt(dc, 0, 0, GW, GH, mem, 0, 0, SRCCOPY);
   SelectObject(mem, oldb);
-  DeleteObject(bmp); DeleteDC(mem);
+  DeleteObject(dib); DeleteDC(mem);
 end;
 
 function WndProc(hwnd: HWND; msg: UINT; wp: WPARAM; lp: LPARAM): LRESULT; stdcall;

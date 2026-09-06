@@ -1,10 +1,29 @@
 <body style="margin:0;background:#fbfaf7;font-family:Segoe UI,sans-serif;padding:24px">
-<h1 style="color:#2b41e6">Tina4Pascal on Windows</h1>
-<p style="color:#5b5c78;font-size:16px">Pure Free Pascal → GDI. Boxes, rounded corners, text, colours.</p>
-<div style="display:flex;gap:16px;margin-top:16px">
-  <div style="width:160px;height:100px;background:#2b41e6;border-radius:16px;color:#fff;text-align:center;line-height:100px">blue</div>
-  <div style="width:160px;height:100px;background:#ff5aa0;border-radius:16px;color:#fff;text-align:center;line-height:100px">pink</div>
-  <div style="width:160px;height:100px;background:#ffd23c;border-radius:16px;color:#15162e;text-align:center;line-height:100px">yellow</div>
+<h1 style="color:#2b41e6;margin:0 0 4px">Tina4Pascal on Windows</h1>
+<p style="color:#5b5c78;margin:0 0 18px">Pure Free Pascal → GDI + DIB-section compositing.</p>
+
+<h3 style="color:#15162e;margin:8px 0">Basic paint</h3>
+<div style="display:flex;gap:14px">
+  <div style="width:130px;height:80px;background:#2b41e6;border-radius:14px;color:#fff;text-align:center;line-height:80px">blue</div>
+  <div style="width:130px;height:80px;background:#ff5aa0;border-radius:14px;color:#fff;text-align:center;line-height:80px">pink</div>
+  <div style="width:130px;height:80px;background:#ffd23c;border-radius:14px;color:#15162e;text-align:center;line-height:80px">yellow</div>
 </div>
-<p style="margin-top:20px"><b>Bold</b>, <i>italic</i>, and <span style="text-decoration:underline">underline</span> text render through GDI ClearType.</p>
+
+<h3 style="color:#15162e;margin:18px 0 8px">filter</h3>
+<div style="display:flex;gap:14px">
+  <div style="width:120px;height:80px;background:#2b41e6"></div>
+  <div style="width:120px;height:80px;background:#2b41e6;filter:blur(5px)"></div>
+  <div style="width:120px;height:80px;background:#2b41e6;filter:grayscale(1)"></div>
+  <div style="width:120px;height:80px;background:#ff5aa0;filter:drop-shadow(6px 8px 6px rgba(0,0,0,0.5))"></div>
+</div>
+
+<h3 style="color:#15162e;margin:18px 0 8px">blend · mask · 3D</h3>
+<div style="display:flex;gap:24px;align-items:center">
+  <div style="position:relative;width:200px;height:90px">
+    <div style="position:absolute;left:0;top:0;width:120px;height:90px;background:#2b41e6"></div>
+    <div style="position:absolute;left:70px;top:0;width:120px;height:90px;background:#ffd23c;mix-blend-mode:multiply"></div>
+  </div>
+  <div style="width:150px;height:80px;background:#ff5aa0;mask-image:linear-gradient(to right, black, transparent)"></div>
+  <div style="width:110px;height:80px;background:#2b41e6;color:#fff;text-align:center;line-height:80px;transform:perspective(500px) rotateY(38deg)">3D</div>
+</div>
 </body>
