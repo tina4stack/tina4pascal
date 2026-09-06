@@ -22,6 +22,8 @@ function Tina4DecodeWebP(Data: PByte; Size: Integer; out RGBA: TBytes;
 
 implementation
 
+uses Tina4WebPVP8;
+
 type
   { LSB-first bit reader over a byte span (VP8L bit order). }
   TBitReader = record
@@ -683,13 +685,90 @@ end;
 function Rd32(p: PByte): Cardinal; inline;
 begin Result := p[0] or (p[1] shl 8) or (p[2] shl 16) or (Cardinal(p[3]) shl 24); end;
 
+{ Gradient predictor for the alpha spatial filter (clamped a+b-c). }
+function AlphaGrad(a, b, c: Integer): Integer; inline;
+var g: Integer;
+begin
+  g := a + b - c;
+  if g < 0 then Result := 0 else if g > 255 then Result := 255 else Result := g;
+end;
+
+{ Reverse the WebP alpha spatial filter (1=horizontal, 2=vertical, 3=gradient)
+  in place over a W*H byte plane, row by row (prev row = already-reconstructed). }
+procedure AlphaUnfilter(var a: TBytes; W, H, filter: Integer);
+var x, y, o, up, pred: Integer;
+begin
+  if filter = 0 then Exit;
+  for y := 0 to H - 1 do
+  begin
+    o := y * W;
+    if y = 0 then
+    begin
+      // top row: always horizontal (left) prediction, first pixel from 0
+      for x := 1 to W - 1 do a[o + x] := Byte(a[o + x] + a[o + x - 1]);
+    end
+    else case filter of
+      1: begin  // horizontal: first pixel predicts from the pixel above, rest from left
+           a[o] := Byte(a[o] + a[o - W]);
+           for x := 1 to W - 1 do a[o + x] := Byte(a[o + x] + a[o + x - 1]);
+         end;
+      2: for x := 0 to W - 1 do a[o + x] := Byte(a[o + x] + a[o + x - W]);  // vertical: from above
+      3: begin  // gradient: clamp(left + above - above-left)
+           a[o] := Byte(a[o] + a[o - W]);   // first pixel: from above
+           for x := 1 to W - 1 do
+           begin
+             up := a[o + x - W];
+             pred := AlphaGrad(a[o + x - 1], up, a[o + x - 1 - W]);
+             a[o + x] := Byte(a[o + x] + pred);
+           end;
+         end;
+    end;
+  end;
+end;
+
+{ Decode a WebP 'ALPH' chunk (Data/Size = chunk payload) into the A bytes of an
+  already-RGB-filled RGBA buffer. method 0 = raw plane, 1 = VP8L-lossless (alpha
+  carried in the green channel); then the spatial filter is reversed. }
+function DecodeAlpha(Data: PByte; Size, W, H: Integer; var RGBA: TBytes): Boolean;
+var
+  method, filter, i, n, oW, oH: Integer;
+  aBr: TBitReader; aPix: TArgbBuf; plane: TBytes;
+begin
+  Result := False;
+  if (Size < 1) or (W <= 0) or (H <= 0) then Exit;
+  n := W * H;
+  method := Data[0] and $03;
+  filter := (Data[0] shr 2) and $03;
+  // (bits 4-5 pre-processing, 6-7 reserved: no decode-time effect for the common case)
+  SetLength(plane, n);
+  if method = 0 then
+  begin
+    if Size - 1 < n then Exit;
+    Move((Data + 1)^, plane[0], n);
+  end
+  else
+  begin
+    // lossless: a headerless VP8L stream whose GREEN channel holds alpha
+    BR_Init(aBr, Data + 1, Size - 1);
+    if not DecodeImageStream(aBr, W, H, True, oW, oH, aPix) then Exit;
+    if Length(aPix) < n then Exit;
+    for i := 0 to n - 1 do plane[i] := (aPix[i] shr 8) and $FF;
+  end;
+  AlphaUnfilter(plane, W, H, filter);
+  if Length(RGBA) < n * 4 then Exit;
+  for i := 0 to n - 1 do RGBA[i*4+3] := plane[i];
+  Result := True;
+end;
+
 function Tina4DecodeWebP(Data: PByte; Size: Integer; out RGBA: TBytes;
   out W, H: Integer): Boolean;
 var
   p: PByte; fourcc: string; clen: Cardinal;
   br: TBitReader; pix: TArgbBuf; oW, oH, i: Integer;
+  alphData: PByte; alphLen: Integer;
 begin
   Result := False; W := 0; H := 0;
+  alphData := nil; alphLen := 0;
   if (Data = nil) or (Size < 20) then Exit;
   if not ((Data[0] = Ord('R')) and (Data[1] = Ord('I')) and (Data[2] = Ord('F')) and (Data[3] = Ord('F'))) then Exit;
   if not ((Data[8] = Ord('W')) and (Data[9] = Ord('E')) and (Data[10] = Ord('B')) and (Data[11] = Ord('P'))) then Exit;
@@ -717,10 +796,19 @@ begin
       end;
       Exit(True);
     end
+    else if fourcc = 'ALPH' then
+    begin
+      // stash the alpha chunk; it precedes the 'VP8 ' image it applies to
+      alphData := p + 8; alphLen := Integer(clen);
+    end
     else if fourcc = 'VP8 ' then
     begin
-      // lossy VP8 — handled by Tina4WebPVP8 (added separately); not yet.
-      Exit(False);
+      // lossy VP8 — decoded by Tina4WebPVP8 (pure-Pascal intra decoder).
+      Result := Tina4DecodeVP8(p + 8, clen, RGBA, W, H);
+      // apply a preceding ALPH chunk (transparent lossy WebP)
+      if Result and (alphData <> nil) then
+        DecodeAlpha(alphData, alphLen, W, H, RGBA);
+      Exit;
     end;
     // skip chunk (padded to even)
     p := p + 8 + clen + (clen and 1);
