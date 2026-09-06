@@ -110,7 +110,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 |---|---|---|
 | opacity | ✅ | subtree alpha via ScaleAlpha (per-channel, not group compositing) |
 | transform: translate/rotate/scale/skew | ✅ | 2D transforms via NSAffineTransform (skew adds a shear on the shell canvas — `Skew` contract method) |
-| transform: matrix/3d | ❌ | matrix() + 3D (rotateX/Y/Z, perspective) not applied |
+| transform: matrix() | ✅ | `matrix(a,b,c,d,e,f)` concatenated on the shell canvas (`TransformMatrix` contract method → NSAffineTransformStruct); pivots at `transform-origin` |
+| transform: 3d | ❌ | 3D (rotateX/Y/Z, perspective) not applied — needs a projection pipeline |
 | transform-origin | ✅ | keyword/px/% pivot for rotate/scale/skew (default 50% 50%) |
 | perspective | ❌ | needs a 3D pipeline |
 | filter, backdrop-filter, clip-path, mask | ❌ | |
@@ -172,8 +173,8 @@ col/row-resize.
 
 **Outstanding — bigger rocks** (each needs a dedicated subsystem the immediate-
 mode renderer doesn't yet have):
-1. **transform** matrix()/3D + `perspective` — a 3D projection pipeline (2D
-    translate/rotate/scale/skew + `transform-origin` done).
+1. **transform** 3D + `perspective` — a 3D projection pipeline (2D
+    translate/rotate/scale/skew/matrix() + `transform-origin` done).
 2. **filter / backdrop-filter / clip-path / mask / blend-modes** — an offscreen
     render target + image-filter/compositing pass per shell.
 3. **Grid**: `grid-template-rows` fr/%/auto (px rows, template-areas, line

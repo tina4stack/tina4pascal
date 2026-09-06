@@ -384,6 +384,8 @@ type
     TransformScaleY: Single;
     TransformSkewX: Single;        // deg
     TransformSkewY: Single;        // deg
+    TransformMatrixSet: Boolean;   // CSS matrix(a,b,c,d,e,f) present
+    TransformMat: array[0..5] of Single; // a,b,c,d,e,f
     TransformOriginX: Single;      // px, or a %-marker (<-1.5); default -50 = 50%
     TransformOriginY: Single;
     // CSS animation (@keyframes-driven). Resolved per frame at paint time.
@@ -2229,6 +2231,7 @@ begin
   Result.TransformActive := False;
   Result.TransformScaleX := 1;
   Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
+  Result.TransformMatrixSet := False;
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 end;
@@ -2668,6 +2671,7 @@ begin
   Result.TransformActive := False;
   Result.TransformScaleX := 1;
   Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
+  Result.TransformMatrixSet := False;
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 
@@ -4102,6 +4106,20 @@ begin
           AStr := TfArgs[0].Trim;
           if AStr.EndsWith('deg') then AStr := AStr.Substring(0, AStr.Length - 3);
           Style.TransformSkewY := Style.TransformSkewY + StrToFloatDef(AStr, 0);
+        end
+        else if FnName = 'matrix' then
+        begin
+          // matrix(a,b,c,d,e,f) — replaces the current transform basis
+          if Length(TfArgs) >= 6 then
+          begin
+            Style.TransformMat[0] := StrToFloatDef(TfArgs[0].Trim, 1);
+            Style.TransformMat[1] := StrToFloatDef(TfArgs[1].Trim, 0);
+            Style.TransformMat[2] := StrToFloatDef(TfArgs[2].Trim, 0);
+            Style.TransformMat[3] := StrToFloatDef(TfArgs[3].Trim, 1);
+            Style.TransformMat[4] := StrToFloatDef(TfArgs[4].Trim, 0);
+            Style.TransformMat[5] := StrToFloatDef(TfArgs[5].Trim, 0);
+            Style.TransformMatrixSet := True;
+          end;
         end;
       end;
     end;

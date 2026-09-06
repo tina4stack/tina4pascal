@@ -95,6 +95,8 @@ type
     procedure Scale(SX, SY: Single); virtual;
     { Shear the coordinate system (CSS skew), angles in degrees. Default: no-op. }
     procedure Skew(AngleXDeg, AngleYDeg: Single); virtual;
+    { Concatenate a 2D affine matrix (CSS matrix(a,b,c,d,e,f)). Default: no-op. }
+    procedure TransformMatrix(A, B, C, D, E, F: Single); virtual;
     { Images: LoadImage fetches (http/https or local path) and decodes,
       returning a handle (-1 on failure) that stays valid for the canvas
       lifetime; repeated calls with the same Src are cached. Default
@@ -359,5 +361,6 @@ procedure TTina4Canvas.Translate(DX, DY: Single); begin end;
 procedure TTina4Canvas.Rotate(Degrees: Single); begin end;
 procedure TTina4Canvas.Scale(SX, SY: Single); begin end;
 procedure TTina4Canvas.Skew(AngleXDeg, AngleYDeg: Single); begin end;
+procedure TTina4Canvas.TransformMatrix(A, B, C, D, E, F: Single); begin end;
 
 end.

@@ -59,6 +59,7 @@ type
     procedure Rotate(Degrees: Single); override;
     procedure Scale(SX, SY: Single); override;
     procedure Skew(AngleXDeg, AngleYDeg: Single); override;
+    procedure TransformMatrix(A, B, C, D, E, F: Single); override;
   end;
 
   { NSTimer target bridging into the shell's OnTick }
@@ -694,6 +695,18 @@ begin
   s.m11 := 1; s.m12 := Sin(ay) / Cos(ay);
   s.m21 := Sin(ax) / Cos(ax); s.m22 := 1;
   s.tX := 0; s.tY := 0;
+  t := NSAffineTransform.transform;
+  t.setTransformStruct(s);
+  t.concat;
+end;
+
+procedure TCocoaCanvas.TransformMatrix(A, B, C, D, E, F: Single);
+var t: NSAffineTransform; s: NSAffineTransformStruct;
+begin
+  // CSS matrix(a,b,c,d,e,f): [a c e / b d f / 0 0 1]
+  s.m11 := A; s.m12 := B;
+  s.m21 := C; s.m22 := D;
+  s.tX := E;  s.tY := F;
   t := NSAffineTransform.transform;
   t.setTransformStruct(s);
   t.concat;
