@@ -174,22 +174,30 @@ rasterizer as the road to pixel-identical output everywhere).
 
 ## Layout
 
-- `src/` — the portable core + macOS shell
+- `src/` — the portable core + one shell per OS
   - `Tina4HTMLDom.pas` — DOM, HTML parser, CSS selector engine, computed
     styles (ported line-for-line from Tina4Delphi's `Tina4HTMLRender.pas`;
-    113-assertion test suite in `tests/`)
+    126-assertion test suite in `tests/`)
   - `Tina4HTMLLayout.pas` — block/inline/table layout + painting via the
     canvas contract
   - `Tina4RenderBackend.pas` — the platform contract (canvas, window, events,
-    images)
-  - `Tina4ShellCocoa.pas` — macOS shell: pure Objective-Pascal (CocoaAll),
-    no Lazarus/LCL
-- `examples/htmlviewer/` — the viewer app in the screenshot
-- `toolchain/` — `build-crosses.sh` builds every cross-compiler from one Mac
+    images) + the portable software rasterizer
+  - `Tina4ShellCocoa.pas` (macOS/iOS, Objective-Pascal), `Tina4ShellWin.pas`
+    (Win32 + GDI+), `Tina4ShellLinux.pas` (Xlib), `Tina4ShellAndroid.pas`
+    (JNI → Canvas) — no Lazarus/LCL, no Qt/GTK
+  - `Tina4App.pas` — the one cross-platform host `RunApp` drives
+- `tools/` — the `tina4pascal` CLIs + the MCP server (see [Toolsets](#toolsets))
+- `toolchain/` — build the FPC cross-compilers on any host (`build-crosses.sh`
+  for macOS/Linux, `build-android-cross.ps1` for Windows)
 - `docs/TOOLCHAIN.md` — **the formula**: every pitfall of building the
-  FPC 3.2.2 cross toolchain on Apple Silicon, with fixes (20 and counting)
+  FPC 3.2.2 cross toolchain, with fixes
 
-## Quick start (macOS)
+## Building from source (contributors)
+
+The `tina4pascal` CLI above is the normal path. To build the low-level viewer
+and test suite directly:
+
+### macOS
 
 ```sh
 # toolchain: see docs/TOOLCHAIN.md (brew fpc bootstrap → ~/fpc with crosses)
@@ -207,10 +215,10 @@ Run the DOM/CSS test suite:
 cd tests && PPC_CONFIG_PATH=$HOME/fpc/etc $HOME/fpc/bin/fpc -Mdelphi -Fu../src test_dom.pas && ./test_dom
 ```
 
-## Quick start (Windows)
+### Windows
 
-The Windows shell is Win32/GDI with **DIB-section offscreen compositing** — so
-`filter`, `mix-blend-mode`, `mask-image`, 3D `transform` and `backdrop-filter`
+The Windows shell is Win32 + **GDI+** with **DIB-section offscreen compositing** —
+so `filter`, `mix-blend-mode`, `mask-image`, 3D `transform` and `backdrop-filter`
 all render, sharing the same `Tina4Compositor` as macOS/iOS.
 
 ```bat
@@ -257,12 +265,13 @@ Frond (templates)  ─▶  Tina4HTMLDom + Tina4HTMLLayout (render)  ─▶  plat
       └──────  data layer: REST · SSE · WebSockets  ◀── events (click/submit) ─┘
 ```
 
-One HTML-driven model, six targets from one Mac. Each layer has a design doc:
+One HTML-driven model, six targets from one machine (macOS, Windows or Linux).
+Each layer has a design doc:
 
 | Layer | Status | Doc |
 |---|---|---|
-| Renderer (DOM/CSS/layout) | working on macOS, systematic conformance push | [CONFORMANCE.md](docs/CONFORMANCE.md), [CSS-PROPERTY-INDEX.md](docs/CSS-PROPERTY-INDEX.md), [HTML-ELEMENT-INDEX.md](docs/HTML-ELEMENT-INDEX.md) |
-| Platform shells | macOS (Cocoa) + iOS (on-device) + Windows (GDI) done, all with offscreen filter/blend/mask/3D compositing; Android shell (no compositing yet); Linux/X11 host next | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Renderer (DOM/CSS/layout) | rendering on macOS, Windows (128/130 reftests) and Linux; systematic conformance push | [CONFORMANCE.md](docs/CONFORMANCE.md), [CSS-PROPERTY-INDEX.md](docs/CSS-PROPERTY-INDEX.md), [HTML-ELEMENT-INDEX.md](docs/HTML-ELEMENT-INDEX.md) |
+| Platform shells | macOS + iOS (Objective-Pascal), Windows (GDI+), Linux (Xlib) and Android (JNI → Canvas) all render; desktop shells share offscreen filter/blend/mask/3D compositing. Android APKs build **natively from Windows** | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Data layer (WS/SSE/API) | designed, ports of tina4delphi units | [ROADMAP-DATALAYER.md](docs/ROADMAP-DATALAYER.md) |
 | Frond template engine | designed, port of Tina4Frond.pas | [ROADMAP-FROND.md](docs/ROADMAP-FROND.md) |
 
@@ -278,12 +287,11 @@ tools/compare.sh bootstrap_test  # stack our render over Chrome for a page
 
 ## Roadmap
 
-1. **Conformance**: work the reftest FAIL list in dependency order —
-   `overflow-x` + `hidden` attribute, then paint the parsed-only visuals
-   (opacity, box-shadow, gradients), then **flexbox**, positioning, list
-   markers, table spans.
-2. **Software rasterizer + pure-Pascal TTF** → identical pixels on every
-   target + the Win32 / X11 / Android shells (~100 lines of blit each).
+1. **Conformance**: close the last Windows reftests (`background-size: cover`,
+   `clip-path`), add the advanced blend modes and HiDPI, then keep pushing
+   flexbox, positioning, list markers and table spans.
+2. **Linux shell parity**: images + the filter/blend/mask/3D compositor (the
+   desktop-class pieces the X11 shell doesn't share yet).
 3. **Data layer**: dispatcher → DOM-mutation API → REST → SSE → WebSockets
    (ports of the Tina4Delphi units) — live, data-aware native apps.
 4. **Frond**: port the template engine — templates + data → HTML.
@@ -303,7 +311,9 @@ and the verification discipline for this stack:
 
 ## Status
 
-Early proof of concept, moving fast. macOS renders; the other five targets
-compile and link today (see the size table) and grow shells next.
+Moving fast. **macOS, Windows, Linux and Android render natively today** (see the
+comparison and the size table); iOS runs on-device. Android APKs build from a
+Windows host with no Mac and no WSL. Next: the data layer (REST/SSE/WebSockets)
+and the Frond template engine.
 
 MIT licensed, part of the [Tina4 stack](https://tina4.com).
