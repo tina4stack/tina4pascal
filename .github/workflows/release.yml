@@ -1,0 +1,111 @@
+name: Release
+
+# On a version tag (v*), build the native desktop viewer for the OSes that can
+# be built + verified on GitHub-hosted runners (Linux, macOS) and attach them to
+# the GitHub Release. Can also be dispatched manually against an existing tag to
+# backfill assets (e.g. v1.0.0, which was tagged before this workflow existed).
+#
+# SIGNING: the Windows deliverables (CLI .ps1, viewer .exe, FPC->Android cross
+# pack) are Authenticode-signed with the project's Certum EV cert via SimplySign,
+# which needs an interactive OTP and therefore cannot run on a hosted runner —
+# those signed assets are produced locally (toolchain/sign-release.ps1, see
+# docs/SIGNING.md). macOS notarization likewise needs an Apple Developer cert.
+# The artifacts uploaded here are the unsigned native builds for Linux/macOS.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build + attach assets to (e.g. v1.0.0)
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  ensure-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Ensure a release exists for ${{ env.TAG }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release view "$TAG" || gh release create "$TAG" --title "Tina4Pascal $TAG" --generate-notes
+
+  build:
+    needs: ensure-release
+    name: ${{ matrix.asset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+            bin: htmlviewer_x11
+            asset: tina4-htmlviewer-linux-x86_64
+          - os: macos-latest
+            target: macos
+            bin: htmlviewer
+            asset: tina4-htmlviewer-macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Install Free Pascal + deps
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y fpc libx11-dev xvfb
+          else
+            brew install fpc
+          fi
+          fpc -iV
+
+      - name: Build native viewer
+        shell: bash
+        run: bash tools/tina4pascal build ${{ matrix.target }}
+
+      - name: Smoke-test (headless render, best effort)
+        shell: bash
+        run: |
+          BIN="build/${{ matrix.target }}/${{ matrix.bin }}"
+          test -f "$BIN" || { echo "binary not found: $BIN"; exit 1; }
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a "$BIN" --snapshot smoke.bmp || echo "(snapshot skipped)"
+          else
+            "$BIN" --snapshot smoke.png || echo "(snapshot skipped)"
+          fi
+
+      - name: Package + checksum
+        shell: bash
+        run: |
+          set -e
+          mkdir -p out
+          cp "build/${{ matrix.target }}/${{ matrix.bin }}" "out/${{ matrix.asset }}"
+          cd out
+          tar -czf "${{ matrix.asset }}.tar.gz" "${{ matrix.asset }}"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${{ matrix.asset }}.tar.gz" > "${{ matrix.asset }}.tar.gz.sha256"
+          else
+            shasum -a 256 "${{ matrix.asset }}.tar.gz" > "${{ matrix.asset }}.tar.gz.sha256"
+          fi
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "out/${{ matrix.asset }}.tar.gz" "out/${{ matrix.asset }}.tar.gz.sha256" --clobber
+
+      - name: Keep as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: out/*

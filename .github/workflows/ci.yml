@@ -1,0 +1,57 @@
+name: CI
+
+# Fast gate on every push/PR to main: build + run the headless test suites on
+# Linux and macOS, and exercise the real clean-box path on Windows (the CLI
+# auto-installs FPC, then scaffolds + builds a project).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Free Pascal
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y fpc
+          else
+            brew install fpc
+          fi
+          fpc -iV
+
+      - name: Run test suites
+        shell: bash
+        run: bash tools/tina4pascal test
+
+  windows-cleanbox:
+    name: clean-box (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No FPC pre-installed: this proves the newcomer path — the CLI downloads
+      # and silently installs FPC on first use, then scaffolds + builds an app.
+      - name: Scaffold + build (auto-installs FPC)
+        shell: pwsh
+        run: tools\tina4pascal.ps1 init smoketest norun
+
+      - name: Verify the app built
+        shell: pwsh
+        run: |
+          if (-not (Test-Path smoketest\build\win64\smoketest.exe)) { throw "smoketest.exe not built" }
+          Get-Item smoketest\build\win64\smoketest.exe | Select-Object FullName, Length
