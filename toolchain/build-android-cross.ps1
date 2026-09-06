@@ -119,12 +119,19 @@ function Build-Abi($cpu, $target, $suf, $tc, $prefix, $abiOpt, $abiFlags) {
   $ppcross  = Join-Path $FpcSource "compiler\ppcross$suf.exe"
   $u        = "$target-android"
 
-  # 1. cross compiler (byproduct of buildbase; native stage is expected to fail)
-  Push-Location $FpcSource
-  try {
-    & $MakeExe buildbase "CPU_TARGET=$cpu" OS_TARGET=android "FPC=$Ppc386" `
-        "CROSSBINDIR=$crossbin" "BINUTILSPREFIX=$prefix" OVERRIDEVERSIONCHECK=1 *> (Join-Path $Out "log-compiler-$suf.txt")
-  } catch {} finally { Pop-Location }
+  # 1. cross compiler. For x86_64 the stock FPC win64 cross (ppcrossx64.exe)
+  #    already targets android, so reuse it and skip the ~5-min compiler build.
+  $stock = Join-Path $FpcBin "ppcross$suf.exe"
+  if ($suf -eq 'x64' -and (Test-Path $stock)) {
+    $ppcross = $stock
+  } else {
+    # byproduct of buildbase; its native stage is expected to fail (no sysroot)
+    Push-Location $FpcSource
+    try {
+      & $MakeExe buildbase "CPU_TARGET=$cpu" OS_TARGET=android "FPC=$Ppc386" `
+          "CROSSBINDIR=$crossbin" "BINUTILSPREFIX=$prefix" OVERRIDEVERSIONCHECK=1 *> (Join-Path $Out "log-compiler-$suf.txt")
+    } catch {} finally { Pop-Location }
+  }
   if (-not (Test-Path $ppcross)) { Die "cross compiler ppcross$suf.exe not produced (see log-compiler-$suf.txt)" }
 
   # 2. cross RTL
@@ -140,8 +147,8 @@ function Build-Abi($cpu, $target, $suf, $tc, $prefix, $abiOpt, $abiFlags) {
 
   # 3. jni + fpkg: compile the JNI bridge with FPC-source package dirs so the
   #    compiler auto-builds every used unit; harvest what we need.
-  $crossbinLib = Join-Path $Ndk ("toolchains\llvm\prebuilt\windows-x86_64\sysroot\usr\lib\" + `
-                 $(if ($cpu -eq 'arm') {'arm-linux-androideabi'} else {'aarch64-linux-android'}) + "\21")
+  $triple = switch ($cpu) { 'arm' { 'arm-linux-androideabi' } 'x86_64' { 'x86_64-linux-android' } default { 'aarch64-linux-android' } }
+  $crossbinLib = Join-Path $Ndk "toolchains\llvm\prebuilt\windows-x86_64\sysroot\usr\lib\$triple\21"
   $harvest = Join-Path $Out "harvest-$suf"; Remove-Item $harvest -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force -Path $harvest | Out-Null
   $P = Join-Path $FpcSource 'packages'
   $fu = @("-Fu$RepoRoot\src","-Fu$P\jni\src","-Fu$P\rtl-objpas\src\inc","-Fu$P\rtl-objpas\src\common",
@@ -168,9 +175,10 @@ function Build-Abi($cpu, $target, $suf, $tc, $prefix, $abiOpt, $abiFlags) {
 
 Build-Abi 'aarch64' 'aarch64' 'a64' 'aarch64-linux-android-4.9' 'aarch64-linux-android-' '' @('-Paarch64')
 Build-Abi 'arm'     'arm'     'arm' 'arm-linux-androideabi-4.9' 'arm-linux-androideabi-' '-CpARMV7A -CfVFPV3' @('-Parm','-CpARMV7A','-CfVFPV3')
+Build-Abi 'x86_64'  'x86_64'  'x64' 'x86_64-4.9'                'x86_64-linux-android-'  '' @('-Px86_64')
 
 # manifest for provenance
-@{ fpc = $FpcVer; ndk = $NDK_VER; host = 'win64'; abis = @('arm64-v8a','armeabi-v7a'); built = (Get-Date -Format o) } |
+@{ fpc = $FpcVer; ndk = $NDK_VER; host = 'win64'; abis = @('arm64-v8a','armeabi-v7a','x86_64'); built = (Get-Date -Format o) } |
   ConvertTo-Json | Set-Content (Join-Path $Pack 'tina4-android-cross.json') -Encoding utf8
 
 Say "pack assembled at $Pack"

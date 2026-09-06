@@ -49,6 +49,20 @@ cd myproject
 tools\tina4pascal.ps1 build android       # → build\android\myproject.apk (arm64-v8a + armeabi-v7a)
 ```
 
+Default ABIs are the real-device pair; override with tina4.json `"androidAbis"`
+or `$env:TINA4_ANDROID_ABIS` — add `x86_64` to run on the standard x86_64
+emulator:
+
+```powershell
+$env:TINA4_ANDROID_ABIS = 'arm64-v8a armeabi-v7a x86_64'
+tools\tina4pascal.ps1 build android
+adb install -r build\android\myproject.apk
+adb shell am start -n <bundleId>/com.tina4.pascal.MainActivity
+```
+
+Verified live on an `android-36` x86_64 emulator: `libtina4.so` loads and the
+FPC engine renders the UI through JNI → `android.graphics.Canvas`.
+
 How it works — the CLI resolves every tool by explicit path (never `PATH`):
 
 - **FPC → `libtina4.so`**: stock FPC has no Android cross-compiler, so

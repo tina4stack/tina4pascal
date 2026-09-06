@@ -309,8 +309,11 @@ function Fpc-Bin  { $f = Find-Fpc; if (-not $f) { return $null }; return (Split-
 function Test-AndroidCross([string]$abi) {
   $bin = Fpc-Bin; $root = Fpc-Root
   if (-not $bin) { return $false }
-  if ($abi -eq 'armeabi-v7a') { return (Test-Path (Join-Path $bin 'ppcrossarm.exe')) -and (Test-Path (Join-Path $root 'units\arm-android\rtl\system.ppu')) }
-  return (Test-Path (Join-Path $bin 'ppcrossa64.exe')) -and (Test-Path (Join-Path $root 'units\aarch64-android\rtl\system.ppu'))
+  switch ($abi) {
+    'armeabi-v7a' { return (Test-Path (Join-Path $bin 'ppcrossarm.exe')) -and (Test-Path (Join-Path $root 'units\arm-android\rtl\system.ppu')) }
+    'x86_64'      { return (Test-Path (Join-Path $bin 'ppcrossx64.exe')) -and (Test-Path (Join-Path $root 'units\x86_64-android\rtl\system.ppu')) }
+    default       { return (Test-Path (Join-Path $bin 'ppcrossa64.exe')) -and (Test-Path (Join-Path $root 'units\aarch64-android\rtl\system.ppu')) }
+  }
 }
 
 function Resolve-AndroidSdk {
@@ -359,17 +362,18 @@ function Resolve-PlatformJar($sdk) {
     ForEach-Object { Join-Path $_.FullName 'android.jar' } | Where-Object { Test-Path $_ } | Select-Object -First 1
 }
 
-# Per-ABI NDK bits + FPC codegen flags.
+# Per-ABI NDK bits + FPC codegen flags. (x86_64 is for emulators; the NDK names
+# its x86_64 gcc toolchain 'x86_64-4.9', not the -linux-android- form.)
 function Ndk-BinDir($ndk, $abi) {
-  $tc = if ($abi -eq 'armeabi-v7a') { 'arm-linux-androideabi-4.9' } else { 'aarch64-linux-android-4.9' }
+  $tc = switch ($abi) { 'armeabi-v7a' { 'arm-linux-androideabi-4.9' } 'x86_64' { 'x86_64-4.9' } default { 'aarch64-linux-android-4.9' } }
   Join-Path $ndk "toolchains\$tc\prebuilt\windows-x86_64\bin"
 }
-function Ndk-Prefix($abi) { if ($abi -eq 'armeabi-v7a') { 'arm-linux-androideabi-' } else { 'aarch64-linux-android-' } }
+function Ndk-Prefix($abi) { switch ($abi) { 'armeabi-v7a' { 'arm-linux-androideabi-' } 'x86_64' { 'x86_64-linux-android-' } default { 'aarch64-linux-android-' } } }
 function Ndk-SysLib($ndk, $abi, $api) {
-  $triple = if ($abi -eq 'armeabi-v7a') { 'arm-linux-androideabi' } else { 'aarch64-linux-android' }
+  $triple = switch ($abi) { 'armeabi-v7a' { 'arm-linux-androideabi' } 'x86_64' { 'x86_64-linux-android' } default { 'aarch64-linux-android' } }
   Join-Path $ndk "toolchains\llvm\prebuilt\windows-x86_64\sysroot\usr\lib\$triple\$api"
 }
-function Fpc-AbiFlags($abi) { if ($abi -eq 'armeabi-v7a') { @('-Parm','-CpARMV7A','-CfVFPV3') } else { @('-Paarch64') } }
+function Fpc-AbiFlags($abi) { switch ($abi) { 'armeabi-v7a' { @('-Parm','-CpARMV7A','-CfVFPV3') } 'x86_64' { @('-Px86_64') } default { @('-Paarch64') } } }
 
 # numeric key from tina4.json (Get-T4 only does strings)
 function Get-T4Num($proj, $key, $default) {
@@ -410,7 +414,12 @@ function Build-ProjectAndroid($proj) {
   $bundle = Get-T4 $proj 'bundleId' "com.tina4.$name"
   $minsdk = Get-T4Num $proj 'androidMinSdk' 21
   $tgtsdk = Get-T4Num $proj 'androidTargetSdk' 34
+  # default = real-device ABIs; override via tina4.json "androidAbis" or
+  # $env:TINA4_ANDROID_ABIS (e.g. add x86_64 to run on an emulator).
   $abis   = @('arm64-v8a','armeabi-v7a')
+  $cfgAbis = Get-T4 $proj 'androidAbis' ''
+  if ($env:TINA4_ANDROID_ABIS) { $abis = @($env:TINA4_ANDROID_ABIS -split '[,; ]+' | Where-Object { $_ }) }
+  elseif ($cfgAbis) { $abis = @($cfgAbis -split '[,; ]+' | Where-Object { $_ }) }
 
   # every ABI needs its cross installed
   foreach ($abi in $abis) {
