@@ -719,6 +719,72 @@ begin
   Result := (Ch(24) shl 24) or (Ch(16) shl 16) or (Ch(8) shl 8) or Ch(0);
 end;
 
+{ Animate one scalar toward Target when it changes: stores per-element from/start
+  on the tag (attributes), returns the current value and whether it's still moving. }
+function TransScalar(Tag: THTMLTag; const Key: string; Target, Dur, Delay: Single;
+  const Timing: string; out Cur: Single): Boolean;
+var storedTgt, fromV, t0, elapsed, frac: Single;
+begin
+  Result := False; Cur := Target;
+  if not Tag.HasAttribute('_trt_' + Key) then
+  begin
+    Tag.Attributes.AddOrSetValue('_trt_' + Key, FloatToStr(Target));
+    Tag.Attributes.AddOrSetValue('_trc_' + Key, FloatToStr(Target));
+    Exit;
+  end;
+  storedTgt := StrToFloatDef(Tag.GetAttribute('_trt_' + Key), Target);
+  if Abs(storedTgt - Target) > 1e-4 then   // target changed → start from the shown value
+  begin
+    Tag.Attributes.AddOrSetValue('_trf_' + Key, Tag.GetAttribute('_trc_' + Key));
+    Tag.Attributes.AddOrSetValue('_trt_' + Key, FloatToStr(Target));
+    Tag.Attributes.AddOrSetValue('_tr0_' + Key, FloatToStr(AnimClock));
+  end;
+  fromV := StrToFloatDef(Tag.GetAttribute('_trf_' + Key), Target);
+  t0 := StrToFloatDef(Tag.GetAttribute('_tr0_' + Key), AnimClock);
+  elapsed := AnimClock - t0 - Delay;
+  if elapsed < 0 then begin Cur := fromV; Result := True; end
+  else if elapsed >= Dur then Cur := Target
+  else begin frac := AnimEase(Timing, elapsed / Dur); Cur := fromV + (Target - fromV) * frac; Result := True; end;
+  Tag.Attributes.AddOrSetValue('_trc_' + Key, FloatToStr(Cur));
+end;
+
+{ CSS transition: animate transform/opacity/colours toward the current computed
+  value when it changes (hover/focus/DOM). Per-element state lives on the tag. }
+procedure ApplyTransition(Box: TLayoutBox; var st: TComputedStyle);
+var tag: THTMLTag; dur, del: Single; ti: string; cf: Single; pc: Cardinal;
+
+  function Wants(const Name: string): Boolean;
+  begin
+    Result := (st.TransitionProp = 'all') or (st.TransitionProp = Name) or
+      ((Name = 'background-color') and (st.TransitionProp = 'background'));
+  end;
+
+begin
+  tag := Box.Tag;
+  if (tag = nil) or (st.TransitionDuration <= 0) then Exit;
+  dur := st.TransitionDuration; del := st.TransitionDelay; ti := st.TransitionTiming;
+  if Wants('opacity') then
+  begin if TransScalar(tag, 'op', st.Opacity, dur, del, ti, cf) then AnimMarkActive; st.Opacity := cf; end;
+  if Wants('background-color') then
+  begin
+    // interpolate each ARGB channel so colours cross-fade smoothly
+    if TransScalar(tag, 'bga', (st.BackgroundColor shr 24) and $FF, dur, del, ti, cf) then AnimMarkActive;
+    pc := Cardinal(Round(cf)) shl 24;
+    TransScalar(tag, 'bgr', (st.BackgroundColor shr 16) and $FF, dur, del, ti, cf); pc := pc or (Cardinal(Round(cf)) shl 16);
+    TransScalar(tag, 'bgg', (st.BackgroundColor shr 8) and $FF, dur, del, ti, cf); pc := pc or (Cardinal(Round(cf)) shl 8);
+    TransScalar(tag, 'bgb', st.BackgroundColor and $FF, dur, del, ti, cf); pc := pc or Cardinal(Round(cf));
+    st.BackgroundColor := pc;
+  end;
+  if Wants('transform') then
+  begin
+    if TransScalar(tag, 'ttx', st.TransformTranslateX, dur, del, ti, cf) then AnimMarkActive; st.TransformTranslateX := cf;
+    if TransScalar(tag, 'tty', st.TransformTranslateY, dur, del, ti, cf) then AnimMarkActive; st.TransformTranslateY := cf;
+    if TransScalar(tag, 'trot', st.TransformRotate, dur, del, ti, cf) then AnimMarkActive; st.TransformRotate := cf;
+    if TransScalar(tag, 'tsx', st.TransformScaleX, dur, del, ti, cf) then AnimMarkActive; st.TransformScaleX := cf;
+    if TransScalar(tag, 'tsy', st.TransformScaleY, dur, del, ti, cf) then AnimMarkActive; st.TransformScaleY := cf;
+  end;
+end;
+
 { Apply the element's @keyframes animation to its style for the current clock —
   mutates transform/opacity/colours in-place, keeping the ticker alive. }
 procedure ApplyKeyframeAnim(var st: TComputedStyle);
@@ -3608,6 +3674,9 @@ var
   lotTotal, lotFrame: Single;
 begin
   st := Box.Style;
+  // CSS transition: ease transform/opacity/colours toward their computed value
+  // when it changes (hover/focus/DOM). Per-element state on the tag.
+  if st.TransitionDuration > 0 then ApplyTransition(Box, st);
   // CSS animation: interpolate this frame's transform/opacity/colours from the
   // element's @keyframes (drives the ticker while it runs).
   if st.AnimName <> '' then ApplyKeyframeAnim(st);

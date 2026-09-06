@@ -116,7 +116,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | filter, backdrop-filter, clip-path, mask | ❌ | |
 | mix-blend-mode, background-blend-mode | ❌ | |
 | animation, @keyframes | ✅ | `@keyframes` parsed; `animation` shorthand + longhands (name/duration/delay/timing/iteration/direction). Per-frame interpolation at paint off the ticker: transform (translate/rotate/scale), opacity, background-color, color; timing linear/ease/ease-in/-out; iteration + alternate/reverse |
-| transition | ❌ | still needs per-element change tracking |
+| transition | ✅ | eases a property toward its computed value when it changes (hover/focus/DOM): background-color, color, opacity, transform (translate/rotate/scale). Per-element from/start tracked on the tag; duration/delay/timing/property from the shorthand + longhands. Mid-transition reversal supported |
 | will-change, contain | ❌ | |
 
 ## Tables
@@ -172,18 +172,16 @@ col/row-resize.
 
 **Outstanding — bigger rocks** (each needs a dedicated subsystem the immediate-
 mode renderer doesn't yet have):
-1. **transition** — per-element temporal change tracking + interpolation on a
-    state flip (the `@keyframes` interpolation machinery is in place).
-2. **transform** matrix()/3D + `perspective` — a 3D projection pipeline (2D
+1. **transform** matrix()/3D + `perspective` — a 3D projection pipeline (2D
     translate/rotate/scale/skew + `transform-origin` done).
-3. **filter / backdrop-filter / clip-path / mask / blend-modes** — an offscreen
+2. **filter / backdrop-filter / clip-path / mask / blend-modes** — an offscreen
     render target + image-filter/compositing pass per shell.
-4. **Grid**: `grid-template-rows` fr/%/auto + `grid-template-areas` (px rows,
+3. **Grid**: `grid-template-rows` fr/%/auto + `grid-template-areas` (px rows,
     line placement, column/row span, occupancy auto-placement done).
-5. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
+4. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
     `direction`/`writing-mode` (bidi), `list-style-image`, `vertical-align`
     text-top/bottom/length.
-6. **user-select / resize** (need a selection model / drag-resize handle);
+5. **user-select / resize** (need a selection model / drag-resize handle);
     `env()`; `table-layout:fixed`; `empty-cells`; `@supports` / `@import`.
 
 

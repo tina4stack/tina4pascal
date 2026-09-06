@@ -391,6 +391,11 @@ type
     AnimIterCount: Single;         // -1 = infinite
     AnimTiming: string;            // linear/ease/ease-in/ease-out/ease-in-out
     AnimDirection: string;         // normal/reverse/alternate/alternate-reverse
+    // CSS transition — animate a property when it changes (hover/focus/DOM).
+    TransitionDuration: Single;    // seconds (0 = none)
+    TransitionDelay: Single;
+    TransitionTiming: string;
+    TransitionProp: string;        // 'all' or a specific property name
     CSSClear: string;   // 'none' (default) | 'left' | 'right' | 'both'
     procedure SetBorderWidth(W: Single);
     procedure SetBorderColor(C: TAlphaColor);
@@ -2132,7 +2137,7 @@ begin
   Result.TransformTranslateX := 0;
   Result.TransformTranslateY := 0;
   Result.TransformRotate := 0;
-  Result.AnimName := ''; Result.AnimDuration := 0; Result.AnimDelay := 0; Result.AnimIterCount := -1; Result.AnimTiming := 'ease'; Result.AnimDirection := 'normal';
+  Result.AnimName := ''; Result.AnimDuration := 0; Result.AnimDelay := 0; Result.AnimIterCount := -1; Result.AnimTiming := 'ease'; Result.AnimDirection := 'normal'; Result.TransitionDuration := 0; Result.TransitionDelay := 0; Result.TransitionTiming := 'ease'; Result.TransitionProp := 'all';
 
   Result.FontFamily := 'Segoe UI';
   Result.FontSize := 14;
@@ -2569,7 +2574,7 @@ begin
   Result.TransformTranslateX := 0;
   Result.TransformTranslateY := 0;
   Result.TransformRotate := 0;
-  Result.AnimName := ''; Result.AnimDuration := 0; Result.AnimDelay := 0; Result.AnimIterCount := -1; Result.AnimTiming := 'ease'; Result.AnimDirection := 'normal';
+  Result.AnimName := ''; Result.AnimDuration := 0; Result.AnimDelay := 0; Result.AnimIterCount := -1; Result.AnimTiming := 'ease'; Result.AnimDirection := 'normal'; Result.TransitionDuration := 0; Result.TransitionDelay := 0; Result.TransitionTiming := 'ease'; Result.TransitionProp := 'all';
 
   // Inherit from parent
   Result.FontFamily := ParentStyle.FontFamily;
@@ -3585,6 +3590,46 @@ begin
     else Style.AnimIterCount := StrToFloatDef(Trim(Temp), 1);
   if Decls.TryGetValue('animation-direction', Temp) and not ShouldSkip(Temp) then
     Style.AnimDirection := Trim(Temp).ToLower;
+
+  // transition shorthand: [property] duration [timing] [delay]  (first comma group)
+  if Decls.TryGetValue('transition', Temp) and not ShouldSkip(Temp) then
+  begin
+    Temp := Trim(Temp.ToLower);
+    fi := Pos(',', Temp); if fi > 0 then Temp := Trim(Copy(Temp, 1, fi - 1));  // first group
+    fTimeIdx := 0; Style.TransitionProp := 'all';
+    for fLp in Temp.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+    begin
+      if fLp.EndsWith('ms') then
+      begin
+        av := StrToFloatDef(Copy(fLp, 1, Length(fLp) - 2), 0) / 1000;
+        if fTimeIdx = 0 then Style.TransitionDuration := av else Style.TransitionDelay := av; Inc(fTimeIdx);
+      end
+      else if fLp.EndsWith('s') and (StrToFloatDef(Copy(fLp, 1, Length(fLp) - 1), -9e9) > -9e9) then
+      begin
+        av := StrToFloatDef(Copy(fLp, 1, Length(fLp) - 1), 0);
+        if fTimeIdx = 0 then Style.TransitionDuration := av else Style.TransitionDelay := av; Inc(fTimeIdx);
+      end
+      else if (fLp = 'linear') or fLp.StartsWith('ease') or fLp.StartsWith('cubic-') or fLp.StartsWith('steps') then
+        Style.TransitionTiming := fLp
+      else Style.TransitionProp := fLp;   // property name (or 'all'/'none')
+    end;
+  end;
+  if Decls.TryGetValue('transition-property', Temp) and not ShouldSkip(Temp) then
+    Style.TransitionProp := Trim(Temp).ToLower;
+  if Decls.TryGetValue('transition-duration', Temp) and not ShouldSkip(Temp) then
+  begin
+    Temp := Trim(Temp).ToLower;
+    if Temp.EndsWith('ms') then Style.TransitionDuration := StrToFloatDef(Copy(Temp, 1, Length(Temp) - 2), 0) / 1000
+    else Style.TransitionDuration := StrToFloatDef(Copy(Temp, 1, Length(Temp) - 1), 0);
+  end;
+  if Decls.TryGetValue('transition-timing-function', Temp) and not ShouldSkip(Temp) then
+    Style.TransitionTiming := Trim(Temp).ToLower;
+  if Decls.TryGetValue('transition-delay', Temp) and not ShouldSkip(Temp) then
+  begin
+    Temp := Trim(Temp).ToLower;
+    if Temp.EndsWith('ms') then Style.TransitionDelay := StrToFloatDef(Copy(Temp, 1, Length(Temp) - 2), 0) / 1000
+    else Style.TransitionDelay := StrToFloatDef(Copy(Temp, 1, Length(Temp) - 1), 0);
+  end;
 
   // font shorthand: [style] [variant] [weight] size[/line-height] family
   if Decls.TryGetValue('font', Temp) and not ShouldSkip(Temp) then

@@ -219,6 +219,8 @@ begin
     else if cmd = 'enter' then KeyDown('', TK_RETURN)
     else if cmd = 'tab' then KeyDown('', TK_TAB)
     else if cmd = 'backspace' then KeyDown('', TK_BACKSPACE)
+    else if cmd = 'hover' then MouseMove(StrToFloatDef(a, 0), StrToFloatDef(b, 0))
+    else if cmd = 'clock' then AnimAdvance(StrToFloatDef(a, 0) - AnimClock)
     else if cmd = 'left' then KeyDown('', TK_LEFT)
     else if cmd = 'right' then KeyDown('', TK_RIGHT)
     else if cmd = 'up' then KeyDown('', TK_UP)
