@@ -16,7 +16,7 @@ library tina4ios;
 uses
   ctypes,
   CGContext,
-  Tina4RenderBackend, Tina4ShellIOS, Tina4Interact, Tina4Http, Tina4HttpIOS;
+  Tina4RenderBackend, Tina4ShellIOS, Tina4Interact, Tina4Canvas2D, Tina4Http, Tina4HttpIOS;
 
 var
   GCanvas: TIOSCanvas = nil;
@@ -53,6 +53,32 @@ begin
   TinaFrame(W, H, Density);
 end;
 
+{ Repaint ONLY the last frame's animated region (a UIView's layer retains the rest
+  between drawRect: passes, so an animation-only frame invalidates just that rect
+  via setNeedsDisplayInRect: — the natural iOS analogue of the backing-store,
+  without a manual bitmap). }
+procedure tina4_frame_region(Ctx: Pointer; W, H: cint; Density: single); cdecl;
+begin
+  EnsureCanvas;
+  GCanvas.BeginFrame(CGContextRef(Ctx));
+  TinaFrameRegion(W, H, Density);
+end;
+
+{ The last frame's animated region in engine points (X,Y,W,H via out pointers);
+  returns 1 when a confined region is available (caller invalidates just that rect),
+  else 0 (repaint fully). }
+function tina4_anim_region(X, Y, W, H: PSingle): cint; cdecl;
+var rx, ry, rw, rh: Single;
+begin
+  if AnimRegion(rx, ry, rw, rh) then
+  begin
+    if X <> nil then X^ := rx; if Y <> nil then Y^ := ry;
+    if W <> nil then W^ := rw; if H <> nil then H^ := rh;
+    Result := 1;
+  end
+  else Result := 0;
+end;
+
 function tina4_touch(Action: cint; X, Y: single): cint; cdecl;
 begin
   Result := TinaTouch(Action, X, Y);
@@ -61,6 +87,14 @@ end;
 function tina4_tick: cint; cdecl;
 begin
   Result := TinaTick;
+end;
+
+{ 1 if the last frame has live animation (does NOT advance the clock) — the view
+  starts its display-link loop from this so a <lottie> animates on load, not only
+  after a fling. }
+function tina4_anim_active: cint; cdecl;
+begin
+  Result := TinaAnimActive;
 end;
 
 { In-flight HTTP requests. The view runs a light redraw loop while this is > 0,
@@ -172,7 +206,8 @@ begin
 end;
 
 exports
-  tina4_set_html, tina4_set_asset_base, tina4_frame, tina4_touch, tina4_tick, tina4_http_pending,
+  tina4_set_html, tina4_set_asset_base, tina4_frame, tina4_frame_region, tina4_anim_region,
+  tina4_touch, tina4_tick, tina4_anim_active, tina4_http_pending,
   tina4_wants_keyboard, tina4_blur, tina4_blink_caret, tina4_key,
   tina4_focus_kind, tina4_focus_next, tina4_set_file, tina4_set_photo,
   tina4_embed_count, tina4_embed_rect, tina4_embed_src,

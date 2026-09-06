@@ -12,6 +12,9 @@ enum { TINA_NONE = 0, TINA_SHOW_KBD = 1, TINA_HIDE_KBD = 2, TINA_FLING = 3,
 
 void tina4_set_html(const char *html);
 void tina4_set_asset_base(const char *dir);        // base for relative <img src="assets/…">
+void tina4_frame_region(void *cgcontext, int w, int h, float density);  // repaint only the animated region
+int  tina4_anim_region(float *x, float *y, float *w, float *h);          // 1 + region (points) if confined, else 0
+int  tina4_anim_active(void);                       // 1 if the last frame has live animation
 
 void tina4_frame(void *cgcontext, int w, int h, float density);
 int  tina4_touch(int action, float x, float y);   // action 0=down 1=up 2=move

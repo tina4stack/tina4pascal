@@ -59,13 +59,27 @@
     CGContextTranslateCTM(ctx, s.left, s.top);
     // A drawRect context is top-left / y-down and in POINTS, matching the
     // engine's CSS-px space — so hand it points and density 1.
-    tina4_frame(ctx, (int)(self.bounds.size.width  - s.left - s.right),
-                     (int)(self.bounds.size.height - s.top  - s.bottom), 1.0f);
+    int w = (int)(self.bounds.size.width  - s.left - s.right);
+    int h = (int)(self.bounds.size.height - s.top  - s.bottom);
+    // Partial redraw: if iOS handed us a sub-rect (an animation-only frame
+    // invalidated just the animated region) — not the whole view — repaint only
+    // that region; the layer retains the rest. A full invalidate (input, scroll,
+    // relayout) coalesces to ~the full bounds → full repaint.
+    BOOL full = (rect.size.width  >= self.bounds.size.width  - 1.0f) &&
+                (rect.size.height >= self.bounds.size.height - 1.0f);
+    if (!full && tina4_anim_region(NULL, NULL, NULL, NULL))
+        tina4_frame_region(ctx, w, h, 1.0f);
+    else
+        tina4_frame(ctx, w, h, 1.0f);
     CGContextRestoreGState(ctx);
     // overlay/position native <video> players over their poster boxes. Do this
     // OFF the drawRect pass — mutating the layer tree (addSublayer) inside
     // drawRect is unreliable — so hop to the next main-loop turn.
     dispatch_async(dispatch_get_main_queue(), ^{ [self syncVideos:s]; });
+    // keep animating on-screen time-driven content (<lottie>) without needing a
+    // fling — the display link paces itself and -tick repaints only the animated
+    // region (setNeedsDisplayInRect).
+    if (tina4_anim_active() && !self.fling) [self startFling];
     // autofocus: the engine parses on the first frame, so poll here
     if (tina4_wants_keyboard()) [self showKeyboard];
     // a frame may have kicked off remote <img> downloads — keep repainting until
@@ -227,7 +241,22 @@
     [self.fling addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
 }
 - (void)stopFling { [self.fling invalidate]; self.fling = nil; }
-- (void)tick { if (tina4_tick()) [self setNeedsDisplay]; else [self stopFling]; }
+// The display link that keeps both fling momentum AND <lottie> animation going.
+// tina4_tick() returns 0 idle · 1 animation-only · 2 fling (content moving). For an
+// animation-only frame, invalidate ONLY the animated region so drawRect: repaints
+// just that rect and the layer retains the rest (partial redraw = the iOS win).
+- (void)tick {
+    int t = tina4_tick();
+    if (t == 0) { [self stopFling]; return; }
+    float r[4];
+    if (t == 1 && tina4_anim_region(&r[0], &r[1], &r[2], &r[3])) {
+        UIEdgeInsets s = self.safeAreaInsets;         // region is in engine points; un-inset
+        // inflate to match TinaFrameRegion's AA/shadow padding
+        [self setNeedsDisplayInRect:CGRectInset(CGRectMake(r[0] + s.left, r[1] + s.top, r[2], r[3]), -4, -4)];
+    } else {
+        [self setNeedsDisplay];                       // fling / no confined region → full
+    }
+}
 
 - (void)startCaret {
     [self stopCaret];
