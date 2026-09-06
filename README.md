@@ -1,22 +1,119 @@
-# Tina4Pascal
+<p align="center">
+  <img src="branding/icon.png" alt="Tina4Pascal" width="128" height="128">
+</p>
 
-**HTML-driven native apps in Free Pascal — one codebase, six targets, no
-browser, no widget toolkit.**
+<h1 align="center">Tina4Pascal</h1>
+
+<p align="center">
+  <strong>HTML-driven native apps in Free Pascal — one codebase, six targets,
+  no browser, no widget toolkit.</strong>
+</p>
 
 Tina4Pascal is the Free Pascal sibling of
 [Tina4Delphi](https://github.com/tina4stack/tina4delphi). It takes the same
-idea — the UI is HTML + CSS, the app is an event loop — and compiles it to
-tiny native binaries from a single machine:
+idea — the UI is HTML + CSS, the app is an event loop — and compiles it to a
+**single ~1.3 MB native binary** per target (macOS, Windows, Linux x64/arm64,
+Android, iOS) that carries the whole engine and no runtime. See
+[App sizes](#app-sizes).
 
-| Host: one Mac (or any FPC host) → | macOS | Windows | Linux x64/arm64 | Android | iOS |
-|---|---|---|---|---|---|
-| hello world, release | 166 KB | 45 KB | 26 / 65 KB | 39 KB | 148 KB |
+### The same app, rendered natively — no browser, no WebView
 
-The proof-of-concept viewer — HTML parser, CSS engine that digests the real
-`bootstrap.min.css`, layout, HTTPS images, native macOS window — is a
-**1.3 MB** stripped binary:
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/images/showcase-windows.png" alt="Tina4Pascal showcase on Windows"><br><sub><b>Windows</b> · Win32 + GDI+</sub></td>
+<td width="50%" valign="top"><img src="docs/images/showcase-android.png" alt="Tina4Pascal showcase on Android"><br><sub><b>Android</b> · JNI → Canvas (built from Windows)</sub></td>
+</tr>
+</table>
+
+One HTML file — `showcase.html` — byte-identical, drawn by the native engine on
+each platform. The **Lottie** dino is a Bodymovin animation rendered by the
+pure-Pascal core (**no Skia, no JS**); the same page lays out `<video>`,
+gradients, `transform`, `position:fixed` and form controls.
+
+And it digests the real `bootstrap.min.css` — the proof-of-concept viewer (HTML
+parser, CSS engine, layout, HTTPS images, native window) is a **1.3 MB**
+stripped binary:
 
 ![bootstrap_test.html rendered natively on macOS](docs/images/bootstrap-macos.png)
+
+## Quick start
+
+One CLI scaffolds, builds and runs a native app — no FPC flags to remember.
+
+```sh
+# macOS / Linux
+tools/tina4pascal init hello && cd hello && ../tools/tina4pascal run
+```
+
+```powershell
+# Windows (PowerShell)
+tools\tina4pascal.ps1 init hello ; cd hello ; ..\tools\tina4pascal.ps1 run
+```
+
+You get a native window showing **Hello World!** with the logo. Then build for
+any target:
+
+```powershell
+..\tools\tina4pascal.ps1 build win64      # Windows .exe
+..\tools\tina4pascal.ps1 build linux      # via WSL
+..\tools\tina4pascal.ps1 setup android    # one-time: NDK + FPC Android cross
+..\tools\tina4pascal.ps1 build android    # → signed APK (arm64 + armv7 + x86_64)
+```
+
+## Toolsets
+
+Everything you drive the stack with — by hand, from an IDE, or from an AI agent.
+
+| Tool | Where | What it does |
+|---|---|---|
+| **`tools/tina4pascal`** | macOS / Linux (POSIX sh) | `setup · doctor · init · build · run · render · dom · boxes · inspect · debug · script · deploy · screenshot · compliance` |
+| **`tools/tina4pascal.ps1`** | Windows (PowerShell) | same surface, native to Windows; `build {win64,win32,linux,android,all}`, `setup android`, `doctor` |
+| **`tools/mcp`** | any (tina4-python) | **MCP server** — exposes the whole loop (`tina4_init/build/run/render/dom/boxes/inspect/script/debug/deploy/screenshot`) so an AI or IDE drives it. See [tools/mcp/README.md](tools/mcp/README.md) |
+| **`skills/tina4pascal-developer`** | Claude Code · Codex · Cursor | agent skill: architecture rules, toolchain formula, verification discipline (`./scripts/install-skills.sh`) |
+| **`toolchain/build-crosses.sh`** | macOS / Linux | build every FPC cross-compiler from one host |
+| **`toolchain/build-android-cross.ps1`** | Windows | build the FPC→Android cross pack (arm64/armv7/x86_64) from source + NDK |
+| **`toolchain/sign-release.ps1`** | Windows | EV-sign the pack binaries + CLI via SimplySign ([docs/SIGNING.md](docs/SIGNING.md)) |
+
+`doctor` on either CLI reports the whole chain and tells you exactly what's
+missing and how to fix it.
+
+## App sizes
+
+The **whole engine** — HTML parser, CSS cascade, layout, compositor, SVG, QR,
+Lottie, video, form controls — is inside every binary, reached by runtime tag
+dispatch, so a **feature-complete app is the same size as hello**: the full
+viewer is **1.38 MB** vs hello's **1.31 MB** (67 KB apart). Features live in the
+engine, not your app.
+
+Release builds, whole engine reachable:
+
+| Target | Artifact | On disk | In package |
+|---|---|---:|---:|
+| Windows x64 | `.exe` | 1.31–1.38 MB | — |
+| Android arm64-v8a | `libtina4.so` | 1.57 MB | 413 KB (compressed) |
+| Android armeabi-v7a | `libtina4.so` | 1.23 MB | 389 KB |
+| Android x86_64 | `libtina4.so` | 1.40 MB | 415 KB |
+| Android APK | all three ABIs | 5.96 MB¹ | — |
+| macOS / iOS | `.app` / engine | ~1.4 MB² | — |
+
+¹ dominated by launcher-icon art at every density; a resize-on-package step
+(tracked) drops it back to ~1.5 MB. The engine payload is ~1.2 MB across all
+three ABIs. ² same engine; measure on a Mac.
+
+## Documentation
+
+| Manual | |
+|---|---|
+| [Getting started](docs/GETTING-STARTED.md) | zero to a running native app |
+| [Cheatsheet](docs/CHEATSHEET.md) | the tag / CSS surface + action & services APIs |
+| [Architecture](docs/ARCHITECTURE.md) | portable core, per-OS shells, compositor |
+| [Toolchain](docs/TOOLCHAIN.md) | the FPC 3.2.2 cross-build formula (every pitfall) |
+| [Android](docs/ANDROID.md) · [android/README.md](android/README.md) | the JNI shell + building APKs (incl. **from Windows**) |
+| [iOS](docs/IOS.md) | the on-device iOS shell |
+| [Signing](docs/SIGNING.md) | EV code signing the Windows deliverables (SimplySign) |
+| [Tooling & distribution](docs/TOOLING-DISTRIBUTION.md) | packaging & release model |
+| [Conformance](docs/CONFORMANCE.md) · [CSS index](docs/CSS-PROPERTY-INDEX.md) · [HTML index](docs/HTML-ELEMENT-INDEX.md) | what renders, tracked against the spec |
+| [Roadmap](docs/ROADMAP.md) | where it's going |
 
 ## How it works
 

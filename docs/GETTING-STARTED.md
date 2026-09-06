@@ -14,6 +14,23 @@ tools/tina4pascal doctor         # green ticks = you're ready
 
 Put `tools/tina4pascal` on your PATH (or call it with the path) and you're set.
 
+### On Windows (PowerShell)
+
+Everything below has a native Windows equivalent — use `tools\tina4pascal.ps1`
+and the `init` / `build` / `run` verbs:
+
+```powershell
+tools\tina4pascal.ps1 doctor        # FPC, WSL/Linux, Android chain, JDK
+tools\tina4pascal.ps1 init hello    # scaffold + build + open a native window
+cd hello
+..\tools\tina4pascal.ps1 build android   # signed APK — see below
+```
+
+No Mac and no WSL are needed to ship an Android APK from Windows; run
+`tools\tina4pascal.ps1 setup android` once (it fetches the NDK and builds the
+FPC Android cross), then `build android`. Details in
+[../android/README.md](../android/README.md).
+
 ## 1. Scaffold an app
 
 ```sh
