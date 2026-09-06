@@ -38,3 +38,6 @@ _rel/
 _chk/
 _fpcbuild/
 *.exe
+
+# signed release artifacts
+dist/
