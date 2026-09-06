@@ -295,6 +295,20 @@ if ($cmd -eq 'doctor') {
       if (Test-Path $img) { Ok "rendered: $img"; Write-Host $img } else { Write-Host "no snapshot" -ForegroundColor Red }
     }
   }
+} elseif ($cmd -eq 'dom' -or $cmd -eq 'boxes' -or $cmd -eq 'inspect') {
+  $pr = Project-Root
+  if (-not $pr) { Write-Host "${cmd}: run inside a project dir" -ForegroundColor Red }
+  else {
+    $exe = Build-Project $pr 'win64'
+    if ($exe) {
+      $out = Join-Path $pr ".tina4-$cmd.json"
+      if ($cmd -eq 'inspect') { & $exe --inspect $target $page $out --width 1024 --height 800 }
+      elseif ($cmd -eq 'boxes') { & $exe --boxes $out --width 1024 --height 800 }
+      else { & $exe --dom $out --width 1024 --height 800 }
+      Start-Sleep -Milliseconds 400
+      if (Test-Path $out) { Get-Content $out -Raw } else { Write-Host "no output" -ForegroundColor Red }
+    }
+  }
 } else {
-  Write-Host "unknown command '$cmd' (doctor | init | build | run | render | where)"
+  Write-Host "unknown command '$cmd' (doctor | init | build | run | render | dom | boxes | inspect | where)"
 }

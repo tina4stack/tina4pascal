@@ -96,12 +96,37 @@ def where(project: str, target: str = ""):
           "headless; the linux target needs an X display (Xvfb/WSLg).",
           server=mcp)
 def render(project: str, target: str = "", out: str = "shot",
-           width: int = 900, height: int = 640):
+           width: int = 900, height: int = 640, overlay: bool = False):
     tgt = target or ("macos" if os.uname().sysname == "Darwin" else "linux")
-    log = _run(["render", tgt, out, str(width), str(height)], cwd=project)
+    args = ["render", tgt, out, str(width), str(height)]
+    if overlay:
+        args.append("--overlay")
+    log = _run(args, cwd=project)
     # the CLI prints the final image path as its last line
     img = (log.strip().splitlines() or [""])[-1].strip()
     return {"image": img, "log": log}
+
+
+# ── debug / inspect (DevTools for Tina4) ──────────────────────────────
+@mcp_tool("tina4_dom", description="Dump the running app's DOM tree as JSON "
+          "(headless one-frame render). Pass the project dir.", server=mcp)
+def dom(project: str):
+    return _run(["dom"], cwd=project)
+
+
+@mcp_tool("tina4_boxes", description="Dump the layout-box tree as JSON — every "
+          "box's geometry (x/y/w/h) and box model (margin/border/padding) + "
+          "display. Headless. Pass the project dir.", server=mcp)
+def boxes(project: str):
+    return _run(["boxes"], cwd=project)
+
+
+@mcp_tool("tina4_inspect", description="Inspect the element at (x,y): tag, "
+          "id/class, box geometry and key computed styles — like a browser's "
+          "'inspect element'. Coords are CSS px in the viewport. Headless.",
+          server=mcp)
+def inspect(project: str, x: float, y: float):
+    return _run(["inspect", str(x), str(y)], cwd=project)
 
 
 @mcp_tool("tina4_test", description="Build + run all DOM/CSS unit suites.",

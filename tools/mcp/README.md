@@ -27,6 +27,11 @@ release binary. Never `python app.py`.)
 | `tina4_init` `{name, directory?}` | scaffold a NEW project (full layout) + build it for the host — no window; returns the project path |
 | `tina4_build` `{target, project?}` | build a project's app (with `project`) or cross-compile the engine (`android`/`ios`/`macos`/`win64`/`linux`/`all`) |
 | `tina4_run` `{project, target?}` | build a project + launch its native app detached; returns the exe path |
+| `tina4_render` `{project, target?, overlay?}` | build + render one frame HEADLESS to an image (optional layout overlay) → returns the image path to read |
+| `tina4_dom` `{project}` | dump the running DOM tree as JSON (headless) |
+| `tina4_boxes` `{project}` | dump the layout-box tree (geometry + box model) as JSON |
+| `tina4_inspect` `{project, x, y}` | inspect the element at (x,y): tag, box, computed styles ("inspect element") |
+| `tina4_where` `{project, target?}` | print the built artifact's path |
 | `tina4_test` | run the DOM/CSS unit suites |
 | `tina4_compliance` `{glob?}` | run the W3C reftest suite |
 | `tina4_deploy` `{target}` | build + install/open + launch |

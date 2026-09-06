@@ -223,36 +223,58 @@ run_project() {
   ( exec "$PWD/build/$target/$name" )
 }
 
+# run "$exe" "$@" headless. For the linux target with no DISPLAY, wrap in Xvfb so
+# render/inspect work on a headless CI/agent box; macOS/Windows render headless.
+run_headless() {
+  rhexe="$1"; rhtgt="$2"; shift 2
+  case "$rhtgt" in
+    linux*)
+      if [ -z "${DISPLAY:-}" ]; then
+        if command -v xvfb-run >/dev/null 2>&1; then
+          xvfb-run -a -s "-screen 0 1280x1024x24" "$rhexe" "$@" >/dev/null 2>&1 || true; return 0
+        elif command -v Xvfb >/dev/null 2>&1; then
+          Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 & rhx=$!; sleep 1
+          DISPLAY=:99 "$rhexe" "$@" >/dev/null 2>&1 || true; kill "$rhx" >/dev/null 2>&1 || true; return 0
+        else
+          bad "no DISPLAY and no Xvfb — 'sudo apt install xvfb' (or set DISPLAY)"; return 1
+        fi
+      fi ;;
+  esac
+  "$rhexe" "$@" >/dev/null 2>&1 || true
+}
+
 # build + render one frame headless to an image (so an AI/CI can 'see' it).
 # NB: build_project clobbers the shell-global $out/$target/$name (POSIX sh has no
 # local scope here), so capture our own values into distinct names first.
+# usage: render_project [target] [out] [w] [h] [--overlay]
 render_project() {
-  rtarget="${1:-$(default_host_target)}"; rout="${2:-shot}"; rw="${3:-900}"; rh="${4:-640}"
+  rtarget="${1:-$(default_host_target)}"; rout="${2:-shot}"; rw="${3:-900}"; rh="${4:-640}"; rov="${5:-}"
   build_project "$rtarget"
   rname="$(basename "$PWD")"
   case "$rout" in *.*) : ;; *) case "$rtarget" in linux*) rout="$rout.bmp" ;; *) rout="$rout.png" ;; esac ;; esac
-  rexe="$PWD/build/$rtarget/$rname"
-  # The X11 app needs a display. On a headless server (no DISPLAY) fall back to
-  # Xvfb so `render linux` still works in CI/agents; macOS/Windows render headless.
-  rneedx=0; case "$rtarget" in linux*) [ -z "${DISPLAY:-}" ] && rneedx=1 ;; esac
-  if [ "$rneedx" -eq 1 ]; then
-    if command -v xvfb-run >/dev/null 2>&1; then
-      say "${D}no DISPLAY — rendering under xvfb-run${Z}"
-      xvfb-run -a -s "-screen 0 ${rw}x${rh}x24" "$rexe" --snapshot "$rout" --width "$rw" --height "$rh" >/dev/null 2>&1 || true
-    elif command -v Xvfb >/dev/null 2>&1; then
-      say "${D}no DISPLAY — starting Xvfb :99${Z}"
-      Xvfb :99 -screen 0 "${rw}x${rh}x24" >/dev/null 2>&1 & xvpid=$!
-      sleep 1
-      DISPLAY=:99 "$rexe" --snapshot "$rout" --width "$rw" --height "$rh" >/dev/null 2>&1 || true
-      kill "$xvpid" >/dev/null 2>&1 || true
-    else
-      bad "no DISPLAY and no Xvfb — install it (Debian/Ubuntu: 'sudo apt install xvfb'; Fedora: 'dnf install xorg-x11-server-Xvfb') or set DISPLAY"; return 1
-    fi
+  if [ "$rov" = "--overlay" ]; then
+    run_headless "$PWD/build/$rtarget/$rname" "$rtarget" --snapshot "$rout" --overlay --width "$rw" --height "$rh" || return 1
   else
-    "$rexe" --snapshot "$rout" --width "$rw" --height "$rh" >/dev/null 2>&1 || true
+    run_headless "$PWD/build/$rtarget/$rname" "$rtarget" --snapshot "$rout" --width "$rw" --height "$rh" || return 1
   fi
   if [ -f "$rout" ]; then ok "rendered $rout"; echo "$rout"
   else bad "no snapshot produced"; fi
+}
+
+# build + emit a JSON inspection dump (dom | boxes | inspect X Y) → prints JSON
+dump_project() {
+  dkind="$1"; shift
+  dtarget="$(default_host_target)"
+  build_project "$dtarget"
+  dname="$(basename "$PWD")"
+  dexe="$PWD/build/$dtarget/$dname"; dout="$PWD/.tina4-$dkind.json"
+  case "$dkind" in
+    dom)     run_headless "$dexe" "$dtarget" --dom "$dout" --width 1024 --height 800 ;;
+    boxes)   run_headless "$dexe" "$dtarget" --boxes "$dout" --width 1024 --height 800 ;;
+    inspect) run_headless "$dexe" "$dtarget" --inspect "${1:-0}" "${2:-0}" "$dout" --width 1024 --height 800 ;;
+    *) die "dump: dom | boxes | inspect" ;;
+  esac
+  if [ -f "$dout" ]; then cat "$dout"; echo; else bad "no $dkind output (linux headless needs Xvfb/DISPLAY)"; fi
 }
 where_project() { echo "$PWD/build/${1:-$(default_host_target)}/$(basename "$PWD")"; }
 
@@ -734,6 +756,9 @@ case "$cmd" in
   run)        if is_project; then run_project "$@"; else cmd_run "$@"; fi ;;
   render)     if is_project; then render_project "$@"; else die "render: run inside a project dir"; fi ;;
   where)      if is_project; then where_project "$@"; else die "where: run inside a project dir"; fi ;;
+  dom)        if is_project; then dump_project dom;         else die "dom: run inside a project dir"; fi ;;
+  boxes)      if is_project; then dump_project boxes;       else die "boxes: run inside a project dir"; fi ;;
+  inspect)    if is_project; then dump_project inspect "$@"; else die "inspect: run inside a project dir"; fi ;;
   snapshot)   cmd_snapshot "$@" ;;
   compliance) cmd_compliance "$@" ;;
   apk)        cmd_apk "$@" ;;
