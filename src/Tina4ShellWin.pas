@@ -452,17 +452,57 @@ begin
   GdipDeleteGraphics(g);
 end;
 
+{ Bundled fonts: register every fonts/*.ttf beside the exe as process-private
+  (GDI then finds them by family name) and note which DejaVu families shipped, so
+  the generic CSS families map to the bundled font — same rule as the Linux shell,
+  giving identical rendering wherever the app carries its own fonts. }
+var
+  GWinFontsScanned: Boolean = False;
+  GBundledSans: Boolean = False;
+  GBundledSerif: Boolean = False;
+  GBundledMono: Boolean = False;
+
+const FR_PRIVATE_ = $10;
+
+function AddFontResourceExW(p1: PWideChar; p2: DWORD; p3: Pointer): LongInt;
+  stdcall; external 'gdi32' name 'AddFontResourceExW';
+
+procedure EnsureBundledWinFonts;
+var dir, ln: string; sr: TSearchRec;
+begin
+  if GWinFontsScanned then Exit;
+  GWinFontsScanned := True;
+  dir := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) + 'fonts';
+  if not DirectoryExists(dir) then Exit;
+  if FindFirst(IncludeTrailingPathDelimiter(dir) + '*.ttf', faAnyFile, sr) = 0 then
+  begin
+    repeat
+      AddFontResourceExW(PWideChar(UTF8Decode(IncludeTrailingPathDelimiter(dir) + sr.Name)),
+        FR_PRIVATE_, nil);
+      ln := LowerCase(sr.Name);
+      if Pos('dejavusansmono', ln) = 1 then GBundledMono := True
+      else if Pos('dejavusans', ln) = 1 then GBundledSans := True;
+      if Pos('dejavuserif', ln) = 1 then GBundledSerif := True;
+    until FindNext(sr) <> 0;
+    FindClose(sr);
+  end;
+end;
+
 { Map a CSS font-family list to a concrete Windows face. }
 function TWinCanvas.FaceFor(const Family: string): WideString;
 var f, first: string; p: Integer;
 begin
+  EnsureBundledWinFonts;
   f := LowerCase(Trim(Family));
   p := Pos(',', f); if p > 0 then first := Trim(Copy(f, 1, p - 1)) else first := f;
   first := StringReplace(first, '"', '', [rfReplaceAll]);
   first := StringReplace(first, '''', '', [rfReplaceAll]);
-  if (first = '') or (first = 'sans-serif') or (first = 'system-ui') then Result := 'Segoe UI'
-  else if first = 'serif' then Result := 'Times New Roman'
-  else if (first = 'monospace') or (first = 'mono') then Result := 'Consolas'
+  if (first = '') or (first = 'sans-serif') or (first = 'system-ui') then
+  begin if GBundledSans then Result := 'DejaVu Sans' else Result := 'Segoe UI'; end
+  else if first = 'serif' then
+  begin if GBundledSerif then Result := 'DejaVu Serif' else Result := 'Times New Roman'; end
+  else if (first = 'monospace') or (first = 'mono') then
+  begin if GBundledMono then Result := 'DejaVu Sans Mono' else Result := 'Consolas'; end
   else
   begin
     // first named family, quotes stripped, ORIGINAL case preserved (GDI face
