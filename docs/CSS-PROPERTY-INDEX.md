@@ -86,7 +86,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | text-shadow | ✅ | painted (offset shadow pass before the glyph); see PaintBoxEx run loop |
 | white-space | ✅ | normal/nowrap/pre/pre-wrap/pre-line; pre* preserve newlines (+ spaces for pre/pre-wrap) — parser keeps raw text for <pre> and inline white-space:pre* |
 | word-break, overflow-wrap | ✅ | break-word/break-all/anywhere: over-long words break between characters (UTF-8 aware) |
-| vertical-align | 🟡 | sub/super/top/middle; no text-top/bottom/length |
+| vertical-align | 🟡 | sub/super/top/middle + **`<length>`** (px/em/rem baseline shift on inline text); no text-top/text-bottom |
 | list-style-type | ✅ | disc/circle/square/decimal/alpha/roman/none |
 | list-style shorthand, list-style-position | ✅ | shorthand tokenised (type · inside/outside · image url); `position:inside` draws the marker in the content flow |
 | list-style-image | ✅ | `url(...)` image marker (dedicated property + shorthand) loaded via the shell and drawn as a font-sized square outdented left of the content; falls back to the bullet glyph if the image fails to load |
@@ -184,7 +184,7 @@ mode renderer doesn't yet have):
     shapes done via polygon clip).
 3. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
     `direction`/`writing-mode` (bidi), `vertical-align`
-    text-top/bottom/length.
+    text-top/text-bottom.
 4. **user-select / resize** (need a selection model / drag-resize handle);
     `@import`.
 

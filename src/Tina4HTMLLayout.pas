@@ -816,6 +816,22 @@ begin
   end;
 end;
 
+{ Parse a `vertical-align: <length>` value to a baseline shift in px (positive =
+  raise). Returns False for keywords / non-lengths. Bare numbers are invalid in
+  CSS vertical-align except 0. }
+function VAlignLength(const VA: string; EmSize: Single; out Shift: Single): Boolean;
+var t: string;
+begin
+  Result := False; Shift := 0;
+  t := LowerCase(Trim(VA));
+  if t = '' then Exit;
+  if t.EndsWith('px') then begin Shift := StrToFloatDef(Copy(t, 1, Length(t) - 2), 0); Result := True; end
+  else if t.EndsWith('rem') then begin Shift := StrToFloatDef(Copy(t, 1, Length(t) - 3), 0) * 16; Result := True; end
+  else if t.EndsWith('em') then begin Shift := StrToFloatDef(Copy(t, 1, Length(t) - 2), 0) * EmSize; Result := True; end
+  else if (t[1] in ['0'..'9', '-', '+', '.']) then
+  begin Shift := StrToFloatDef(t, 0); Result := (Shift = 0); end;  // only 0 is a valid bare number
+end;
+
 { Interpolate two colours (ARGB) by t. }
 function LerpColor(A, B: TTina4Color; t: Single): TTina4Color;
   function Ch(sh: Integer): Cardinal;
@@ -2278,7 +2294,7 @@ var
     text) as an inline item, measured in St's font with the shared-baseline
     placement the normal word path uses. }
   procedure AddTextItem(const W: string; const St: TComputedStyle; SpaceBefore: Boolean);
-  var ti: TInlineItem; tm: TTina4TextMetrics;
+  var ti: TInlineItem; tm: TTina4TextMetrics; vaShift: Single;
   begin
     FCanvas.LetterSpacing := St.LetterSpacing;
     FCanvas.FontFamily := St.FontFamily;
@@ -2293,7 +2309,9 @@ var
     if SameText(St.VerticalAlign, 'sub') then
     begin ti.Ascent := ti.Ascent - St.FontSize * 0.28; ti.FontAscent := ti.FontAscent - St.FontSize * 0.28; end
     else if SameText(St.VerticalAlign, 'super') then
-    begin ti.Ascent := ti.Ascent + St.FontSize * 0.42; ti.FontAscent := ti.FontAscent + St.FontSize * 0.42; end;
+    begin ti.Ascent := ti.Ascent + St.FontSize * 0.42; ti.FontAscent := ti.FontAscent + St.FontSize * 0.42; end
+    else if VAlignLength(St.VerticalAlign, St.FontSize, vaShift) then
+    begin ti.Ascent := ti.Ascent + vaShift; ti.FontAscent := ti.FontAscent + vaShift; end;
     ti.FontSize := St.FontSize; ti.Styles := FontStylesOf(St); ti.Color := St.Color;
     ti.LetterSpacing := St.LetterSpacing; ti.FontFamily := St.FontFamily; ti.FontWeight := St.FontWeight; ti.ShadowDX := St.TextShadowOffsetX; ti.ShadowDY := St.TextShadowOffsetY; if St.TextShadowActive then ti.ShadowColor := St.TextShadowColor else ti.ShadowColor := 0;
     ti.SpaceBefore := SpaceBefore and (items.Count > 0);
