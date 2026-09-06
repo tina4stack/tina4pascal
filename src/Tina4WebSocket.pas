@@ -21,7 +21,7 @@ unit Tina4WebSocket;
 
 interface
 
-uses SysUtils, Classes, SyncObjs, ssockets, base64;
+uses SysUtils, Classes, SyncObjs, ssockets, base64, sha1;
 
 const
   WS_TEXT = $1; WS_BINARY = $2; WS_CLOSE = $8; WS_PING = $9; WS_PONG = $A;
@@ -88,6 +88,30 @@ function ParseWsUrl(const Url: string; out Host: string; out Port: Word; out Pat
 implementation
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+
+{ RFC 6455 accept token: base64( sha1( clientKey + GUID ) ). }
+function ComputeAccept(const Key: string): string;
+var dig: TSHA1Digest; s: string;
+begin
+  dig := SHA1String(Key + WS_GUID);
+  SetString(s, PAnsiChar(@dig[0]), SizeOf(dig));   // 20 raw digest bytes
+  Result := EncodeStringBase64(s);
+end;
+
+{ Case-insensitive header value from a raw HTTP response (up to the blank line). }
+function HeaderValue(const Raw, Name: string): string;
+var lines: TStringArray; i, c: Integer; ln, lname: string;
+begin
+  Result := ''; lname := LowerCase(Name);
+  lines := Raw.Split([#13#10]);
+  for i := 0 to High(lines) do
+  begin
+    ln := lines[i]; if ln = '' then Break;
+    c := Pos(':', ln);
+    if (c > 0) and (LowerCase(Trim(Copy(ln, 1, c - 1))) = lname) then
+      Exit(Trim(Copy(ln, c + 1, MaxInt)));
+  end;
+end;
 
 function ParseWsUrl(const Url: string; out Host: string; out Port: Word; out Path: string): Boolean;
 var s, hostport: string; p: Integer;
@@ -233,9 +257,9 @@ begin
         SetString(chunk, PAnsiChar(@buf[0]), n); raw := raw + chunk;
       end;
       he := Pos(#13#10#13#10, raw);
-      // a permissive client: a 101 Switching Protocols is enough to proceed
-      // (strict Sec-WebSocket-Accept validation is a hardening follow-up)
-      if (he > 0) and (Pos(' 101', raw) > 0) then
+      // require 101 Switching Protocols AND a matching Sec-WebSocket-Accept
+      if (he > 0) and (Pos(' 101', raw) > 0) and
+         (HeaderValue(raw, 'Sec-WebSocket-Accept') = ComputeAccept(key)) then
       begin
         FOwner.FOpen := True;
         if Assigned(FOwner.OnOpen) then FOwner.OnOpen;  // note: worker thread
