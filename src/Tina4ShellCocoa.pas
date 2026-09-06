@@ -868,6 +868,91 @@ begin
   end;
 end;
 
+{ Separable box blur (3 passes) on a single-channel float buffer (for shadows). }
+procedure BoxBlurFloat1(buf: PSingle; pw, ph, radius: Integer);
+var tmp: PSingle; pass, y, x, i0, i1, k: Integer; win, acc: Single;
+begin
+  if radius < 1 then Exit;
+  win := radius * 2 + 1;
+  GetMem(tmp, pw * ph * SizeOf(Single));
+  try
+    for pass := 1 to 3 do
+    begin
+      for y := 0 to ph - 1 do
+      begin
+        acc := 0;
+        for k := -radius to radius do
+        begin i0 := k; if i0 < 0 then i0 := 0; if i0 > pw - 1 then i0 := pw - 1;
+          acc := acc + buf[y * pw + i0]; end;
+        for x := 0 to pw - 1 do
+        begin
+          tmp[y * pw + x] := acc / win;
+          i0 := x - radius;    if i0 < 0 then i0 := 0; if i0 > pw - 1 then i0 := pw - 1;
+          i1 := x + radius + 1; if i1 < 0 then i1 := 0; if i1 > pw - 1 then i1 := pw - 1;
+          acc := acc + buf[y * pw + i1] - buf[y * pw + i0];
+        end;
+      end;
+      for x := 0 to pw - 1 do
+      begin
+        acc := 0;
+        for k := -radius to radius do
+        begin i0 := k; if i0 < 0 then i0 := 0; if i0 > ph - 1 then i0 := ph - 1;
+          acc := acc + tmp[i0 * pw + x]; end;
+        for y := 0 to ph - 1 do
+        begin
+          buf[y * pw + x] := acc / win;
+          i0 := y - radius;    if i0 < 0 then i0 := 0; if i0 > ph - 1 then i0 := ph - 1;
+          i1 := y + radius + 1; if i1 < 0 then i1 := 0; if i1 > ph - 1 then i1 := ph - 1;
+          acc := acc + tmp[i1 * pw + x] - tmp[i0 * pw + x];
+        end;
+      end;
+    end;
+  finally
+    FreeMem(tmp);
+  end;
+end;
+
+{ Parse a CSS colour (#rgb / #rrggbb / rgb() / rgba() / a few names) to 0..1 rgba. }
+procedure ParseCssColor(const S: string; out r, g, b, a: Single);
+var t, body: string; p, q: Integer; parts: TStringArray;
+begin
+  r := 0; g := 0; b := 0; a := 1;
+  t := LowerCase(Trim(S));
+  if t = '' then Exit;
+  if t[1] = '#' then
+  begin
+    Delete(t, 1, 1);
+    if Length(t) = 3 then t := t[1]+t[1]+t[2]+t[2]+t[3]+t[3];
+    if Length(t) >= 6 then
+    begin
+      r := StrToIntDef('$' + Copy(t,1,2), 0) / 255;
+      g := StrToIntDef('$' + Copy(t,3,2), 0) / 255;
+      b := StrToIntDef('$' + Copy(t,5,2), 0) / 255;
+    end;
+  end
+  else if t.StartsWith('rgb') then
+  begin
+    p := Pos('(', t); q := Pos(')', t);
+    if (p > 0) and (q > p) then
+    begin
+      body := Copy(t, p + 1, q - p - 1);
+      parts := body.Split([',']);
+      if Length(parts) >= 3 then
+      begin
+        r := StrToFloatDef(Trim(parts[0]), 0) / 255;
+        g := StrToFloatDef(Trim(parts[1]), 0) / 255;
+        b := StrToFloatDef(Trim(parts[2]), 0) / 255;
+      end;
+      if Length(parts) >= 4 then a := StrToFloatDef(Trim(parts[3]), 1);
+    end;
+  end
+  else if t = 'white' then begin r := 1; g := 1; b := 1; end
+  else if t = 'red' then r := 1
+  else if t = 'green' then g := 0.5
+  else if t = 'blue' then b := 1;
+  // else stays black
+end;
+
 { Apply the CSS filter chain to a bitmap rep. Decodes the rep (8-bit or 16-bit
   float, pre- or non-premultiplied RGBA) into a planar premultiplied Single
   buffer, runs the chain, and writes it back. }
@@ -877,6 +962,7 @@ var
   pw, ph, bpr, bps, n, i, o, so: Integer;
   premult, isFloat: Boolean;
   s, fn, arg: string; p, q, depth: Integer;
+  sdx, sdy, sblur: Integer; sr, sg, sb, sa2: Single;
 
   function ReadSample(byteOff: Integer): Single;
   begin
@@ -929,6 +1015,54 @@ var
     end;
   end;
 
+  { drop-shadow(dx dy blur color): a blurred, offset silhouette painted behind
+    the element. dx/dy/blur are in device px (already scaled); r,g,b,a in 0..1. }
+  procedure DropShadow(dx, dy, blur: Integer; r, g, b, a: Single);
+  var sa: PSingle; j, x, y, sx, sy: Integer; av, ea, sr, sg, sb, sav: Single;
+  begin
+    GetMem(sa, pw * ph * SizeOf(Single));
+    try
+      for y := 0 to ph - 1 do
+        for x := 0 to pw - 1 do
+        begin
+          sx := x - dx; sy := y - dy;      // shadow samples the source, offset back
+          if (sx >= 0) and (sx < pw) and (sy >= 0) and (sy < ph) then
+            sa[y * pw + x] := buf[(sy * pw + sx) * 4 + 3]
+          else sa[y * pw + x] := 0;
+        end;
+      if blur > 0 then BoxBlurFloat1(sa, pw, ph, blur);
+      for j := 0 to pw * ph - 1 do
+      begin
+        sav := sa[j] * a;                  // shadow coverage * colour alpha
+        sr := r * sav; sg := g * sav; sb := b * sav;   // premultiplied shadow
+        ea := buf[j*4+3];                  // element over shadow
+        buf[j*4]   := buf[j*4]   + sr * (1 - ea);
+        buf[j*4+1] := buf[j*4+1] + sg * (1 - ea);
+        buf[j*4+2] := buf[j*4+2] + sb * (1 - ea);
+        buf[j*4+3] := ea + sav * (1 - ea);
+      end;
+    finally
+      FreeMem(sa);
+    end;
+    av := 0; if av <> 0 then ;   // silence unused warning path
+  end;
+
+  { parse "dx dy blur [color]" -> device-px ints + rgba; color defaults to black }
+  procedure ParseShadow(const A: string; out dx, dy, blur: Integer; out r, g, b, al: Single);
+  var toks: TStringArray; i2: Integer; col: string;
+  begin
+    dx := 0; dy := 0; blur := 0; r := 0; g := 0; b := 0; al := 1;
+    toks := A.Trim.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    if Length(toks) >= 1 then dx := Round(FilterArg(toks[0], 0) * Scale);
+    if Length(toks) >= 2 then dy := Round(FilterArg(toks[1], 0) * Scale);
+    if Length(toks) >= 3 then blur := Round(FilterArg(toks[2], 0) * Scale);
+    if Length(toks) >= 4 then
+    begin
+      col := toks[3]; for i2 := 4 to High(toks) do col := col + toks[i2];
+      ParseCssColor(col, r, g, b, al);
+    end;
+  end;
+
 begin
   data := PByte(rep.bitmapData);
   pw := rep.pixelsWide; ph := rep.pixelsHigh; bpr := rep.bytesPerRow;
@@ -976,7 +1110,12 @@ begin
       else if fn = 'saturate' then ColorOp(4, FilterArg(arg, 1))
       else if fn = 'sepia' then ColorOp(5, FilterArg(arg, 1))
       else if fn = 'hue-rotate' then ColorOp(6, FilterArg(arg, 0) * Pi / 180)
-      else if fn = 'opacity' then ColorOp(7, FilterArg(arg, 1));
+      else if fn = 'opacity' then ColorOp(7, FilterArg(arg, 1))
+      else if fn = 'drop-shadow' then
+      begin
+        ParseShadow(arg, sdx, sdy, sblur, sr, sg, sb, sa2);
+        DropShadow(sdx, sdy, sblur, sr, sg, sb, sa2);
+      end;
     end;
     // encode back
     for i := 0 to n - 1 do
