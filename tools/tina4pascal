@@ -294,6 +294,8 @@ build_project() {
   say "${D}fpc $opts $flags $main${Z}"
   "$FPC" -Mdelphi $opts $flags -Fu"$SRC" -Fu. -Fusrc/routes -Fusrc/orm -Fusrc/services $extra \
     -FE"$out" -FU"$out" -o"$name" "$main" 2>&1 | grep -Ei "error|fatal" && die "build failed" || true
+  # bundle the project's fonts next to the executable (renderer loads them first)
+  [ -d "$PWD/fonts" ] && { mkdir -p "$out/fonts"; cp "$PWD"/fonts/*.ttf "$out/fonts/" 2>/dev/null || true; }
   ok "$name ($target${bpmode:+ debug}) -> build/$bsub/$name"
 }
 
@@ -709,7 +711,21 @@ cmd_init() {
   need_fpc
   title="$(printf '%s' "$name" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
   d="$name"
-  mkdir -p "$d/migrations" "$d/assets" "$d/src/routes" "$d/src/orm" "$d/src/services" "$d/src/templates" "$d/signing"
+  mkdir -p "$d/migrations" "$d/assets" "$d/fonts" "$d/src/routes" "$d/src/orm" "$d/src/services" "$d/src/templates" "$d/signing"
+
+  # fonts/ — drop .ttf files here to bundle them with the app. The build copies
+  # this folder next to the executable and the renderer loads it FIRST (before
+  # system fonts), so the app renders identically everywhere. Empty → system fonts.
+  cat > "$d/fonts/README.md" <<'EOF'
+# Bundled fonts
+
+Drop `.ttf` files here to ship them with the app. `tina4pascal build` copies this
+folder next to the executable, and the renderer loads fonts from here first
+(before system fonts) — so the app renders identically everywhere, including
+minimal containers with no system fonts. Name them to match the CSS
+`font-family` (e.g. `DejaVuSans.ttf`, `DejaVuSans-Bold.ttf`). If empty, the app
+falls back to system fonts.
+EOF
 
   # tina4.json — the project's build config. Uses // comments (the CLI tolerates
   # them) so it explains itself. A clone + `tina4pascal setup` + `build` works on

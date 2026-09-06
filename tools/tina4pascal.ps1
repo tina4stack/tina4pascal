@@ -179,6 +179,16 @@ function Invoke-Init($name, $norun) {
   Write-File (Join-Path $proj 'migrations\0001_init.sql') "-- 0001_init: first migration`n-- CREATE TABLE example (id INTEGER PRIMARY KEY, name TEXT);`n"
   Write-File (Join-Path $proj 'src\orm\.gitkeep') ""
   Write-File (Join-Path $proj 'src\services\.gitkeep') ""
+  Write-File (Join-Path $proj 'fonts\README.md') @"
+# Bundled fonts
+
+Drop ``.ttf`` files here to ship them with the app. The build copies this folder
+next to the executable, and the renderer loads fonts from here **first** (before
+system fonts) so the app renders identically everywhere - including minimal
+containers with no system fonts. Match the CSS ``font-family`` names, e.g.
+``DejaVuSans.ttf`` / ``DejaVuSans-Bold.ttf``. If empty, the app falls back to
+system fonts.
+"@
   Write-File (Join-Path $proj 'src\routes\home.pas') @"
 unit home;
 { Route handlers for semantic events, e.g. onclick="Home:hello".
@@ -255,7 +265,11 @@ fpc -Mdelphi -O2 -Xs -Fu'$wfw' -Fu. -Fusrc/routes -Fusrc/orm -Fusrc/services -Fl
   $wtmp = '/mnt/c' + ($tmp.Substring(2) -replace '\\','/')
   & wsl.exe -e bash $wtmp
   $exe = Join-Path $proj "build\linux\$name"
-  if (Test-Path $exe) { Ok "built (linux): $exe"; return $exe }
+  if (Test-Path $exe) {
+    $pf = Join-Path $proj 'fonts'
+    if (Test-Path $pf) { Copy-Item $pf (Join-Path $proj 'build\linux\fonts') -Recurse -Force }
+    Ok "built (linux): $exe"; return $exe
+  }
   return $null
 }
 
@@ -276,7 +290,11 @@ function Build-ProjectWin($proj, $t, $dbg) {
     & $fpc @fa 2>&1 | Where-Object { $_ -match 'Error|Fatal|Linking' } | ForEach-Object { Write-Host $_ }
   } finally { Pop-Location }
   $exe = Join-Path $out "$name.exe"
-  if (Test-Path $exe) { Ok "built: $exe ($([math]::Round((Get-Item $exe).Length/1KB)) KB)"; return $exe }
+  if (Test-Path $exe) {
+    $pf = Join-Path $proj 'fonts'
+    if (Test-Path $pf) { Copy-Item $pf (Join-Path $out 'fonts') -Recurse -Force }  # bundle fonts next to the exe
+    Ok "built: $exe ($([math]::Round((Get-Item $exe).Length/1KB)) KB)"; return $exe
+  }
   Write-Host "build failed" -ForegroundColor Red; return $null
 }
 
