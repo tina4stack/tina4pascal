@@ -618,6 +618,74 @@ begin
   end;
 end;
 
+{ Does the renderer support a given `prop: value` declaration? Used by @supports.
+  We support a broad range, so the honest answer is "yes" except for the features
+  that genuinely need the offscreen-compositing / 3D subsystems we don't have. }
+function CSSSupportsDecl(const Prop, Val: string): Boolean;
+var p, v: string;
+begin
+  p := LowerCase(Trim(Prop));
+  v := LowerCase(Trim(Val));
+  if (p = 'filter') or (p = 'backdrop-filter') or (p = '-webkit-backdrop-filter')
+     or (p = 'mask') or (p = 'mask-image') or (p = 'mix-blend-mode')
+     or (p = 'background-blend-mode') or (p = 'perspective')
+     or (p = 'transform-style') then Exit(False);
+  // 3D transforms are not projected
+  if (p = 'transform') and ((Pos('3d', v) > 0) or (Pos('perspective', v) > 0)
+     or (Pos('rotatex', v) > 0) or (Pos('rotatey', v) > 0)) then Exit(False);
+  Result := True;
+end;
+
+{ Evaluate a CSS @supports condition string (feature queries joined by
+  and/or/not, each test parenthesised). Unknown constructs (selector(), etc.)
+  degrade to False. }
+function EvalSupportsCond(const Cond: string): Boolean;
+var S, L, R, inner, prop, val: string; cp: Integer;
+
+  // split S at the first top-level (paren-depth 0) occurrence of Op
+  function TopSplit(const Str, Op: string; out Lhs, Rhs: string): Boolean;
+  var i, depth: Integer;
+  begin
+    Result := False; depth := 0; i := 1;
+    while i <= Length(Str) - Length(Op) + 1 do
+    begin
+      if Str[i] = '(' then Inc(depth)
+      else if Str[i] = ')' then Dec(depth)
+      else if (depth = 0) and (LowerCase(Copy(Str, i, Length(Op))) = Op) then
+      begin
+        Lhs := Trim(Copy(Str, 1, i - 1));
+        Rhs := Trim(Copy(Str, i + Length(Op), MaxInt));
+        Exit(True);
+      end;
+      Inc(i);
+    end;
+  end;
+
+begin
+  S := Trim(Cond);
+  if S = '' then Exit(False);
+  if TopSplit(S, ' or ', L, R) then Exit(EvalSupportsCond(L) or EvalSupportsCond(R));
+  if TopSplit(S, ' and ', L, R) then Exit(EvalSupportsCond(L) and EvalSupportsCond(R));
+  if LowerCase(Copy(S, 1, 4)) = 'not ' then Exit(not EvalSupportsCond(Trim(Copy(S, 5, MaxInt))));
+  // strip one layer of parens
+  if (Length(S) >= 2) and (S[1] = '(') and (S[Length(S)] = ')') then
+  begin
+    inner := Trim(Copy(S, 2, Length(S) - 2));
+    // a bare "prop: value" (no boolean ops, not itself parenthesised)
+    if (inner <> '') and (inner[1] <> '(') and (Pos(':', inner) > 0)
+       and (Pos(' and ', inner) = 0) and (Pos(' or ', inner) = 0)
+       and (LowerCase(Copy(inner, 1, 4)) <> 'not ') then
+    begin
+      cp := Pos(':', inner);
+      prop := Trim(Copy(inner, 1, cp - 1));
+      val := Trim(Copy(inner, cp + 1, MaxInt));
+      Exit(CSSSupportsDecl(prop, val));
+    end
+    else Exit(EvalSupportsCond(inner)); // nested condition
+  end;
+  Result := False; // selector(...) and other unknowns degrade to unsupported
+end;
+
 procedure TCSSStyleSheet.ParseCSS(const CSSText: string);
 var S: string; I, EndComment: Integer;
 begin
@@ -684,6 +752,13 @@ begin
         // inner block content between BraceStart+1 and the matching close (J-1)
         ParseBlock(S.Substring(BraceStart + 1, (J - 1) - (BraceStart + 1)),
           Trim(InnerCond));
+      end
+      else if SelectorPart.ToLower.StartsWith('@supports') then
+      begin
+        // evaluate the feature query; recurse into the block only if supported,
+        // carrying any enclosing @media condition through unchanged
+        if EvalSupportsCond(Trim(Copy(SelectorPart, 10, MaxInt))) then
+          ParseBlock(S.Substring(BraceStart + 1, (J - 1) - (BraceStart + 1)), MediaCond);
       end
       else if SelectorPart.ToLower.StartsWith('@font-face') then
         ParseFontFace(DeclBlock)   // capture font-family + src url for download

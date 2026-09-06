@@ -154,7 +154,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | `@media` (in `<style>`) | ✅ | min/max-width breakpoints + `prefers-color-scheme` dark (incl. dark `:root` var swaps), live via `SetMediaContext` |
 | `@font-face` | ✅ | downloadable fonts: parse family + `src url()`, fetch (async/disk-cached like `<img>`) + register on all 3 shells (Cocoa/iOS CoreText, Android Typeface); CSS family aliased to the face's real name |
 | `@keyframes` | ✅ | parsed into named stops; drives `animation` |
-| `@supports`, `@import` | ❌ | skipped with the @-rule block |
+| `@supports` | ✅ | feature query evaluated at parse time (`and`/`or`/`not`, parenthesised tests); the block's rules apply only if supported. The oracle answers yes for our broad feature set and no for the offscreen-compositing / 3D props we lack (filter, backdrop-filter, mask, blend-modes, perspective, 3D transforms). Nests inside `@media` |
+| `@import` | ❌ | skipped with the @-rule block |
 | clamp(), min(), max() | ✅ | evaluated via the calc() engine (nestable, same unit support). `env()` still 0 |
 
 ## Prioritised roadmap (by real-world impact ÷ effort)
@@ -183,7 +184,7 @@ mode renderer doesn't yet have):
     `direction`/`writing-mode` (bidi), `list-style-image`, `vertical-align`
     text-top/bottom/length.
 4. **user-select / resize** (need a selection model / drag-resize handle);
-    `env()`; `table-layout:fixed`; `empty-cells`; `@supports` / `@import`.
+    `env()`; `table-layout:fixed`; `empty-cells`; `@import`.
 
 
 Each item ships with a reftest under `examples/compliance/` and flips its row

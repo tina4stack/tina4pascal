@@ -1,0 +1,8 @@
+<head><style>
+.box{width:100px;height:40px}
+@supports (display:grid){ .a{background:#2b41e6} }
+@supports not (display:grid){ .a{background:#c00} }
+@supports (backdrop-filter:blur(2px)){ .b{background:#c00} }
+@supports not (backdrop-filter:blur(2px)){ .b{background:#ff5aa0} }
+@supports (display:flex) and (gap:1px){ .c{background:#ffd23c} }
+</style></head><body style="margin:0;background:#fff"><div class="box a"></div><div class="box b"></div><div class="box c"></div></body>
