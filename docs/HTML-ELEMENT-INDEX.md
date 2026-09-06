@@ -116,7 +116,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | label | ✅ | `for=`/wrapping/sibling all wired to focus+toggle |
 | fieldset, legend | ✅ | bordered group; the legend straddles the top border and notches it (masks the segment behind its background) |
 | datalist | ✅ | inert (display:none UA); options never painted |
-| output | 🟡 | renders its text; live form-binding needs a script/eval model (deferred) |
+| output | ✅ | `<output formula="a * 2 + b">` recomputes from named field values via a built-in arithmetic evaluator (+ − × ÷, parens); recalculated on `oninput="output.recalc()"` and seeded at load. No JS engine |
 | progress, meter | ✅ | drawn bars (progress accent, meter green) from value/max |
 
 ## Interactive & scripting
@@ -124,7 +124,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | Element | Status | Note |
 |---|---|---|
 | details, summary | ✅ | draws ▸/▾ + honors `open`; tapping the summary toggles open/closed (mobile `TinaTouch` + desktop `MouseUp`) |
-| dialog | 🟡 | hidden unless `open`; open = bordered box in flow; no modal backdrop/centering (needs scripting) |
+| dialog | ✅ | `dialog.show(id)`/`dialog.close(id)` open/close it in flow; `dialog.showModal(id)` centres it over a dimmed backdrop (top layer). Driven by the built-in event actions from a plain `onclick` — no JS engine |
 | script | ✅ | content skipped (not rendered) |
 | noscript | 🟡 | children render (non-spec, harmless) |
 | template | ✅ | inert (display:none UA); content never painted |
@@ -144,15 +144,16 @@ Everything not listed here is ✅ or ⬜ in the tables above. Each row is correc
 in the same commit that changes its behaviour — this list is the truth, not a
 wishlist.
 
-**Core-renderable, still open (in priority order):**
-1. **Forms polish** — done: `input[number]` steppers, `<fieldset>`/`<legend>`
-   notch, `<textarea>` mid-text editing (click caret, Enter-split, ↑/↓ line nav).
-   Remaining: `<output>` form-binding (needs the scripting model).
-2. **`<dialog>` modal** — backdrop + centering (`showModal`); needs the scripting
-   model. Non-modal open/closed already works.
+**Core-renderable, still open:** none — the element inventory is complete. A
+minimal event hook (`Tina4Builtins`: `dialog.show/showModal/close`,
+`output.recalc` + a tiny arithmetic evaluator, dispatched from plain `onclick`/
+`oninput` via `Tina4Events`) unblocked the last two (`<output>`, `<dialog>`
+modal) without a JS engine. Anything richer (arbitrary scripting) stays out of
+scope by design — native apps consume APIs built elsewhere.
 
-**Done since:** external `<link href>` CSS fetch (shell `FetchToFile` → local
-`csscache/`, cascade order preserved).
+**Done recently:** `<output>` formula binding + `<dialog>` show/close/modal (event
+hook); `<textarea>` mid-text editing; `input[number]` steppers; `<fieldset>`
+notch; external `<link href>` CSS fetch (`FetchToFile` → `csscache/`).
 
 **Media — status:**
 4. **`video`** ✅ done — iOS `AVPlayerViewController` + Android `VideoView` overlays

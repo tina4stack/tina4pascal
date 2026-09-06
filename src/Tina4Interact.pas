@@ -131,7 +131,7 @@ implementation
 uses
   SysUtils, Classes, Math, DateUtils, Generics.Collections, fpjson, jsonparser,
   Tina4HTMLDom, Tina4HTMLLayout, Tina4Events, Tina4Frond, Tina4Http, Tina4Services,
-  Tina4Canvas2D;
+  Tina4Canvas2D, Tina4Builtins;
 
 type
   TEmbedRec = record
@@ -502,6 +502,7 @@ begin
   RegisterAction('Counter:Dec', @ActDec);
   RegisterAction('Counter:Reset', @ActReset);
   RegisterAction('Http:Get', @ActHttpGet);
+  RegisterBuiltinActions;   // dialog.show/showModal/close + output.recalc
   GActionsReady := True;
 end;
 
@@ -749,6 +750,8 @@ begin
   GDocDirty := False; GLayoutDirty := False;
   if AutofocusFirst(GParser.Root) then GAutoKeyboard := True;
   LoadIncludes(GParser.Root);            // fetch + splice any <include src="…">
+  BuiltinsRoot := GParser.Root;          // built-in dialog.*/output.* act on this DOM
+  RecalcOutputs(GParser.Root);           // seed <output> formulas
 end;
 
 { Layout-only rebuild: keep the (mutated) DOM, rebuild boxes from it. }
@@ -1166,6 +1169,7 @@ begin
   ClampScroll;
   AnimResetActive;   // paint re-marks it if animated content (<lottie>) is on screen
   if GRoot <> nil then PaintBox(GCanvas, GRoot, GScrollY);
+  if GRoot <> nil then PaintModalOverlay(GCanvas, GRoot, cssW, cssH);  // modal <dialog>
   PaintSelectOverlay(cssW, cssH);
   PaintDateOverlay(cssW, cssH);
 end;
@@ -1309,6 +1313,7 @@ begin
              DispatchAction(GRangeDrag.GetAttribute('onchange'))
            else if GRangeDrag.HasAttribute('oninput') then
              DispatchAction(GRangeDrag.GetAttribute('oninput'));
+           BuiltinsDirty := False;   // recalc handled below by the full relayout
            GRangeDrag := nil; GLayoutDirty := True;
            Exit;
          end;
@@ -1350,6 +1355,7 @@ begin
          begin
            if GFocusedTag <> nil then begin BlurAll; GLayoutDirty := True; Result := TINA_HIDE_KBD; end;
            DispatchAction(ctrl.GetAttribute('onclick'));
+           if BuiltinsDirty then begin BuiltinsDirty := False; GLayoutDirty := True; end;
          end;
        end;
   end;

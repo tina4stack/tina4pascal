@@ -11,7 +11,7 @@ program htmlviewer;
 uses
   SysUtils, StrUtils, Classes, Math, Generics.Collections,
   Tina4HTMLDom, Tina4RenderBackend, Tina4ShellCocoa, Tina4HTMLLayout, Tina4Canvas2D,
-  Tina4Lottie;
+  Tina4Lottie, Tina4Events, Tina4Builtins;
 
 var
   GLottie: TTina4Lottie = nil;
@@ -98,6 +98,7 @@ type
     procedure Tick;
     procedure Rebuild;
     procedure Event(const S: string);
+    procedure FireInput(T: THTMLTag);
     procedure SetFocus(T: THTMLTag);
     procedure SubmitForm(FromTag: THTMLTag);
     procedure CollectTags(T: THTMLTag; const TagNames: array of string; L: TList<THTMLTag>);
@@ -164,6 +165,17 @@ begin
   WriteLn('[event] ', S);
   Flush(Output);
   Shell.SetTitle('Tina4 — ' + S);
+end;
+
+{ Fire an element's oninput/onchange handler (built-in or app action). The
+  caller has already mutated the value + rebuilt; this runs the reactive hook
+  (e.g. output.recalc) and rebuilds again if the DOM changed. }
+procedure TViewer.FireInput(T: THTMLTag);
+begin
+  if T = nil then Exit;
+  if T.HasAttribute('oninput') then DispatchAction(T.GetAttribute('oninput'))
+  else if T.HasAttribute('onchange') then DispatchAction(T.GetAttribute('onchange'));
+  if BuiltinsDirty then begin BuiltinsDirty := False; Rebuild; end;
 end;
 
 { Scripted driver: click X Y | key TEXT | enter|tab|backspace|esc |
@@ -362,6 +374,9 @@ begin
   end;
   Canvas.FillRect(0, 0, W, H, $FFFFFFFF);
   PaintBox(Canvas, RootBox, ScrollY);
+
+  // a modal <dialog> (dialog.showModal) paints centred over a dimmed backdrop
+  PaintModalOverlay(Canvas, RootBox, W, H);
 
   // expanded dropdown paints last (top layer)
   if OpenSelect <> nil then
@@ -650,8 +665,11 @@ begin
       Rebuild;
       Exit;
     end;
-    if (typ = 'submit') or (SameText(t.TagName, 'button') and
-       SameText(t.GetAttribute('type', 'submit'), 'submit')) then
+    // A submit control submits — but a <button onclick=...> runs its handler
+    // instead (the common "plain button" use), falling through to onclick below.
+    if ((typ = 'submit') or (SameText(t.TagName, 'button') and
+        SameText(t.GetAttribute('type', 'submit'), 'submit')))
+       and not t.HasAttribute('onclick') then
     begin
       SubmitForm(t);
       Exit;
@@ -676,6 +694,7 @@ begin
         else t.Attributes.AddOrSetValue('value', FloatToStr(curv));
         Event('change ' + t.GetAttribute('name', 'number') + '=' + t.GetAttribute('value'));
         Rebuild;
+        FireInput(t);          // reactive: oninput → output.recalc etc.
         Exit;
       end;
     end;
@@ -773,6 +792,8 @@ begin
     if t.HasAttribute('onclick') then
     begin
       Event('onclick -> ' + t.GetAttribute('onclick'));
+      DispatchAction(t.GetAttribute('onclick'));   // built-in dialog.*/output.* + app actions
+      if BuiltinsDirty then begin BuiltinsDirty := False; Rebuild; end;
       Exit;
     end;
     if SameText(t.TagName, 'a') and t.HasAttribute('href') then
@@ -808,6 +829,7 @@ begin
         FocusTag.Attributes.AddOrSetValue('value', v);
         FocusTag.Attributes.AddOrSetValue('_caret', IntToStr(np));
         Rebuild;
+        FireInput(FocusTag);
       end;
     TK_DELETE:
       if caret < Length(v) then
@@ -816,6 +838,7 @@ begin
         Delete(v, caret + 1, np - caret);
         FocusTag.Attributes.AddOrSetValue('value', v);
         Rebuild;
+        FireInput(FocusTag);
       end;
     TK_LEFT:
       begin
@@ -902,6 +925,7 @@ begin
       FocusTag.Attributes.AddOrSetValue('value', v);
       FocusTag.Attributes.AddOrSetValue('_caret', IntToStr(caret + Length(Chars)));
       Rebuild;
+      FireInput(FocusTag);        // reactive: oninput → output.recalc etc.
     end;
   end;
 end;
@@ -957,6 +981,10 @@ begin
   Viewer := TViewer.Create;
   Viewer.Parser := THTMLParser.Create;
   Viewer.Parser.Parse(HTML);
+  // built-in dialog.*/output.* actions dispatch against this DOM
+  RegisterBuiltinActions;
+  BuiltinsRoot := Viewer.Parser.Root;
+  RecalcOutputs(BuiltinsRoot);            // seed <output> values before first paint
   Viewer.Sheet := TCSSStyleSheet.Create;
   Viewer.Shell := TCocoaShell.Create;            // created early: fetches remote <link> CSS
   RegisterCanvasPainter('demo', @CanvasDemo);   // <canvas id="demo"> → the Pascal painter

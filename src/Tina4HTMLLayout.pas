@@ -137,6 +137,14 @@ function PickFromSrcset(const Srcset: string; TargetW: Single): string;
 function EvalMediaQuery(const MQ: string; ViewportW: Single): Boolean;
 function ResolveImgSrc(T: THTMLTag; ViewportW, ElemW: Single): string;
 
+{ A modal <dialog> (opened via dialog.showModal → has `open`+`_modal`) is skipped
+  in the normal paint pass and drawn last, centred over a backdrop, by
+  PaintModalOverlay. Returns the modal dialog's box, or nil. }
+function FindModalDialog(Box: TLayoutBox): TLayoutBox;
+{ Paint the dimmed backdrop + the centred modal dialog as a top layer. Call
+  after PaintBox with the viewport size. No-op when no modal dialog is open. }
+procedure PaintModalOverlay(Canvas: TTina4Canvas; Root: TLayoutBox; W, H: Single);
+
 { Map a CSS `cursor` keyword to the shell's pointer-shape enum. }
 function CursorKindFor(const CSS: string): TTina4Cursor;
 { Pointer shape for the element at (docX, docY) in the given tree, honouring
@@ -678,6 +686,30 @@ begin
     t := t.Parent;
   end;
 end;
+
+var
+  GInModalPaint: Boolean = False;   // true while PaintModalOverlay draws the dialog
+
+function IsModalDialogBox(Box: TLayoutBox): Boolean;
+begin
+  Result := (Box <> nil) and (Box.Tag <> nil) and
+    SameText(Box.Tag.TagName, 'dialog') and
+    Box.Tag.HasAttribute('open') and Box.Tag.HasAttribute('_modal');
+end;
+
+function FindModalDialog(Box: TLayoutBox): TLayoutBox;
+var c: TLayoutBox;
+begin
+  Result := nil;
+  if Box = nil then Exit;
+  if IsModalDialogBox(Box) then Exit(Box);
+  for c in Box.Children do
+  begin
+    Result := FindModalDialog(c);
+    if Result <> nil then Exit;
+  end;
+end;
+// PaintModalOverlay is defined after PaintBox/ShiftBoxTree (below).
 
 { UA fallback chrome for controls the stylesheet didn't style; also the
   focus ring. Shared by MakeControl and RefreshStyles. }
@@ -2927,6 +2959,28 @@ begin
   PaintBoxEx(Canvas, Box, OffsetY, 1.0, False);
 end;
 
+procedure PaintModalOverlay(Canvas: TTina4Canvas; Root: TLayoutBox; W, H: Single);
+var d: TLayoutBox; cx, cy, dx, dy: Single;
+begin
+  d := FindModalDialog(Root);
+  if d = nil then Exit;
+  Canvas.FillRect(0, 0, W, H, $66000000);       // dimmed backdrop over the page
+  // Centre the dialog subtree at its viewport-centred spot. The shift is by the
+  // delta from where it is now, so re-painting the already-centred box is a
+  // no-op — and leaving it centred means hit-testing lands on it too (the box
+  // is skipped in the normal pass, so it only exists here).
+  cx := (W - d.W) / 2; if cx < 0 then cx := 0;
+  cy := (H - d.H) / 2; if cy < 0 then cy := 0;
+  dx := cx - d.X; dy := cy - d.Y;
+  if (dx <> 0) or (dy <> 0) then ShiftBoxTree(d, dx, dy);
+  GInModalPaint := True;
+  try
+    PaintBox(Canvas, d, 0);                       // OffsetY 0 → viewport-fixed, centred
+  finally
+    GInModalPaint := False;
+  end;
+end;
+
 { Paint a <qrcode> box: white quiet-zone ground, dark modules as squares.
   The module grid is snapped to whole pixels so scanners see crisp edges. }
 procedure PaintQR(Canvas: TTina4Canvas; Box: TLayoutBox; Y: Single);
@@ -3163,6 +3217,9 @@ var
   lotTotal, lotFrame: Single;
 begin
   st := Box.Style;
+  // A modal <dialog> is skipped in the normal pass — PaintModalOverlay draws it
+  // last, centred over a backdrop (GInModalPaint is set only during that pass).
+  if IsModalDialogBox(Box) and not GInModalPaint then Exit;
   // position: fixed — viewport-pinned: ignore the inherited scroll offset for
   // this box and its subtree so it stays put while the page scrolls.
   if SameText(st.CSSPosition, 'fixed') then OffsetY := 0;
