@@ -57,6 +57,7 @@ type
     NaturalW: Single;              // widest line of content (for overflow-x)
     NaturalH: Single;              // natural content height (for cell v-align)
     MarkerText: string;            // list-item bullet/number, '' if none
+    MarkerImage: Integer;          // list-style-image handle, -1 = none
     constructor Create;
     destructor Destroy; override;
   end;
@@ -170,6 +171,7 @@ begin
   Children := TObjectList<TLayoutBox>.Create(True);
   Runs := TList<TTextRun>.Create;
   ImageHandle := -1;
+  MarkerImage := -1;
 end;
 
 destructor TLayoutBox.Destroy;
@@ -3038,6 +3040,12 @@ begin
     end;
     box.MarkerText := MarkerFor(
       TComputedStyle.ForTag(Tag.Parent, ParentStyle, FSheet).ListStyleType, liIdx);
+    // list-style-image: url(...) — an image marker replaces the text bullet.
+    if st.ListStyleImage <> '' then
+    begin
+      box.MarkerImage := FCanvas.LoadImage(st.ListStyleImage);
+      if box.MarkerImage >= 0 then box.MarkerText := '';   // image wins over the bullet glyph
+    end;
     // list-style-position: inside — the marker joins the content flow: reserve
     // room for it at the content start (drawn there instead of outdented).
     if st.ListStyleInside and (box.MarkerText <> '') then
@@ -3921,6 +3929,7 @@ var
   r: TTextRun;
   st: TComputedStyle;
   y, innerOfs, thumbH, thumbY, thumbW, thumbX, cx, cy, gy: Single;
+  mkImgSz: Single;
   sizeTxt, val: string;
   m: TTina4TextMetrics;
   didClip: Boolean;
@@ -4218,6 +4227,15 @@ begin
     else
       Canvas.StrokeRect(Box.X - ox, y - ox, Box.W + 2 * ox, Box.H + 2 * ox,
         st.OutlineWidth, ScaleAlpha(st.OutlineColor, op));
+  end;
+  // list-style-image marker: a small image box sized to the font, outdented to
+  // the left of the content (or in the reserved inside gap).
+  if (not Hidden) and (Box.MarkerImage >= 0) then
+  begin
+    mkImgSz := st.FontSize;
+    Canvas.DrawImage(Box.MarkerImage,
+      Box.X + st.BorderWidths.Left + st.Padding.Left - 8 - mkImgSz,
+      y + st.BorderWidths.Top + st.Padding.Top, mkImgSz, mkImgSz);
   end;
   // list marker: right-aligned so multi-char markers (III., 10.) share the
   // same right edge, sitting just left of the content text.

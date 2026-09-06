@@ -315,6 +315,7 @@ type
     TextIndent: Single;
     Visibility: string;
     ListStyleType: string;
+    ListStyleImage: string;     // list-style-image url (raw), '' = none
     Overflow: string;
     // overflow-x / overflow-y: per-axis scroll control.
     OverflowX: string;
@@ -2264,6 +2265,7 @@ begin
   Result.TextIndent := 0;
   Result.Visibility := 'visible';
   Result.ListStyleType := '';
+  Result.ListStyleImage := '';
   Result.Overflow := 'visible';
   Result.OverflowX := 'visible';
   Result.OverflowY := 'visible';
@@ -2679,6 +2681,7 @@ begin
   Result.LineHeight := ParentStyle.LineHeight;
   Result.WhiteSpace := ParentStyle.WhiteSpace;
   Result.ListStyleType := ParentStyle.ListStyleType;
+  Result.ListStyleImage := ParentStyle.ListStyleImage;   // inherited
   Result.TextTransform := ParentStyle.TextTransform;
   Result.LetterSpacing := ParentStyle.LetterSpacing;
   Result.WordSpacing := ParentStyle.WordSpacing;
@@ -3780,16 +3783,23 @@ begin
     Style.ListStyleType := Temp.ToLower;
   if Decls.TryGetValue('list-style-position', Temp) and not ShouldSkip(Temp) then
     Style.ListStyleInside := SameText(Trim(Temp), 'inside');
+  if Decls.TryGetValue('list-style-image', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.ListStyleImage := ''
+    else Style.ListStyleImage := ExtractFontSrcUrl(Temp);
+  end;
   // list-style shorthand: <type> || <position> || <image>. A `position`
   // token (inside/outside) sets position; any other keyword sets the type.
   if Decls.TryGetValue('list-style', Temp) and not ShouldSkip(Temp) then
   begin
+    // capture an image marker from the raw value (preserve URL case)
+    if Pos('url(', LowerCase(Temp)) > 0 then Style.ListStyleImage := ExtractFontSrcUrl(Temp);
     for OvPart in Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty) do
     begin
       if (OvPart = 'inside') or (OvPart = 'outside') then
         Style.ListStyleInside := (OvPart = 'inside')
-      else if OvPart.StartsWith('url(') then
-        // image marker not rendered
+      else if OvPart.StartsWith('url(') or OvPart.StartsWith('none') then
+        // image handled above; 'none' leaves type/image cleared
       else
         Style.ListStyleType := OvPart;
     end;

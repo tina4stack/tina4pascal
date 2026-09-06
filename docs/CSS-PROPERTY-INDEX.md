@@ -88,7 +88,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | word-break, overflow-wrap | ✅ | break-word/break-all/anywhere: over-long words break between characters (UTF-8 aware) |
 | vertical-align | 🟡 | sub/super/top/middle; no text-top/bottom/length |
 | list-style-type | ✅ | disc/circle/square/decimal/alpha/roman/none |
-| list-style shorthand, list-style-position | ✅ | shorthand tokenised (type · inside/outside · url image ignored); `position:inside` draws the marker in the content flow. `list-style-image` still not rendered |
+| list-style shorthand, list-style-position | ✅ | shorthand tokenised (type · inside/outside · image url); `position:inside` draws the marker in the content flow |
+| list-style-image | ✅ | `url(...)` image marker (dedicated property + shorthand) loaded via the shell and drawn as a font-sized square outdented left of the content; falls back to the bullet glyph if the image fails to load |
 | direction, unicode-bidi, writing-mode | ❌ | LTR only |
 | tab-size, hyphens, text-rendering, text-align-last, text-justify | ❌ | |
 
@@ -182,7 +183,7 @@ mode renderer doesn't yet have):
     render target + image-filter/compositing pass per shell (clip-path basic
     shapes done via polygon clip).
 3. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
-    `direction`/`writing-mode` (bidi), `list-style-image`, `vertical-align`
+    `direction`/`writing-mode` (bidi), `vertical-align`
     text-top/bottom/length.
 4. **user-select / resize** (need a selection model / drag-resize handle);
     `@import`.

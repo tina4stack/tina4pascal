@@ -243,6 +243,9 @@ var
   Decls: TCSSDeclarations;
   Val, CardText, PreText, FontFam, FontUrl: string;
   ParentStyle, CardStyle, H1Style, BtnStyle: TComputedStyle;
+  LsiParser: THTMLParser;
+  LsiUl: THTMLTag;
+  LsiStyle: TComputedStyle;
   Edges: TEdgeValues;
   DeclPair: TPair<string, string>;
 begin
@@ -501,6 +504,31 @@ begin
     CheckEqualsStr('http://x/y.png', CardStyle.BackgroundImage,
       'inline background-image URL extracted');
     CheckEqualsStr('block', CardStyle.Display, 'div UA default display block');
+
+    // list-style-image: url(...) extracted onto the computed style, both from
+    // the dedicated property and the list-style shorthand (URL case preserved)
+    LsiParser := THTMLParser.Create;
+    try
+      LsiParser.Parse('<ul style="list-style-image:url(Bullet.png)"><li>a</li></ul>');
+      LsiUl := FindFirstTag(LsiParser.Root, 'ul');
+      Check(Assigned(LsiUl), 'ul (dedicated list-style-image) found');
+      LsiStyle := TComputedStyle.ForTag(LsiUl, TComputedStyle.Default);
+      CheckEqualsStr('Bullet.png', LsiStyle.ListStyleImage,
+        'list-style-image url extracted (case preserved)');
+    finally
+      LsiParser.Free;
+    end;
+    LsiParser := THTMLParser.Create;
+    try
+      LsiParser.Parse('<ul style="list-style:square url(Dot.png) inside"><li>a</li></ul>');
+      LsiUl := FindFirstTag(LsiParser.Root, 'ul');
+      LsiStyle := TComputedStyle.ForTag(LsiUl, TComputedStyle.Default);
+      CheckEqualsStr('Dot.png', LsiStyle.ListStyleImage,
+        'list-style shorthand extracts the image url');
+      Check(LsiStyle.ListStyleInside, 'list-style shorthand sets inside position');
+    finally
+      LsiParser.Free;
+    end;
 
     // <search> is a block landmark (regression guard for the block-tag set)
     Check(THTMLParser.IsBlockTag('search'), '<search> is a block landmark');
