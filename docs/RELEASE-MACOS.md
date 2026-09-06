@@ -64,19 +64,28 @@ gh release upload v1.0.0 \
   tina4-htmlviewer-macos-arm64.tar.gz.asc --clobber
 ```
 
-## Optional: Apple codesign + notarize (Gatekeeper)
+## Apple codesign + notarize (Gatekeeper) — wired into the script
 
 GPG proves authorship but doesn't stop macOS quarantining a downloaded binary.
-For a friction-free `.app` you need an Apple Developer ID:
+`release-macos.sh` now Developer-ID-codesigns the binary (hardened runtime,
+timestamped) automatically when the identity is in your keychain, and notarizes
+it when a credential is configured. Provide **one** of:
 
 ```bash
-codesign --force --timestamp --options runtime \
-  --sign "Developer ID Application: <Name> (<TEAMID>)" build/macos/htmlviewer
-xcrun notarytool submit build/macos/tina4-htmlviewer-macos-arm64.tar.gz \
-  --apple-id <id> --team-id <TEAMID> --password <app-specific-pw> --wait
-# staple the app bundle (not the bare binary):
-# xcrun stapler staple <App>.app
+# (a) a stored notarytool keychain profile — recommended, one-time:
+xcrun notarytool store-credentials tina4-notary \
+  --apple-id <id> --team-id 5CSH5U4F8F --password <app-specific-pw>
+export TINA4_NOTARY_PROFILE=tina4-notary
+
+# (b) an App Store Connect API key:
+export TINA4_ASC_KEY=~/.appstoreconnect/private_keys/AuthKey_XXXX.p8
+export TINA4_ASC_KEY_ID=XXXX TINA4_ASC_ISSUER=<issuer-uuid>
 ```
+
+Override the signing identity with `TINA4_MACOS_SIGN_ID` if needed. Note: a bare
+CLI binary **cannot be stapled** (only `.app`/`.dmg`/`.pkg` can), so the notary
+ticket is verified online on first run. Without a credential the script codesigns
+but skips notarization (Gatekeeper warns; the binary is still attributable).
 
 ## Optional: iOS
 
