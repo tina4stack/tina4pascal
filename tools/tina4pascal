@@ -206,12 +206,13 @@ setup_android() {
 # ---- build -------------------------------------------------------------------
 # build a Pascal program for a target into build/<target>/
 build_prog() {
-  target="$1"; prog="$2"
+  target="$1"; prog="$2"; xflags="${3:-}"
   flags="$(target_flags "$target")" || die "unknown target '$target'"
   need_fpc
   outdir="$BUILD/$target"; mkdir -p "$outdir"
   say "${D}fpc $flags $(basename "$prog")${Z}"
-  "$FPC" -Mdelphi -O2 -Xs $flags -Fu"$SRC" -FE"$outdir" -FU"$outdir" "$prog" 2>&1 \
+  # shellcheck disable=SC2086
+  "$FPC" -Mdelphi -O2 -Xs $flags $xflags -Fu"$SRC" -FE"$outdir" -FU"$outdir" "$prog" 2>&1 \
     | grep -Ei "error|fatal" && die "build failed" || true
 }
 
@@ -223,10 +224,20 @@ cmd_build() {
       ok "macOS viewer → $BUILD/macos/htmlviewer" ;;
     android)
       sh "$ROOT/android/build.sh" ;;
-    windows|linux|linux-arm64|ios)
-      # no GUI shell for these yet — compile the core test as a link smoke test
-      build_prog "$target" "$ROOT/tests/test_dom.pas"
-      ok "$target core builds (headless smoke test)" ;;
+    windows|win64)
+      # real GDI windowed host (needs windres for the .rc icon; use the mingw
+      # cross-windres when compiling from a non-Windows box).
+      wr=""; command -v x86_64-w64-mingw32-windres >/dev/null 2>&1 && wr="-FCx86_64-w64-mingw32-windres"
+      build_prog windows "$ROOT/examples/htmlviewer/htmlviewer_win.pas" "$wr"
+      ok "Windows host → $BUILD/windows/htmlviewer_win.exe  (run it on Windows)" ;;
+    linux|linux-arm64)
+      build_prog "$target" "$ROOT/examples/htmlviewer/htmlviewer_x11.pas"
+      ok "$target host → $BUILD/$target/htmlviewer_x11  (run it on Linux)" ;;
+    ios)
+      # iOS ships as a device app via Xcode (tina4pascal ios / release ios); here
+      # just link-check the core for the target.
+      build_prog ios "$ROOT/tests/test_dom.pas"
+      ok "iOS core builds (device app: tina4pascal ios / release ios)" ;;
     all)
       for t in $ALL_TARGETS; do say "${B}— $t —${Z}"; cmd_build "$t"; done ;;
     *) die "build: unknown target '$target' ($ALL_TARGETS | all)" ;;
@@ -1095,7 +1106,7 @@ cmd_screenshot() {
       else screencapture -o -x "$out"; fi          # fall back to full screen
       ok "macOS screenshot → $out" ;;
     win64|windows|linux)
-      die "no $plat screenshot yet — the $plat windowed shell is pending (see docs/ROADMAP.md); 'build $plat' cross-compiles the engine" ;;
+      die "no $plat screenshot from macOS — a Mac can't display a $plat window. The $plat windowed host DOES build ('build $plat' → htmlviewer_win/x11); run + screenshot it ON that OS." ;;
     android|*)
       adb_have_device || die "no device attached (adb devices)"
       adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true   # slept screen = black
@@ -1154,7 +1165,7 @@ cmd_run_target() {
     ios)   cmd_ios ;;
     macos) cmd_macos --run ;;
     android) cmd_deploy ;;
-    win64|windows|linux) cmd_build "$1"; warn "$1 windowed shell is pending — engine cross-compiled only (docs/ROADMAP.md)" ;;
+    win64|windows|linux) cmd_build "$1"; warn "$1 host cross-compiled (htmlviewer_win/x11) — run it ON $1; a Mac can't open a $1 window" ;;
     *) die "deploy <android|ios|macos|win64|linux>" ;;
   esac
 }

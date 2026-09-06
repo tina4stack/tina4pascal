@@ -12,8 +12,13 @@ Companion trackers (the authoritative, code-audited gap lists):
 
 ## Phase 0 — shipped
 
-The interaction + data foundation is in and cross-platform (macOS/iOS/Android;
-Windows/Linux shells pending):
+The interaction + data foundation is in and cross-platform — macOS (Cocoa), iOS
+(Core Graphics), Android (JNI), and Windows (GDI, `src/Tina4ShellWin.pas` +
+`examples/htmlviewer/htmlviewer_win.pas`) + Linux (X11, `src/Tina4ShellLinux.pas`
++ `htmlviewer_x11.pas`) windowed shells. Windows/Linux hosts cross-compile from
+this repo (`tina4pascal build win64` / `build linux`); run + polish the produced
+binary on that OS (a Mac can't display a Win/Linux window, so `deploy`/`screenshot`
+for those targets stay off from macOS):
 
 - Parse → cascade → layout → paint → hit-test pipeline; flexbox, tables (colspan),
   overflow scroll, transforms, opacity, `--vars`/`var()`.
