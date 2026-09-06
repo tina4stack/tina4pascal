@@ -4056,6 +4056,11 @@ begin
     if st.ClipPath <> '' then
       Canvas.ClipPolygon(ClipPathPolygon(st.ClipPath, Box.X, y, Box.W, Box.H));
   end;
+  // CSS backdrop-filter: filter the pixels already painted behind this box,
+  // before the box's own background draws over them. No-op on backends without
+  // read-back. Applied to the border-box region.
+  if (not Hidden) and (st.BackdropFilter <> '') and (Box.W > 0) and (Box.H > 0) then
+    Canvas.BackdropFilter(Box.X, y, Box.W, Box.H, st.BackdropFilter);
   // CSS filter / mix-blend-mode: render this box + subtree into an offscreen
   // layer, then composite it back with the pixel effect. BeginLayer returns -1
   // on backends without offscreen support, so the effect is simply skipped.

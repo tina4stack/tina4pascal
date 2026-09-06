@@ -119,6 +119,10 @@ type
       = source-over). Nesting is a stack; always balance the Begin/End pair. }
     function BeginLayer(X, Y, W, H, Pad: Single): Integer; virtual;
     procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode: string); virtual;
+    { CSS backdrop-filter: capture the already-painted pixels under the rect
+      (X,Y,W,H), run the filter chain over them, and paint the result back — done
+      BEFORE the element itself draws. Default: no-op (backend has no read-back). }
+    procedure BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); virtual;
   end;
 
   TTina4PaintEvent = procedure(Canvas: TTina4Canvas; Width, Height: Single) of object;
@@ -380,5 +384,6 @@ procedure TTina4Canvas.TransformMatrix(A, B, C, D, E, F: Single); begin end;
 procedure TTina4Canvas.ClipPolygon(const Pts: TTina4PointArray); begin end;
 function TTina4Canvas.BeginLayer(X, Y, W, H, Pad: Single): Integer; begin Result := -1; end;
 procedure TTina4Canvas.EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode: string); begin end;
+procedure TTina4Canvas.BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); begin end;
 
 end.

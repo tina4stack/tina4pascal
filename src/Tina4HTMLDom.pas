@@ -391,6 +391,7 @@ type
     TransformMat: array[0..5] of Single; // a,b,c,d,e,f
     ClipPath: string;              // CSS clip-path (inset/circle/ellipse/polygon), '' = none
     Filter: string;                // CSS filter chain (blur/grayscale/…), '' = none
+    BackdropFilter: string;        // CSS backdrop-filter chain, '' = none
     MixBlendMode: string;          // CSS mix-blend-mode, '' = normal
     TransformOriginX: Single;      // px, or a %-marker (<-1.5); default -50 = 50%
     TransformOriginY: Single;
@@ -631,10 +632,8 @@ var p, v: string;
 begin
   p := LowerCase(Trim(Prop));
   v := LowerCase(Trim(Val));
-  if (p = 'filter') or (p = 'backdrop-filter') or (p = '-webkit-backdrop-filter')
-     or (p = 'mask') or (p = 'mask-image') or (p = 'mix-blend-mode')
-     or (p = 'background-blend-mode') or (p = 'perspective')
-     or (p = 'transform-style') then Exit(False);
+  if (p = 'mask') or (p = 'mask-image') or (p = 'background-blend-mode')
+     or (p = 'perspective') or (p = 'transform-style') then Exit(False);
   // 3D transforms are not projected
   if (p = 'transform') and ((Pos('3d', v) > 0) or (Pos('perspective', v) > 0)
      or (Pos('rotatex', v) > 0) or (Pos('rotatey', v) > 0)) then Exit(False);
@@ -2316,7 +2315,7 @@ begin
   Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
   Result.TransformMatrixSet := False;
   Result.ClipPath := '';
-  Result.Filter := ''; Result.MixBlendMode := '';
+  Result.Filter := ''; Result.BackdropFilter := ''; Result.MixBlendMode := '';
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 end;
@@ -2767,7 +2766,7 @@ begin
   Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
   Result.TransformMatrixSet := False;
   Result.ClipPath := '';
-  Result.Filter := ''; Result.MixBlendMode := '';
+  Result.Filter := ''; Result.BackdropFilter := ''; Result.MixBlendMode := '';
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 
@@ -4252,6 +4251,16 @@ begin
   begin
     if SameText(Trim(Temp), 'none') then Style.Filter := ''
     else Style.Filter := Trim(Temp);
+  end;
+  if Decls.TryGetValue('backdrop-filter', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.BackdropFilter := ''
+    else Style.BackdropFilter := Trim(Temp);
+  end;
+  if Decls.TryGetValue('-webkit-backdrop-filter', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.BackdropFilter := ''
+    else Style.BackdropFilter := Trim(Temp);
   end;
   if Decls.TryGetValue('mix-blend-mode', Temp) and not ShouldSkip(Temp) then
   begin

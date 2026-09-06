@@ -118,7 +118,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | clip-path | ✅ | `inset()` / `circle()` / `ellipse()` / `polygon()` — the core tessellates the shape to a polygon in border-box coords and clips the subtree via the `ClipPolygon` contract method (Cocoa: `NSBezierPath.addClip`). Radius on `inset(... round)`, `path()`, and URL references not yet applied |
 | filter | ✅ | `blur` · `grayscale` · `brightness` · `contrast` · `invert` · `saturate` · `sepia` · `hue-rotate` · `opacity` · `drop-shadow`, chained. Rendered through a new offscreen-layer contract (`BeginLayer`/`EndLayerFiltered`): the element+subtree draw into an offscreen buffer, the pixels are filtered (separable box-blur ≈ Gaussian; colour-matrix ops; drop-shadow is a blurred, offset silhouette painted behind), then composited back |
 | mix-blend-mode | ✅ | all 16 separable + non-separable modes (multiply/screen/overlay/darken/lighten/color-dodge/color-burn/soft-light/hard-light/difference/exclusion/hue/saturation/color/luminosity) via `CGContextSetBlendMode` when the layer composites back |
-| backdrop-filter, mask, background-blend-mode | ❌ | backdrop-filter needs a read-back of what's behind; mask needs a second offscreen channel |
+| backdrop-filter | ✅ | filters the already-painted pixels behind the element (captured via `initWithFocusedViewRect`) before its own background draws — same filter chain as `filter`. `-webkit-backdrop-filter` alias too |
+| mask, background-blend-mode | ❌ | mask needs a second offscreen alpha channel |
 | animation, @keyframes | ✅ | `@keyframes` parsed; `animation` shorthand + longhands (name/duration/delay/timing/iteration/direction). Per-frame interpolation at paint off the ticker: transform (translate/rotate/scale), opacity, background-color, color; timing linear/ease/ease-in/-out; iteration + alternate/reverse |
 | transition | ✅ | eases a property toward its computed value when it changes (hover/focus/DOM): background-color, color, opacity, transform (translate/rotate/scale). Per-element from/start tracked on the tag; duration/delay/timing/property from the shorthand + longhands. Mid-transition reversal supported |
 | will-change, contain | ❌ | |
@@ -156,7 +157,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | `@media` (in `<style>`) | ✅ | min/max-width breakpoints + `prefers-color-scheme` dark (incl. dark `:root` var swaps), live via `SetMediaContext` |
 | `@font-face` | ✅ | downloadable fonts: parse family + `src url()`, fetch (async/disk-cached like `<img>`) + register on all 3 shells (Cocoa/iOS CoreText, Android Typeface); CSS family aliased to the face's real name |
 | `@keyframes` | ✅ | parsed into named stops; drives `animation` |
-| `@supports` | ✅ | feature query evaluated at parse time (`and`/`or`/`not`, parenthesised tests); the block's rules apply only if supported. The oracle answers yes for our broad feature set and no for the offscreen-compositing / 3D props we lack (filter, backdrop-filter, mask, blend-modes, perspective, 3D transforms). Nests inside `@media` |
+| `@supports` | ✅ | feature query evaluated at parse time (`and`/`or`/`not`, parenthesised tests); the block's rules apply only if supported. The oracle answers yes for our broad feature set and no for the props we still lack (mask, background-blend-mode, perspective, transform-style, 3D transforms). Nests inside `@media` |
 | `@import` | ❌ | skipped with the @-rule block |
 | clamp(), min(), max() | ✅ | evaluated via the calc() engine (nestable, same unit support) |
 | env() | ✅ | `env(<name>, <fallback>)` resolves to its fallback — safe-area insets are 0 on desktop, so the named value is unavailable. Usable bare or inside calc() |
@@ -180,10 +181,9 @@ col/row-resize.
 mode renderer doesn't yet have):
 1. **transform** 3D + `perspective` — a 3D projection pipeline (2D
     translate/rotate/scale/skew/matrix() + `transform-origin` done).
-2. **backdrop-filter / mask** — extend the offscreen-layer subsystem
-    (`filter`, `mix-blend-mode` and clip-path basic shapes are done):
-    backdrop-filter needs a read-back of the pixels behind the element;
-    mask needs a second offscreen alpha channel.
+2. **mask** — extend the offscreen-layer subsystem (`filter`, `backdrop-filter`,
+    `mix-blend-mode`, `drop-shadow` and clip-path basic shapes are done): mask
+    needs a second offscreen alpha channel to multiply into the element's alpha.
 3. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
     `direction`/`writing-mode` (bidi), `vertical-align`
     text-top/text-bottom.

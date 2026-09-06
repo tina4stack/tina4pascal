@@ -71,6 +71,7 @@ type
     procedure ClipPolygon(const Pts: TTina4PointArray); override;
     function BeginLayer(X, Y, W, H, Pad: Single): Integer; override;
     procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode: string); override;
+    procedure BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); override;
   end;
 
   { NSTimer target bridging into the shell's OnTick }
@@ -1199,6 +1200,22 @@ begin
   end;
   img.release;
   SetLength(FLayers, Handle);            // pop
+end;
+
+procedure TCocoaCanvas.BackdropFilter(X, Y, W, H: Single; const FilterSpec: string);
+var rep: NSBitmapImageRep; sc: Single;
+begin
+  if (W <= 0) or (H <= 0) or (FilterSpec = '') then Exit;
+  // grab what has already been painted under the element from the focused view
+  rep := NSBitmapImageRep(NSBitmapImageRep.alloc.initWithFocusedViewRect(NSMakeRect(X, Y, W, H)));
+  if rep <> nil then
+  begin
+    if W > 0 then sc := rep.pixelsWide / W else sc := 1;
+    ApplyFilterToRep(rep, FilterSpec, sc);
+    rep.drawInRect_fromRect_operation_fraction_respectFlipped_hints(
+      NSMakeRect(X, Y, W, H), NSZeroRect, 2 {SourceOver}, 1.0, True, nil);
+    rep.release;
+  end;
 end;
 
 { TTina4View }
