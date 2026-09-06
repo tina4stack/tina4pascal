@@ -285,7 +285,11 @@ begin
   if FBundledScanned then Exit;
   if (FAssetBase = '') or (clsTypeface = nil) then Exit;   // retry once assets are extracted
   FBundledScanned := True;
-  dir := FAssetBase + '/fonts';
+  // FAssetBase is filesDir; MainActivity extracts APK assets to filesDir/assets/,
+  // so bundled fonts land at <base>/assets/fonts (relative <img src> resolves the
+  // same way). Also accept a bare <base>/fonts for a flat layout.
+  dir := FAssetBase + '/assets/fonts';
+  if not DirectoryExists(dir) then dir := FAssetBase + '/fonts';
   if not DirectoryExists(dir) then Exit;
   if FindFirst(IncludeTrailingPathDelimiter(dir) + '*.ttf', faAnyFile, sr) <> 0 then Exit;
   try

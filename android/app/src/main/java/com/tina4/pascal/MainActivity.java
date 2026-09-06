@@ -52,24 +52,38 @@ public class MainActivity extends Activity {
         view.setHtml(loadAsset("showcase.html"));
     }
 
-    /** Copy bundled APK assets (icons, images) to filesDir/assets/ so the engine
-     *  can load a relative {@code <img src="assets/…">} as a real file. HTML is
-     *  loaded directly via loadAsset, so skip *.html. */
+    /** Copy bundled APK assets (icons, images, fonts/) to filesDir/assets/ so the
+     *  engine can load a relative {@code <img src="assets/…">} or a bundled
+     *  {@code fonts/*.ttf} as a real file. HTML is loaded directly via loadAsset,
+     *  so skip *.html. Recursive, so subfolders like fonts/ survive. */
     private void extractAssets() {
         try {
             File base = new File(getFilesDir(), "assets");
             base.mkdirs();
-            String[] names = getAssets().list("");
+            extractAssetDir("", base);
+        } catch (Exception e) { /* no assets to extract */ }
+    }
+
+    private void extractAssetDir(String rel, File dest) {
+        try {
+            String[] names = getAssets().list(rel);
             if (names == null) return;
             for (String n : names) {
+                String child = rel.isEmpty() ? n : rel + "/" + n;
+                String[] sub = getAssets().list(child);
+                if (sub != null && sub.length > 0) {           // a directory → recurse
+                    File d = new File(dest, n); d.mkdirs();
+                    extractAssetDir(child, d);
+                    continue;
+                }
                 if (n.endsWith(".html")) continue;
-                try (InputStream in = getAssets().open(n);
-                     FileOutputStream out = new FileOutputStream(new File(base, n))) {
+                try (InputStream in = getAssets().open(child);
+                     FileOutputStream out = new FileOutputStream(new File(dest, n))) {
                     byte[] buf = new byte[8192]; int r;
                     while ((r = in.read(buf)) > 0) out.write(buf, 0, r);
                 } catch (Exception e) { /* skip an unreadable asset */ }
             }
-        } catch (Exception e) { /* no assets to extract */ }
+        } catch (Exception e) { /* skip */ }
     }
 
     /** Called from the view when an <input type=file> is tapped. */

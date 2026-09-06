@@ -29,7 +29,7 @@ minimal containers with no system fonts.
 | Windows (GDI) | ✅ beside exe | ✅ `AddFontResourceExW(FR_PRIVATE)` + `FaceFor` | ✅ DejaVu vs Segoe |
 | macOS (CoreText) | ✅ `build_prog` → `build/macos/fonts/` | ✅ `EnsureBundledCocoaFonts` + `FontFor` | ✅ **DejaVu vs San Francisco** |
 | iOS (CoreText) | ✅ staged under `assets/fonts/` | ✅ `EnsureBundledIOSFonts` + `IOSBaseFontName` | ⬜ compiles; needs a device build |
-| Android (Paint) | ✅ APK `assets/fonts/` | ✅ `EnsureBundledFonts` + `TypefaceFor` | ⬜ compiles; needs an emulator |
+| Android (Paint) | ✅ APK `assets/fonts/` | ✅ `EnsureBundledFonts` + `TypefaceFor` | ✅ **DejaVu vs Noto/Roboto** (emulator) |
 
 Each shell scans its `fonts/*.ttf` once (lazily, on first font resolution),
 registers each with the OS text engine process-wide, records which DejaVu
