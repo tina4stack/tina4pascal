@@ -64,19 +64,53 @@ begin
     TinaSetHtml('<h1 style="font-family:sans-serif;padding:24px">Hello World!</h1>');
 end;
 
-{ Command-line: `<app> [--snapshot out] [--width N] [--height N]`. A snapshot
-  path makes the app render one frame headless and exit (AI/CI can 'see' it). }
-procedure ParseArgs(out Snap: string; var W, H: Integer);
+{ Command-line (headless dev/inspection modes; any combination):
+    --snapshot <img>          render one frame to an image and exit
+    --overlay                 with --snapshot: draw layout-box outlines
+    --dom <file>              write the DOM tree JSON and exit
+    --boxes <file>            write the layout-box tree JSON and exit
+    --inspect <x> <y> <file>  write the element-at-(x,y) JSON and exit
+    --width N / --height N     viewport size for the above
+  Any of these makes the app run headless (no window). }
+procedure ParseArgs(out Snap: string; var W, H: Integer; out Overlay: Boolean;
+  out DumpKind, DumpOut: string; out IX, IY: Single);
 var i: Integer;
 begin
-  Snap := ''; i := 1;
+  Snap := ''; Overlay := False; DumpKind := ''; DumpOut := ''; IX := 0; IY := 0; i := 1;
   while i <= ParamCount do
   begin
     if (ParamStr(i) = '--snapshot') and (i < ParamCount) then begin Inc(i); Snap := ParamStr(i); end
+    else if ParamStr(i) = '--overlay' then Overlay := True
     else if (ParamStr(i) = '--width') and (i < ParamCount) then begin Inc(i); W := StrToIntDef(ParamStr(i), W); end
-    else if (ParamStr(i) = '--height') and (i < ParamCount) then begin Inc(i); H := StrToIntDef(ParamStr(i), H); end;
+    else if (ParamStr(i) = '--height') and (i < ParamCount) then begin Inc(i); H := StrToIntDef(ParamStr(i), H); end
+    else if (ParamStr(i) = '--dom') and (i < ParamCount) then begin Inc(i); DumpKind := 'dom'; DumpOut := ParamStr(i); end
+    else if (ParamStr(i) = '--boxes') and (i < ParamCount) then begin Inc(i); DumpKind := 'boxes'; DumpOut := ParamStr(i); end
+    else if (ParamStr(i) = '--inspect') and (i + 2 < ParamCount + 1) then
+    begin
+      DumpKind := 'inspect';
+      IX := StrToFloatDef(ParamStr(i+1), 0); IY := StrToFloatDef(ParamStr(i+2), 0);
+      if i + 3 <= ParamCount then DumpOut := ParamStr(i+3);
+      Inc(i, 3);
+    end;
     Inc(i);
   end;
+end;
+
+{ Write a string to a file (the JSON dumps). }
+procedure WriteStrFile(const Path, S: string);
+var fs: TFileStream;
+begin
+  if Path = '' then begin Writeln(S); Exit; end;
+  fs := TFileStream.Create(Path, fmCreate);
+  try if S <> '' then fs.WriteBuffer(S[1], Length(S)); finally fs.Free; end;
+end;
+
+{ After a headless frame, emit whichever JSON dump was requested. }
+procedure EmitDump(const DumpKind, DumpOut: string; IX, IY: Single);
+begin
+  if DumpKind = 'dom' then WriteStrFile(DumpOut, TinaDumpDom)
+  else if DumpKind = 'boxes' then WriteStrFile(DumpOut, TinaBoxTree)
+  else if DumpKind = 'inspect' then WriteStrFile(DumpOut, TinaHitTestInfo(IX, IY));
 end;
 
 {$IFDEF WINDOWS}
@@ -134,8 +168,10 @@ begin
   end;
 end;
 
-{ headless one-frame render to a PNG (no window) }
-procedure WinSnapshot(const TemplateDir, Template, JsonContext: string; sw, sh: Integer; const outPath: string);
+{ headless one-frame render (no window): optional PNG snapshot (+overlay) and/or
+  a JSON inspection dump. }
+procedure WinHeadless(const TemplateDir, Template, JsonContext: string; sw, sh: Integer;
+  const snap: string; overlay: Boolean; const dumpKind, dumpOut: string; ix, iy: Single);
 var mem: HDC; dib, oldb: HGDIOBJ; bmi: BITMAPINFO; bits: PByte; i: Integer; canvas: TWinCanvas;
 begin
   mem := CreateCompatibleDC(0);
@@ -150,19 +186,23 @@ begin
   canvas := TWinCanvas.Create;
   TinaInit(canvas);
   LoadUI(TemplateDir, Template, JsonContext);
+  if overlay then TinaSetDebugOverlay(True);
   canvas.BeginFrame(mem, bits, sw, sh);
   TinaFrame(sw, sh, 1.0);
   GdiFlush;
-  WinSaveDibPng(bits, sw, sh, outPath);
+  if snap <> '' then WinSaveDibPng(bits, sw, sh, snap);
+  EmitDump(dumpKind, dumpOut, ix, iy);
   canvas.Free; SelectObject(mem, oldb); DeleteObject(dib); DeleteDC(mem);
 end;
 
 procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: string; W, H: Integer);
-var wc: WNDCLASSEXW; m: MSG; cls, cap: UnicodeString; ico: HICON; snap: string;
+var wc: WNDCLASSEXW; m: MSG; cls, cap: UnicodeString; ico: HICON;
+    snap, dk, dout: string; overlay: Boolean; ix, iy: Single;
 begin
   GW := W; GH := H;
-  ParseArgs(snap, GW, GH);
-  if snap <> '' then begin WinSnapshot(TemplateDir, Template, JsonContext, GW, GH, snap); Halt(0); end;
+  ParseArgs(snap, GW, GH, overlay, dk, dout, ix, iy);
+  if (snap <> '') or (dk <> '') then
+  begin WinHeadless(TemplateDir, Template, JsonContext, GW, GH, snap, overlay, dk, dout, ix, iy); Halt(0); end;
   cls := 'Tina4AppWindow';
   FillChar(wc, SizeOf(wc), 0);
   wc.cbSize := SizeOf(wc); wc.style := CS_HREDRAW or CS_VREDRAW;
@@ -227,7 +267,7 @@ procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: stri
 var
   dpy: PXDisplay; scr: cint; win, pixmap: TXID; gc: TGC; canvas: TX11Canvas;
   GWv, GHv, pmW, pmH: cint; mouseDown: Boolean; wmDelete: TXID; ev: array[0..191] of Byte; etype: Integer;
-  snap: string; aw, ah: Integer;
+  snap, dk, dout: string; aw, ah: Integer; overlay: Boolean; ix, iy: Single;
 
   procedure EnsurePixmap;
   begin
@@ -249,17 +289,19 @@ begin
   if dpy = nil then begin Writeln('cannot open X display (set DISPLAY)'); Halt(1); end;
   scr := XDefaultScreen(dpy);
   gc := XCreateGC(dpy, XRootWindow(dpy, scr), 0, nil);
-  aw := GWv; ah := GHv; ParseArgs(snap, aw, ah); GWv := aw; GHv := ah;
-  if snap <> '' then
+  aw := GWv; ah := GHv; ParseArgs(snap, aw, ah, overlay, dk, dout, ix, iy); GWv := aw; GHv := ah;
+  if (snap <> '') or (dk <> '') then
   begin
     pixmap := XCreatePixmap(dpy, XRootWindow(dpy, scr), GWv, GHv, XDefaultDepth(dpy, scr));
     canvas := TX11Canvas.Create(dpy, scr, gc);
     TinaInit(canvas);
     LoadUI(TemplateDir, Template, JsonContext);
+    if overlay then TinaSetDebugOverlay(True);
     canvas.BeginFrame(pixmap, GWv, GHv);
     TinaFrame(GWv, GHv, 1.0);
     XFlush(dpy);
-    LinSaveBmp(dpy, pixmap, GWv, GHv, snap);
+    if snap <> '' then LinSaveBmp(dpy, pixmap, GWv, GHv, snap);
+    EmitDump(dk, dout, ix, iy);
     XCloseDisplay(dpy);
     Halt(0);
   end;
@@ -307,13 +349,14 @@ procedure MScroll(X, Y, DX, DY: Single); begin TinaScrollBy(X, Y, DX, DY); GShel
 procedure MTick; begin if TinaTick = 1 then GShell.Invalidate; end;
 
 procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: string; W, H: Integer);
-var snap: string; aw, ah: Integer;
+var snap, dk, dout: string; aw, ah: Integer; overlay: Boolean; ix, iy: Single;
 begin
-  aw := W; ah := H; ParseArgs(snap, aw, ah);
+  aw := W; ah := H; ParseArgs(snap, aw, ah, overlay, dk, dout, ix, iy);
   GShell := TCocoaShell.Create;
-  if snap <> '' then GShell.Headless := True;
+  if (snap <> '') or (dk <> '') then GShell.Headless := True;
   TinaInit(GShell.GetMeasuringCanvas);
   LoadUI(TemplateDir, Template, JsonContext);
+  if overlay then TinaSetDebugOverlay(True);
   GShell.OnPaint := @MPaint;
   GShell.OnMouseDown := @MDown;
   GShell.OnMouseUp := @MUp;
@@ -322,7 +365,12 @@ begin
   GShell.OnScroll := @MScroll;
   GShell.OnTick := @MTick;
   GShell.Initialize(aw, ah, Title);
-  if snap <> '' then begin GShell.Snapshot(snap); Halt(0); end;
+  if (snap <> '') or (dk <> '') then
+  begin
+    if snap <> '' then GShell.Snapshot(snap) else TinaFrame(aw, ah, 1.0);
+    EmitDump(dk, dout, ix, iy);
+    Halt(0);
+  end;
   GShell.StartTicker(16);
   GShell.Run;
 end;

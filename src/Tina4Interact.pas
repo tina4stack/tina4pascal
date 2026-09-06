@@ -112,6 +112,21 @@ procedure TinaSetColorScheme(Dark: Boolean);
   unaffected. Repaint after calling. }
 procedure TinaSetCaptureProtected(Protect: Boolean);
 
+{ ---- Debug / inspection (the "DevTools" surface) ----------------------
+  These let an IDE or the MCP see inside a running frame. Call after a TinaFrame
+  so layout is current. All coords are CSS px in the current viewport. }
+{ The DOM tree as a JSON string (tag, id, class, text, children). }
+function TinaDumpDom: string;
+{ The layout-box tree as JSON (tag, id, x, y, w, h, margin, border, padding, display, children). }
+function TinaBoxTree: string;
+{ Inspect the element at (X,Y): JSON with the tag, id/class, its box geometry and
+  key computed styles — the equivalent of a browser's "inspect element". }
+function TinaHitTestInfo(X, Y: Single): string;
+{ When on, TinaFrame outlines every layout box (content in blue, padding green,
+  margin orange) on top of the paint — so a snapshot shows the layout, like a
+  browser's layout highlighter. }
+procedure TinaSetDebugOverlay(OverlayOn: Boolean);
+
 { ---- Native media embeds (shell-owned <video>) ------------------------
   A <video> is laid out by the core as a sized black poster box; the shell
   overlays a native player on top. After painting a frame, the shell calls
@@ -184,6 +199,7 @@ var
   GOverX, GOverY, GOverW: Single;
   GScrollToFocus: Boolean = False;    // bring the focused field on-screen next paint
   GDarkMode: Boolean = False;         // prefers-color-scheme: dark active?
+  GDebugOverlay: Boolean = False;     // draw layout-box outlines over the paint
   // open <input type=date> calendar overlay (nil = closed)
   GOpenDate: THTMLTag = nil;
   GCalYear: Integer = 0; GCalMonth: Integer = 1;   // the month on show
@@ -1155,6 +1171,166 @@ begin
   TinaRenderTemplate(GTemplate, JsonContext);
 end;
 
+{ ---- Debug / inspection implementation -------------------------------- }
+
+function JEsc(const S: string): string;
+var i: Integer; c: Char;
+begin
+  Result := '';
+  for i := 1 to Length(S) do
+  begin
+    c := S[i];
+    case c of
+      '"': Result := Result + '\"';
+      '\': Result := Result + '\\';
+      #8: Result := Result + '\b';
+      #9: Result := Result + '\t';
+      #10: Result := Result + '\n';
+      #13: Result := Result + '\r';
+    else
+      if c < #32 then Result := Result + '\u' + LowerCase(IntToHex(Ord(c), 4))
+      else Result := Result + c;
+    end;
+  end;
+end;
+
+function ColHex(C: TAlphaColor): string;
+var a: Cardinal;
+begin
+  a := (C shr 24) and $FF;
+  if (a = $FF) or (a = 0) then Result := Format('#%.6x', [C and $FFFFFF])
+  else Result := Format('rgba(%d,%d,%d,%.2f)',
+    [(C shr 16) and $FF, (C shr 8) and $FF, C and $FF, a / 255]);
+end;
+
+function EdgeJson(const E: TEdgeValues): string;
+begin
+  Result := Format('[%.0f,%.0f,%.0f,%.0f]', [E.Top, E.Right, E.Bottom, E.Left]);
+end;
+
+function TagBrief(T: THTMLTag): string;
+begin
+  if T = nil then Exit('"#anon"');
+  Result := '"' + JEsc(T.TagName) + '"';
+end;
+
+function DomJson(T: THTMLTag): string;
+var i: Integer; kids, txt: string;
+begin
+  if T = nil then Exit('null');
+  if T.TagName = '#text' then
+  begin
+    txt := Trim(T.Text);
+    if txt = '' then Exit('');
+    Exit('{"text":"' + JEsc(txt) + '"}');
+  end;
+  Result := '{"tag":"' + JEsc(T.TagName) + '"';
+  if T.GetAttribute('id') <> '' then Result := Result + ',"id":"' + JEsc(T.GetAttribute('id')) + '"';
+  if T.GetAttribute('class') <> '' then Result := Result + ',"class":"' + JEsc(T.GetAttribute('class')) + '"';
+  kids := '';
+  for i := 0 to T.Children.Count - 1 do
+  begin
+    txt := DomJson(T.Children[i]);
+    if txt <> '' then
+    begin
+      if kids <> '' then kids := kids + ',';
+      kids := kids + txt;
+    end;
+  end;
+  if kids <> '' then Result := Result + ',"children":[' + kids + ']';
+  Result := Result + '}';
+end;
+
+function BoxJson(B: TLayoutBox): string;
+var i: Integer; kids: string;
+begin
+  if B = nil then Exit('null');
+  Result := '{"tag":' + TagBrief(B.Tag);
+  if (B.Tag <> nil) and (B.Tag.GetAttribute('id') <> '') then
+    Result := Result + ',"id":"' + JEsc(B.Tag.GetAttribute('id')) + '"';
+  Result := Result + Format(',"x":%.1f,"y":%.1f,"w":%.1f,"h":%.1f', [B.X, B.Y, B.W, B.H]);
+  Result := Result + ',"margin":' + EdgeJson(B.Style.Margin);
+  Result := Result + ',"border":' + EdgeJson(B.Style.BorderWidths);
+  Result := Result + ',"padding":' + EdgeJson(B.Style.Padding);
+  if B.Style.Display <> '' then Result := Result + ',"display":"' + JEsc(B.Style.Display) + '"';
+  kids := '';
+  for i := 0 to B.Children.Count - 1 do
+  begin
+    if kids <> '' then kids := kids + ',';
+    kids := kids + BoxJson(B.Children[i]);
+  end;
+  if kids <> '' then Result := Result + ',"children":[' + kids + ']';
+  Result := Result + '}';
+end;
+
+function TinaDumpDom: string;
+begin
+  if GParser = nil then Exit('{"error":"no document"}');
+  Result := DomJson(GParser.Root);
+  if Result = '' then Result := 'null';
+end;
+
+function TinaBoxTree: string;
+begin
+  if GRoot = nil then Exit('{"error":"no layout — call TinaFrame first"}');
+  Result := BoxJson(GRoot);
+end;
+
+function TinaHitTestInfo(X, Y: Single): string;
+var t: THTMLTag; b: TLayoutBox; s: TComputedStyle;
+begin
+  if GRoot = nil then Exit('{"error":"no layout — call TinaFrame first"}');
+  t := HitTest(GRoot, X, Y + GScrollY);
+  if t = nil then Exit('{"hit":null}');
+  b := FindBoxForTag(GRoot, t);
+  Result := '{"tag":"' + JEsc(t.TagName) + '"';
+  if t.GetAttribute('id') <> '' then Result := Result + ',"id":"' + JEsc(t.GetAttribute('id')) + '"';
+  if t.GetAttribute('class') <> '' then Result := Result + ',"class":"' + JEsc(t.GetAttribute('class')) + '"';
+  if b <> nil then
+  begin
+    Result := Result + Format(',"box":{"x":%.1f,"y":%.1f,"w":%.1f,"h":%.1f}', [b.X, b.Y, b.W, b.H]);
+    s := b.Style;
+    Result := Result + ',"style":{'
+      + '"display":"' + JEsc(s.Display) + '"'
+      + ',"color":"' + ColHex(s.Color) + '"'
+      + ',"background":"' + ColHex(s.BackgroundColor) + '"'
+      + Format(',"fontSize":%.1f', [s.FontSize])
+      + ',"fontFamily":"' + JEsc(s.FontFamily) + '"'
+      + ',"margin":' + EdgeJson(s.Margin)
+      + ',"padding":' + EdgeJson(s.Padding)
+      + ',"border":' + EdgeJson(s.BorderWidths)
+      + Format(',"radius":%.1f', [s.BorderRadius])
+      + Format(',"opacity":%.2f', [s.Opacity])
+      + ',"position":"' + JEsc(s.CSSPosition) + '"'
+      + '}';
+  end;
+  Result := Result + '}';
+end;
+
+procedure PaintDebugOverlay(B: TLayoutBox; ScrollY: Single);
+var i: Integer; x, y: Single;
+begin
+  if B = nil then Exit;
+  x := B.X; y := B.Y - ScrollY;
+  // margin (orange), then border box (blue), then content (green)
+  if (B.Style.Margin.Top <> 0) or (B.Style.Margin.Left <> 0) or
+     (B.Style.Margin.Right <> 0) or (B.Style.Margin.Bottom <> 0) then
+    GCanvas.StrokeRect(x - B.Style.Margin.Left, y - B.Style.Margin.Top,
+      B.W + B.Style.Margin.Horz, B.H + B.Style.Margin.Vert, 1, $66FF9800);
+  GCanvas.StrokeRect(x, y, B.W, B.H, 1, $992B41E6);
+  GCanvas.StrokeRect(
+    x + B.Style.BorderWidths.Left + B.Style.Padding.Left,
+    y + B.Style.BorderWidths.Top + B.Style.Padding.Top,
+    B.W - B.Style.BorderWidths.Horz - B.Style.Padding.Horz,
+    B.H - B.Style.BorderWidths.Vert - B.Style.Padding.Vert, 1, $6622AA55);
+  for i := 0 to B.Children.Count - 1 do PaintDebugOverlay(B.Children[i], ScrollY);
+end;
+
+procedure TinaSetDebugOverlay(OverlayOn: Boolean);
+begin
+  GDebugOverlay := OverlayOn;
+end;
+
 procedure TinaFrame(WPx, HPx: Integer; Density: Single);
 var cssW, cssH: Single;
 begin
@@ -1177,6 +1353,7 @@ begin
   if GRoot <> nil then PaintModalOverlay(GCanvas, GRoot, cssW, cssH);  // modal <dialog>
   PaintSelectOverlay(cssW, cssH);
   PaintDateOverlay(cssW, cssH);
+  if GDebugOverlay and (GRoot <> nil) then PaintDebugOverlay(GRoot, GScrollY);
 end;
 
 function TinaWantsKeyboard: Integer;
