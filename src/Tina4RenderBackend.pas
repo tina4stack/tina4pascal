@@ -86,6 +86,11 @@ type
     function RegisterFont(const Family, Src: string): Boolean; virtual;
     procedure SetClip(X, Y, W, H: Single); virtual; abstract;
     procedure ClearClip; virtual; abstract;
+    { Clip subsequent drawing to an arbitrary polygon (CSS clip-path; the core
+      tessellates circle/ellipse/inset/polygon to points in box coords). Must be
+      balanced by a SaveState/RestoreState pair. Default: no-op (no clipping —
+      the element simply paints unclipped, a safe degrade). }
+    procedure ClipPolygon(const Pts: TTina4PointArray); virtual;
     { Transform stack for CSS transforms (rotate/scale). Default no-ops so
       simple/headless backends ignore them. Always balance Save/Restore. }
     procedure SaveState; virtual;
@@ -362,5 +367,6 @@ procedure TTina4Canvas.Rotate(Degrees: Single); begin end;
 procedure TTina4Canvas.Scale(SX, SY: Single); begin end;
 procedure TTina4Canvas.Skew(AngleXDeg, AngleYDeg: Single); begin end;
 procedure TTina4Canvas.TransformMatrix(A, B, C, D, E, F: Single); begin end;
+procedure TTina4Canvas.ClipPolygon(const Pts: TTina4PointArray); begin end;
 
 end.

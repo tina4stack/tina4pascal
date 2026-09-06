@@ -707,6 +707,113 @@ begin
   else Result := t * t * (3 - 2 * t);   // ease / ease-in-out ≈ smoothstep
 end;
 
+{ Tessellate a CSS clip-path basic shape into a polygon in box coordinates.
+  Supports inset()/circle()/ellipse()/polygon(); returns [] for anything else
+  (the caller then skips clipping). BX,BY = border-box origin; BW,BH = its size. }
+function ClipPathPolygon(const Spec: string; BX, BY, BW, BH: Single): TTina4PointArray;
+var
+  s, inner, kw, radPart, cenPart: string;
+  args, xy: TStringArray;
+  i, n, seg: Integer;
+  t, r, b, l, cx, cy, rx, ry, ang: Single;
+
+  // resolve a length token against a reference dimension (px default, % of ref)
+  function LenOf(const Tok: string; Ref: Single): Single;
+  var v: string;
+  begin
+    v := Trim(Tok);
+    if v = '' then Exit(0);
+    if v.EndsWith('%') then Result := Ref * StrToFloatDef(Copy(v, 1, Length(v) - 1), 0) / 100
+    else Result := StrToFloatDef(StringReplace(v, 'px', '', [rfReplaceAll, rfIgnoreCase]), 0);
+  end;
+
+begin
+  SetLength(Result, 0);
+  s := Trim(Spec);
+  i := Pos('(', s);
+  if i = 0 then Exit;
+  kw := LowerCase(Trim(Copy(s, 1, i - 1)));
+  inner := Copy(s, i + 1, MaxInt);
+  n := LastDelimiter(')', inner); if n > 0 then inner := Copy(inner, 1, n - 1);
+  inner := Trim(inner);
+
+  if kw = 'inset' then
+  begin
+    // inset( t [r [b [l]]] [round ...] ) — drop any 'round' remainder
+    n := Pos('round', LowerCase(inner));
+    if n > 0 then inner := Trim(Copy(inner, 1, n - 1));
+    args := inner.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    t := 0; r := 0; b := 0; l := 0;
+    if Length(args) = 1 then begin t := LenOf(args[0], BH); r := LenOf(args[0], BW); b := t; l := r; end
+    else if Length(args) = 2 then begin t := LenOf(args[0], BH); b := t; r := LenOf(args[1], BW); l := r; end
+    else if Length(args) = 3 then begin t := LenOf(args[0], BH); r := LenOf(args[1], BW); l := r; b := LenOf(args[2], BH); end
+    else if Length(args) >= 4 then begin t := LenOf(args[0], BH); r := LenOf(args[1], BW); b := LenOf(args[2], BH); l := LenOf(args[3], BW); end;
+    SetLength(Result, 4);
+    Result[0].X := BX + l;      Result[0].Y := BY + t;
+    Result[1].X := BX + BW - r; Result[1].Y := BY + t;
+    Result[2].X := BX + BW - r; Result[2].Y := BY + BH - b;
+    Result[3].X := BX + l;      Result[3].Y := BY + BH - b;
+  end
+  else if (kw = 'circle') or (kw = 'ellipse') then
+  begin
+    // split "<radius> at <center>"; center defaults to 50% 50%
+    n := Pos(' at ', ' ' + LowerCase(inner) + ' ');
+    if n > 0 then begin radPart := Trim(Copy(inner, 1, n - 1)); cenPart := Trim(Copy(inner, n + 3, MaxInt)); end
+    else begin radPart := Trim(inner); cenPart := ''; end;
+    cx := BW / 2; cy := BH / 2;
+    if cenPart <> '' then
+    begin
+      args := cenPart.Split([' '], TStringSplitOptions.ExcludeEmpty);
+      if Length(args) >= 1 then cx := LenOf(args[0], BW);
+      if Length(args) >= 2 then cy := LenOf(args[1], BH);
+    end;
+    args := radPart.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    if kw = 'ellipse' then
+    begin
+      if Length(args) >= 1 then rx := LenOf(args[0], BW) else rx := BW / 2;
+      if Length(args) >= 2 then ry := LenOf(args[1], BH) else ry := BH / 2;
+    end
+    else
+    begin
+      // circle: one radius, px/% (% of sqrt(W²+H²)/√2) or closest/farthest-side
+      if (Length(args) >= 1) and (LowerCase(args[0]) = 'closest-side') then
+        rx := Min(Min(cx, BW - cx), Min(cy, BH - cy))
+      else if (Length(args) >= 1) and (LowerCase(args[0]) = 'farthest-side') then
+        rx := Max(Max(cx, BW - cx), Max(cy, BH - cy))
+      else if Length(args) >= 1 then rx := LenOf(args[0], Sqrt(BW * BW + BH * BH) / Sqrt(2))
+      else rx := Min(Min(cx, BW - cx), Min(cy, BH - cy)); // default closest-side
+      ry := rx;
+    end;
+    seg := 48;
+    SetLength(Result, seg);
+    for i := 0 to seg - 1 do
+    begin
+      ang := 2 * Pi * i / seg;
+      Result[i].X := BX + cx + rx * Cos(ang);
+      Result[i].Y := BY + cy + ry * Sin(ang);
+    end;
+  end
+  else if kw = 'polygon' then
+  begin
+    // polygon( [<fill-rule>,] x1 y1, x2 y2, ... ) — fill-rule prefix ignored
+    n := Pos(',', inner);
+    if n > 0 then
+    begin
+      kw := LowerCase(Trim(Copy(inner, 1, n - 1)));
+      if (kw = 'nonzero') or (kw = 'evenodd') then inner := Trim(Copy(inner, n + 1, MaxInt));
+    end;
+    args := inner.Split([',']);
+    for i := 0 to High(args) do
+    begin
+      xy := Trim(args[i]).Split([' '], TStringSplitOptions.ExcludeEmpty);
+      if Length(xy) < 2 then Continue;
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)].X := BX + LenOf(xy[0], BW);
+      Result[High(Result)].Y := BY + LenOf(xy[1], BH);
+    end;
+  end;
+end;
+
 { Interpolate two colours (ARGB) by t. }
 function LerpColor(A, B: TTina4Color; t: Single): TTina4Color;
   function Ch(sh: Integer): Cardinal;
@@ -3790,7 +3897,8 @@ begin
   // transform: rotate/scale — wrap the subtree paint in a canvas transform
   // about the box centre (default transform-origin)
   hasRS := (st.TransformRotate <> 0) or (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1)
-    or (st.TransformSkewX <> 0) or (st.TransformSkewY <> 0) or st.TransformMatrixSet;
+    or (st.TransformSkewX <> 0) or (st.TransformSkewY <> 0) or st.TransformMatrixSet
+    or (st.ClipPath <> '');
   if hasRS then
   begin
     // pivot at transform-origin (px or %-marker; default 50% 50% = centre)
@@ -3809,6 +3917,10 @@ begin
       Canvas.TransformMatrix(st.TransformMat[0], st.TransformMat[1], st.TransformMat[2],
                              st.TransformMat[3], st.TransformMat[4], st.TransformMat[5]);
     Canvas.Translate(-rcx, -rcy);
+    // clip-path: tessellate the shape to a polygon in box coords and clip the
+    // subtree to it (border-box reference; radius/mask etc. still TODO)
+    if st.ClipPath <> '' then
+      Canvas.ClipPolygon(ClipPathPolygon(st.ClipPath, Box.X, y, Box.W, Box.H));
   end;
   // CSS opacity multiplies down the subtree; visibility:hidden hides self+subtree
   op := Opacity;

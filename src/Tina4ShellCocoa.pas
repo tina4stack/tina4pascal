@@ -60,6 +60,7 @@ type
     procedure Scale(SX, SY: Single); override;
     procedure Skew(AngleXDeg, AngleYDeg: Single); override;
     procedure TransformMatrix(A, B, C, D, E, F: Single); override;
+    procedure ClipPolygon(const Pts: TTina4PointArray); override;
   end;
 
   { NSTimer target bridging into the shell's OnTick }
@@ -710,6 +711,17 @@ begin
   t := NSAffineTransform.transform;
   t.setTransformStruct(s);
   t.concat;
+end;
+
+procedure TCocoaCanvas.ClipPolygon(const Pts: TTina4PointArray);
+var p: NSBezierPath; i: Integer;
+begin
+  if Length(Pts) < 3 then Exit; // degenerate: leave unclipped
+  p := NSBezierPath.bezierPath;
+  p.moveToPoint(NSMakePoint(Pts[0].X, Pts[0].Y));
+  for i := 1 to High(Pts) do p.lineToPoint(NSMakePoint(Pts[i].X, Pts[i].Y));
+  p.closePath;
+  p.addClip; // intersects with the current clip; undone by RestoreState
 end;
 
 { TTina4View }

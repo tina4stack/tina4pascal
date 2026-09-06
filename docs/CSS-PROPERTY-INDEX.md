@@ -114,7 +114,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | transform: 3d | ❌ | 3D (rotateX/Y/Z, perspective) not applied — needs a projection pipeline |
 | transform-origin | ✅ | keyword/px/% pivot for rotate/scale/skew (default 50% 50%) |
 | perspective | ❌ | needs a 3D pipeline |
-| filter, backdrop-filter, clip-path, mask | ❌ | |
+| clip-path | ✅ | `inset()` / `circle()` / `ellipse()` / `polygon()` — the core tessellates the shape to a polygon in border-box coords and clips the subtree via the `ClipPolygon` contract method (Cocoa: `NSBezierPath.addClip`). Radius on `inset(... round)`, `path()`, and URL references not yet applied |
+| filter, backdrop-filter, mask, mix-blend-mode | ❌ | need an offscreen render target + compositing pass |
 | mix-blend-mode, background-blend-mode | ❌ | |
 | animation, @keyframes | ✅ | `@keyframes` parsed; `animation` shorthand + longhands (name/duration/delay/timing/iteration/direction). Per-frame interpolation at paint off the ticker: transform (translate/rotate/scale), opacity, background-color, color; timing linear/ease/ease-in/-out; iteration + alternate/reverse |
 | transition | ✅ | eases a property toward its computed value when it changes (hover/focus/DOM): background-color, color, opacity, transform (translate/rotate/scale). Per-element from/start tracked on the tag; duration/delay/timing/property from the shorthand + longhands. Mid-transition reversal supported |
@@ -175,8 +176,9 @@ col/row-resize.
 mode renderer doesn't yet have):
 1. **transform** 3D + `perspective` — a 3D projection pipeline (2D
     translate/rotate/scale/skew/matrix() + `transform-origin` done).
-2. **filter / backdrop-filter / clip-path / mask / blend-modes** — an offscreen
-    render target + image-filter/compositing pass per shell.
+2. **filter / backdrop-filter / mask / blend-modes** — an offscreen
+    render target + image-filter/compositing pass per shell (clip-path basic
+    shapes done via polygon clip).
 3. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
     `direction`/`writing-mode` (bidi), `list-style-image`, `vertical-align`
     text-top/bottom/length.

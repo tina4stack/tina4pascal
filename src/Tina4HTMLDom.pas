@@ -386,6 +386,7 @@ type
     TransformSkewY: Single;        // deg
     TransformMatrixSet: Boolean;   // CSS matrix(a,b,c,d,e,f) present
     TransformMat: array[0..5] of Single; // a,b,c,d,e,f
+    ClipPath: string;              // CSS clip-path (inset/circle/ellipse/polygon), '' = none
     TransformOriginX: Single;      // px, or a %-marker (<-1.5); default -50 = 50%
     TransformOriginY: Single;
     // CSS animation (@keyframes-driven). Resolved per frame at paint time.
@@ -2232,6 +2233,7 @@ begin
   Result.TransformScaleX := 1;
   Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
   Result.TransformMatrixSet := False;
+  Result.ClipPath := '';
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 end;
@@ -2672,6 +2674,7 @@ begin
   Result.TransformScaleX := 1;
   Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
   Result.TransformMatrixSet := False;
+  Result.ClipPath := '';
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 
@@ -4132,6 +4135,14 @@ begin
     if Length(OvParts) >= 1 then Style.TransformOriginX := OriginToken(OvParts[0], True);
     if Length(OvParts) >= 2 then Style.TransformOriginY := OriginToken(OvParts[1], False)
     else Style.TransformOriginY := -50;
+  end;
+
+  // clip-path: inset()/circle()/ellipse()/polygon() — tessellated to a polygon
+  // at paint time in box coords (see PaintBoxEx). 'none' clears it.
+  if Decls.TryGetValue('clip-path', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.ClipPath := ''
+    else Style.ClipPath := Trim(Temp);
   end;
 end;
 
