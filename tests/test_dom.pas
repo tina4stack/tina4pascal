@@ -497,6 +497,11 @@ begin
       'inline background-image URL extracted');
     CheckEqualsStr('block', CardStyle.Display, 'div UA default display block');
 
+    // <search> is a block landmark (regression guard for the block-tag set)
+    Check(THTMLParser.IsBlockTag('search'), '<search> is a block landmark');
+    Check(THTMLParser.IsBlockTag('nav'), '<nav> is a block (guard)');
+    Check(not THTMLParser.IsBlockTag('span'), '<span> is not a block (guard)');
+
     H1Style := TComputedStyle.ForTag(Headline, ParentStyle, Sheet);
     CheckEqualsF(24, H1Style.FontSize, 'CSS font-size 24px overrides h1 UA default 32');
     Check(H1Style.Bold, 'h1 UA default bold');

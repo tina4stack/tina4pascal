@@ -5,8 +5,8 @@ Every standard HTML element (per the
 with its status in the Tina4Pascal renderer. Companion to
 `CSS-PROPERTY-INDEX.md`. Goal: every rendered element ✅.
 
-**Re-audited 2026-09-05 against the source.** Corrections from the old tracker
-are flagged inline.
+**Re-audited 2026-09-06 against the source** (every ✅ spot-checked in code; added
+the `<search>` landmark found missing). Corrections are flagged inline.
 
 Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 (metadata/scripting) · ❌ Missing (should render, doesn't).
@@ -26,6 +26,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | Element | Status | Note |
 |---|---|---|
 | header, footer, main, section, article, aside, nav | ✅ | block |
+| search | ✅ | block landmark (wraps a search form) — added to the block-tag set |
 | h1–h6 | ✅ | UA sizes + weight + margins |
 | hgroup | ✅ | block; heading children stack |
 | address | ✅ | block + italic UA |
@@ -137,6 +138,8 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | onclick (any element) | ✅ | semantic `obj:method(args)` + `:active` feedback |
 | id / class / style | ✅ | selectors + inline styles (inline wins) |
 | hidden attribute | ✅ | ⇒ display:none |
+| `<!-- comments -->` | ✅ | stripped by the parser (`SkipComment`) — content and any tag-like text inside are dropped, never a stray node |
+| `<!DOCTYPE>` | ✅ | skipped (`SkipDoctype`) |
 
 ## Outstanding (verified against source 2026-09-05)
 
@@ -155,20 +158,15 @@ scope by design — native apps consume APIs built elsewhere.
 hook); `<textarea>` mid-text editing; `input[number]` steppers; `<fieldset>`
 notch; external `<link href>` CSS fetch (`FetchToFile` → `csscache/`).
 
-**Media — status:**
-4. **`video`** ✅ done — iOS `AVPlayerViewController` + Android `VideoView` overlays
-   over the core placeholder box; attributes (controls/autoplay/loop/muted/poster)
-   honored. macOS Cocoa `AVPlayerView` 🟡 (loop TODO).
-5. **`audio`** ✅ done — `<audio controls>` placeholder box + shell-owned native
-   player, sharing the `<video>` embed pipeline (`tina4_embed_kind` = 0/1).
-6. **`canvas`** ✅ done — pure-Pascal Canvas 2D (`Tina4Canvas2D`), no JS engine.
-7. **`lottie`** ✅ done — pure-Pascal Bodymovin player (`Tina4Lottie`) over Canvas 2D.
-   (`iframe` is intentionally not supported — use `<include src>`; `object`/`map`
-   are not planned.)
+**Media — all done:** `video` (iOS `AVPlayerViewController` + Android `VideoView`;
+macOS Cocoa `AVPlayerView` 🟡 loop TODO), `audio` (shares the video embed
+pipeline, `tina4_embed_kind` 0/1), `canvas` (pure-Pascal `Tina4Canvas2D`),
+`lottie` (pure-Pascal `Tina4Lottie`). `iframe`/`object`/`map` intentionally not
+rendered (use `<include src>`).
 
 **Deferred (need a larger subsystem, intentionally later):**
-6. **`bdi`/`bdo`** — bidi/direction override needs RTL support (engine is LTR).
-7. **`ruby`/`rt`/`rp`** — stacked CJK annotation positioning.
+- **`bdi`/`bdo`** — bidi/direction override needs RTL support (engine is LTR).
+- **`ruby`/`rt`/`rp`** — stacked CJK annotation positioning.
 
 **Done since the previous audit:** whole tables set (rowspan, caption+side,
 col/colgroup, tfoot, th); template/datalist inert; `<optgroup>`; `<dialog>`

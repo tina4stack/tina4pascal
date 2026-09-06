@@ -1667,6 +1667,7 @@ begin
     SameText(Name, 'dt') or SameText(Name, 'dd') or
     SameText(Name, 'details') or SameText(Name, 'summary') or
     SameText(Name, 'address') or SameText(Name, 'fieldset') or
+    SameText(Name, 'search') or
     SameText(Name, 'menu') or SameText(Name, 'hgroup') or
     SameText(Name, 'dialog') or SameText(Name, 'caption');
 end;
