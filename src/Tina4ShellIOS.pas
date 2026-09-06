@@ -22,9 +22,9 @@ interface
 uses
   CFBase, CFString, CFAttributedString, CFDictionary, CFURL, CFError,
   CGBase, CGContext, CGColor, CGColorSpace, CGGeometry, CGPath, CGGradient,
-  CGImage, CGImageSource, CGAffineTransforms, CGFont, CGDataProvider,
+  CGImage, CGImageSource, CGBitmapContext, CGAffineTransforms, CGFont, CGDataProvider,
   CTFont, CTFontTraits, CTFontManager, CTLine, CTStringAttributes,
-  Tina4RenderBackend;
+  Tina4RenderBackend, Tina4Compositor;
 
 { Implemented in the app (ios/app/ImageLoader.m): async NSURLSession download of
   a remote image to `path` (native TLS). On completion it calls tina4_image_ready
@@ -39,6 +39,9 @@ type
     FSpace: CGColorSpaceRef;        // cached device RGB colour space
     FImgs: array of record Img: CGImageRef; W, H: Single; end;
     FImgSrcs: array of string;
+    FLayers: array of record        // offscreen filter/blend/3D layer stack
+      Ctx, Saved: CGContextRef; ox, oy, w, h, sc: Single;
+    end;
     function MakeColor(Color: TTina4Color): CGColorRef;
     function MakeFont(FontSize: Single; Styles: TTina4FontStyles): CTFontRef;
     function MakeLine(const Text: string; FontSize: Single;
@@ -76,6 +79,11 @@ type
     function RegisterFont(const Family, Src: string): Boolean; override;
     function ImageSize(Handle: Integer; out W, H: Single): Boolean; override;
     procedure DrawImage(Handle: Integer; X, Y, W, H: Single); override;
+    function BeginLayer(X, Y, W, H, Pad: Single): Integer; override;
+    procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); override;
+    procedure EndLayer3D(Handle: Integer; const Corners: array of Single); override;
+    { backdrop-filter needs a read-back of the view's pixels, which a plain
+      CGContext can't provide on iOS — it stays the base no-op (degrades). }
   end;
 
 implementation
@@ -613,6 +621,119 @@ begin
   CGContextScaleCTM(FCtx, 1, -1);
   CGContextDrawImage(FCtx, R(0, 0, W, H), FImgs[Handle].Img);
   CGContextRestoreGState(FCtx);
+end;
+
+{ ---- offscreen filter / blend / 3D compositing (shared Tina4Compositor) ---- }
+
+function TIOSCanvas.BeginLayer(X, Y, W, H, Pad: Single): Integer;
+var ox, oy, bw, bh, sc: Single; pw, ph, n: Integer; bctx: CGContextRef; ctm: CGAffineTransform;
+begin
+  ox := X - Pad; oy := Y - Pad; bw := W + 2 * Pad; bh := H + 2 * Pad;
+  if (bw <= 0) or (bh <= 0) then Exit(-1);
+  ctm := CGContextGetCTM(FCtx);
+  sc := Abs(ctm.a); if sc <= 0 then sc := 1;   // device px per point
+  pw := Round(bw * sc); ph := Round(bh * sc);
+  bctx := CGBitmapContextCreate(nil, pw, ph, 8, pw * 4, FSpace, kCGImageAlphaPremultipliedLast);
+  if bctx = nil then Exit(-1);
+  // y-down in point space, origin at the box top-left (matches the view context)
+  CGContextTranslateCTM(bctx, 0, ph);
+  CGContextScaleCTM(bctx, sc, -sc);
+  CGContextTranslateCTM(bctx, -ox, -oy);
+  n := Length(FLayers); SetLength(FLayers, n + 1);
+  FLayers[n].Ctx := bctx; FLayers[n].Saved := FCtx;
+  FLayers[n].ox := ox; FLayers[n].oy := oy; FLayers[n].w := bw; FLayers[n].h := bh; FLayers[n].sc := sc;
+  FCtx := bctx;                 // redirect all drawing into the layer
+  Result := n;
+end;
+
+procedure TIOSCanvas.EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string);
+var
+  bctx: CGContextRef; ox, oy, bw, bh, sc: Single; pw, ph, i: Integer;
+  data: PByte; buf: PSingle; img: CGImageRef; v: Single;
+begin
+  if (Handle < 0) or (Handle > High(FLayers)) then Exit;
+  bctx := FLayers[Handle].Ctx;
+  ox := FLayers[Handle].ox; oy := FLayers[Handle].oy;
+  bw := FLayers[Handle].w; bh := FLayers[Handle].h; sc := FLayers[Handle].sc;
+  FCtx := FLayers[Handle].Saved;    // restore the view context
+  data := PByte(CGBitmapContextGetData(bctx));
+  pw := CGBitmapContextGetWidth(bctx); ph := CGBitmapContextGetHeight(bctx);
+  if (data <> nil) and ((FilterSpec <> '') or (MaskSpec <> '')) then
+  begin
+    GetMem(buf, pw * ph * 4 * SizeOf(Single));
+    for i := 0 to pw * ph * 4 - 1 do buf[i] := data[i] / 255;   // 8-bit premult → Single
+    ApplyFilterChainF(PSingleBuf(buf), pw, ph, FilterSpec, MaskSpec, sc);
+    for i := 0 to pw * ph * 4 - 1 do
+    begin v := buf[i]; if v < 0 then v := 0; if v > 1 then v := 1; data[i] := Round(v * 255); end;
+    FreeMem(buf);
+  end;
+  img := CGBitmapContextCreateImage(bctx);
+  if img <> nil then
+  begin
+    CGContextSaveGState(FCtx);
+    if BlendMode <> '' then CGContextSetBlendMode(FCtx, CGBlendForMode(LowerCase(BlendMode)));
+    CGContextTranslateCTM(FCtx, ox, oy + bh);   // upright y-down blit
+    CGContextScaleCTM(FCtx, 1, -1);
+    CGContextDrawImage(FCtx, R(0, 0, bw, bh), img);
+    CGContextRestoreGState(FCtx);
+    CGImageRelease(img);
+  end;
+  CGContextRelease(bctx);
+  SetLength(FLayers, Handle);
+end;
+
+procedure TIOSCanvas.EndLayer3D(Handle: Integer; const Corners: array of Single);
+var
+  bctx, tmp: CGContextRef; ox, oy, bw, bh, sc, minx, miny, maxx, maxy: Single;
+  pw, ph, dpw, dph, i: Integer; data, dst: PByte; src: PSingle; img: CGImageRef;
+  quad: array[0..7] of Single;
+begin
+  if (Handle < 0) or (Handle > High(FLayers)) then Exit;
+  bctx := FLayers[Handle].Ctx; sc := FLayers[Handle].sc;
+  ox := FLayers[Handle].ox; oy := FLayers[Handle].oy; bw := FLayers[Handle].w; bh := FLayers[Handle].h;
+  FCtx := FLayers[Handle].Saved;
+  data := PByte(CGBitmapContextGetData(bctx));
+  pw := CGBitmapContextGetWidth(bctx); ph := CGBitmapContextGetHeight(bctx);
+  if data <> nil then
+  begin
+    GetMem(src, pw * ph * 4 * SizeOf(Single));
+    for i := 0 to pw * ph * 4 - 1 do src[i] := data[i] / 255;   // premult 8-bit → Single
+    minx := Corners[0]; maxx := Corners[0]; miny := Corners[1]; maxy := Corners[1];
+    for i := 1 to 3 do
+    begin
+      if Corners[i*2]   < minx then minx := Corners[i*2];
+      if Corners[i*2]   > maxx then maxx := Corners[i*2];
+      if Corners[i*2+1] < miny then miny := Corners[i*2+1];
+      if Corners[i*2+1] > maxy then maxy := Corners[i*2+1];
+    end;
+    dpw := Round((maxx - minx) * sc); dph := Round((maxy - miny) * sc);
+    if (dpw > 0) and (dph > 0) then
+    begin
+      for i := 0 to 3 do
+      begin quad[i*2] := (Corners[i*2] - minx) * sc; quad[i*2+1] := (Corners[i*2+1] - miny) * sc; end;
+      GetMem(dst, dpw * dph * 4); FillChar(dst^, dpw * dph * 4, 0);
+      WarpQuad(PSingleBuf(src), pw, ph, quad, dst, dpw, dph);
+      tmp := CGBitmapContextCreate(dst, dpw, dph, 8, dpw * 4, FSpace, kCGImageAlphaPremultipliedLast);
+      if tmp <> nil then
+      begin
+        img := CGBitmapContextCreateImage(tmp);
+        if img <> nil then
+        begin
+          CGContextSaveGState(FCtx);
+          CGContextTranslateCTM(FCtx, minx, miny + (maxy - miny));
+          CGContextScaleCTM(FCtx, 1, -1);
+          CGContextDrawImage(FCtx, R(0, 0, maxx - minx, maxy - miny), img);
+          CGContextRestoreGState(FCtx);
+          CGImageRelease(img);
+        end;
+        CGContextRelease(tmp);
+      end;
+      FreeMem(dst);
+    end;
+    FreeMem(src);
+  end;
+  CGContextRelease(bctx);
+  SetLength(FLayers, Handle);
 end;
 
 finalization
