@@ -4,23 +4,38 @@
 # surface and the hand-run CLI stay one and the same. Served on /tina4pascal
 # (Streamable HTTP + legacy SSE) once `tina4 serve` is running in this folder.
 import os
+import platform
 import subprocess
 
 from tina4_python.mcp import McpServer, mcp_tool
 
 # repo root = four levels up from src/routes/tina4pascal.py (…/tools/mcp/src/routes)
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
-CLI = os.path.join(REPO, "tools", "tina4pascal")
+
+# Pick the right CLI per OS. On Windows the extensionless POSIX script is not an
+# executable (WinError 193), so drive the PowerShell CLI instead; everywhere else
+# use the POSIX script directly. CLI_CMD is a prefix arg list, not a single path.
+if os.name == "nt":
+    _PS1 = os.path.join(REPO, "tools", "tina4pascal.ps1")
+    CLI_CMD = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", _PS1]
+else:
+    CLI_CMD = [os.path.join(REPO, "tools", "tina4pascal")]
 
 mcp = McpServer("/tina4pascal", name="Tina4Pascal Dev Tools", version="1.0.0")
 
 TARGETS = "android | ios | macos | win64 | linux"
 
 
+def _host_target():
+    """The native desktop target for the machine the server runs on."""
+    s = platform.system()
+    return {"Windows": "win64", "Darwin": "macos"}.get(s, "linux")
+
+
 def _run(args, timeout=1800, cwd=None):
     """Run the tina4pascal CLI; return its combined output (or an error line)."""
     try:
-        p = subprocess.run([CLI, *args], cwd=(cwd or REPO), capture_output=True,
+        p = subprocess.run([*CLI_CMD, *args], cwd=(cwd or REPO), capture_output=True,
                            text=True, timeout=timeout)
         return ((p.stdout or "") + (p.stderr or "")).strip() or "(no output)"
     except subprocess.TimeoutExpired:
@@ -53,7 +68,7 @@ def doctor():
 def init(name: str, directory: str = ""):
     parent = directory or WORKSPACE
     os.makedirs(parent, exist_ok=True)
-    log = _run(["init", name, "--no-run"], cwd=parent)
+    log = _run(["init", name, "norun"], cwd=parent)
     return {"project": os.path.join(parent, name), "log": log}
 
 
@@ -69,7 +84,7 @@ def build(target: str, project: str = ""):
           "headless server the process starts but no window shows — use "
           "tina4_deploy/tina4_screenshot for on-device targets.", server=mcp)
 def run(project: str, target: str = ""):
-    tgt = target or ("macos" if os.uname().sysname == "Darwin" else "linux")
+    tgt = target or _host_target()
     build_log = _run(["build", tgt], cwd=project)
     name = os.path.basename(os.path.normpath(project))
     exe = os.path.join(project, "build", tgt, name)
@@ -97,7 +112,7 @@ def where(project: str, target: str = ""):
           server=mcp)
 def render(project: str, target: str = "", out: str = "shot",
            width: int = 900, height: int = 640, overlay: bool = False):
-    tgt = target or ("macos" if os.uname().sysname == "Darwin" else "linux")
+    tgt = target or _host_target()
     args = ["render", tgt, out, str(width), str(height)]
     if overlay:
         args.append("--overlay")
@@ -231,8 +246,19 @@ def release(keystore: str = "", alias: str = "", store_pass: str = "",
     if key_pass:
         env["TINA4_KEY_PASS"] = key_pass
     try:
-        p = subprocess.run([CLI, "release"], cwd=REPO, capture_output=True,
+        p = subprocess.run([*CLI_CMD, "release"], cwd=REPO, capture_output=True,
                            text=True, timeout=1800, env=env)
         return ((p.stdout or "") + (p.stderr or "")).strip() or "(no output)"
     except Exception as e:  # noqa: BLE001
         return f"error: {e}"
+
+
+# ── Mount ─────────────────────────────────────────────────────────────
+# Registering tools on the McpServer is not enough on its own: the HTTP
+# endpoints (POST /tina4pascal streamable + SSE) are only added to the Tina4
+# router when register_routes() runs. This module auto-discovers on startup, so
+# mounting here is what makes the server actually reachable by an MCP client.
+from tina4_python.core import router as _router  # noqa: E402
+
+mcp.register_routes(_router)
+

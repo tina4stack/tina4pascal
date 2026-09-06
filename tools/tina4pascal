@@ -703,7 +703,7 @@ debug_native() {
 # scaffold a full Tina4-backend-style project, then build + run it
 cmd_init() {
   name=""; norun=0
-  for a in "$@"; do case "$a" in --no-run) norun=1 ;; *) [ -z "$name" ] && name="$a" ;; esac; done
+  for a in "$@"; do case "$a" in --no-run|no-run|norun) norun=1 ;; *) [ -z "$name" ] && name="$a" ;; esac; done
   [ -n "$name" ] || die "usage: tina4pascal init <name> [--no-run]"
   [ -e "$name" ] && die "'$name' already exists"
   need_fpc

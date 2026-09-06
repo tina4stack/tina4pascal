@@ -48,7 +48,7 @@ function Invoke-Doctor {
     if (Test-Path (Join-Path $bin 'ppcrossx64.exe')) { Ok "win64 cross (ppcrossx64.exe)" } else { Miss "win64 cross missing - reinstall FPC with the win64 cross" }
     if (Test-Path (Join-Path $bin 'windres.exe')) { Ok "windres.exe (exe icon resource)" } else { Miss "windres.exe missing - the app-icon resource will not compile" }
   } else {
-    Miss "fpc.exe not found. Install FPC 3.2.2: https://www.freepascal.org/download.html (default C:\FPC\3.2.2), or via the pascal-dev MCP setup_fpc."
+    Miss "fpc.exe not found - it auto-installs on your first 'init'/'build'/'run'. To install by hand: FPC 3.2.2 from https://www.freepascal.org/download.html (default C:\FPC\3.2.2), or the pascal-dev MCP setup_fpc."
   }
   Write-Host ""
   Write-Host "Windows graphics (always present):"
@@ -155,7 +155,7 @@ function Write-File($path, $content) {
 }
 
 function Invoke-Init($name, $norun) {
-  if (-not $name -or $name -eq 'win64') { Write-Host "usage: tina4pascal.ps1 init <projectname> [--no-run]" -ForegroundColor Red; return }
+  if (-not $name -or $name -eq 'win64') { Write-Host "usage: tina4pascal.ps1 init <projectname> [norun]" -ForegroundColor Red; return }
   $fpc = Ensure-Fpc
   if (-not $fpc) { return }
   $proj = Join-Path (Get-Location) $name
@@ -261,8 +261,8 @@ fpc -Mdelphi -O2 -Xs -Fu'$wfw' -Fu. -Fusrc/routes -Fusrc/orm -Fusrc/services -Fl
 
 # Compile a project for a Windows target. $dbg=$true → DWARF symbols into build\<t>-debug\.
 function Build-ProjectWin($proj, $t, $dbg) {
-  $fpc = Find-Fpc
-  if (-not $fpc) { Write-Host "fpc.exe not found - run doctor" -ForegroundColor Red; return $null }
+  $fpc = Ensure-Fpc   # auto-download+install FPC on first use (not only via 'init')
+  if (-not $fpc) { Write-Host "fpc.exe not found and auto-install failed - see https://www.freepascal.org/download.html" -ForegroundColor Red; return $null }
   $flags = @('-Twin64','-Px86_64'); if ($t -eq 'win32') { $flags=@() }
   $name = Get-T4 $proj 'name' (Split-Path -Leaf $proj)
   $main = ((Get-T4 $proj 'main' 'app.pas') -replace '/','\')
@@ -521,6 +521,11 @@ function Build-ProjectAndroid($proj) {
 # Is the current directory a Tina4Pascal project?
 function Project-Root { if (Test-Path (Join-Path (Get-Location) 'tina4.json')) { return (Get-Location).Path } else { return $null } }
 
+# Verb aliases so the cross-platform docs (which use the POSIX CLI's 'new'/'dev')
+# work verbatim here too: new == init (scaffold), dev == run (build + launch).
+if ($cmd -eq 'new') { $cmd = 'init' }
+if ($cmd -eq 'dev') { $cmd = 'run' }
+
 if ($cmd -eq 'doctor') {
   Invoke-Doctor
 } elseif ($cmd -eq 'setup') {
@@ -538,7 +543,10 @@ if ($cmd -eq 'doctor') {
     Write-Host "usage: tina4pascal.ps1 setup android" -ForegroundColor Yellow
   }
 } elseif ($cmd -eq 'init') {
-  Invoke-Init $target ($page -eq '--no-run')
+  # Accept norun / no-run / --no-run: PowerShell -File treats a leading '--' token
+  # as a parameter name, so the dashless spelling is the one that reaches here.
+  $norun = (($page -replace '^-+','') -in @('norun','no-run'))
+  Invoke-Init $target $norun
 } elseif ($cmd -eq 'build') {
   $pr = Project-Root
   if ($pr) { Build-Project $pr $target | Out-Null }   # inside a project: build the app
@@ -632,5 +640,5 @@ if ($cmd -eq 'doctor') {
     }
   }
 } else {
-  Write-Host "unknown command '$cmd' (doctor | setup android | init | build [win64|win32|linux|android|all] | run | render | dom | boxes | inspect | debug | script | where)"
+  Write-Host "unknown command '$cmd' (doctor | setup android | init (alias: new) | build [win64|win32|linux|android|all] | run (alias: dev) | render | dom | boxes | inspect | debug | script | where)"
 }

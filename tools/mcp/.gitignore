@@ -1,0 +1,12 @@
+# Python env
+.venv/
+__pycache__/
+
+# tina4 serve runtime state (regenerated on every run)
+.tina4/
+data/
+logs/
+*.db
+
+# per-machine secrets (generated: TINA4_SECRET, etc.) — never commit
+.env.local
