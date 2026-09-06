@@ -2496,6 +2496,22 @@ var
     end;
   end;
 
+  { Trailing margin-right on an inline/inline-block element becomes a zero-height
+    spacer in the flow — the horizontal mirror of the margin-left spacer above,
+    so e.g. inline-block chips with margin-right actually sit apart. }
+  procedure EmitInlineMarginRight(const MS: TComputedStyle);
+  var sp: TInlineItem;
+  begin
+    if MS.Margin.Right <= 0 then Exit;
+    sp.Text := ''; sp.Box := nil; sp.W := MS.Margin.Right; sp.H := 0;
+    sp.Ascent := 0; sp.FontAscent := 0; sp.FontSize := MS.FontSize;
+    sp.Styles := []; sp.Color := 0; sp.LetterSpacing := 0;
+    sp.FontFamily := ''; sp.FontWeight := 400;
+    sp.ShadowDX := 0; sp.ShadowDY := 0; sp.ShadowColor := 0;
+    sp.SpaceBefore := False; sp.LineBreak := False;
+    items.Add(sp);
+  end;
+
   procedure GatherInline(T: THTMLTag; const St: TComputedStyle);
   var
     c: THTMLTag;
@@ -2646,6 +2662,7 @@ var
       pendingSpace := False;
       Box.Children.Add(it.Box);
       items.Add(it);
+      EmitInlineMarginRight(cs);
       Exit;
     end;
     if SameText(T.TagName, 'qrcode') then
@@ -2716,6 +2733,7 @@ var
       pendingSpace := False;
       Box.Children.Add(it.Box);
       items.Add(it);
+      EmitInlineMarginRight(cs);
       Exit;
     end;
     if IsFormControlTag(T.TagName) then
@@ -2734,6 +2752,7 @@ var
       pendingSpace := False;
       Box.Children.Add(it.Box);
       items.Add(it);
+      EmitInlineMarginRight(cs);
       Exit;
     end;
     { An inline element with visible box styling (background, border,
@@ -2756,6 +2775,7 @@ var
       pendingSpace := False;
       Box.Children.Add(it.Box);
       items.Add(it);
+      EmitInlineMarginRight(cs);
       Exit;
     end;
     // <q> gets automatic quotation marks around its content
