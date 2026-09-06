@@ -91,6 +91,12 @@ layout all match. The only tells are the platform form widgets: the
 Chrome shows the OS `2026/09/06` spinner) and the `<select>` chevron — Tina4
 draws both itself, so they follow **your CSS**, not the OS. Reproduce it with
 `tools/tina4pascal render` (Tina4) beside any browser.
+
+And because Tina4 owns the widget, opening that date field gives you a full
+**native calendar** — engine-drawn, CSS-styled, identical on every platform (no
+OS date dialog):
+
+<p><img src="docs/images/calendar.png" width="420" alt="Tina4 native calendar picker"></p>
 </details>
 
 ## Toolsets
@@ -225,24 +231,22 @@ PPC_CONFIG_PATH=$HOME/fpc/etc $HOME/fpc/bin/fpc -Mdelphi -Twin64 -Px86_64 \
 
 ### What's next on Windows
 
-The GDI shell renders shapes, ClearType text, clipping, 2D transforms and the
-full compositing pipeline. Remaining work, in order:
+The GDI+ shell renders shapes, ClearType text, clipping, 2D transforms, the full
+compositing pipeline, **AA gradients (linear/radial), `<img>` decode/draw, and
+per-pixel `rgba()` alpha** — the [comparison above](#spot-the-browser) exercises
+all of them. Remaining polish:
 
-1. **Gradients + `<img>`** — `FillLinearGradient`/`DrawImage` are no-ops today;
-   wire GDI+ (or WIC) for gradient fills and image decode/draw.
-2. **Per-pixel alpha on ordinary fills** — plain `rgba()` / semi-transparent
-   backgrounds paint opaque (GDI limitation). The DIB-section path already
-   fixes alpha for *composited* elements; extend it to normal fills.
-3. **Rounded-corner alpha inside a filtered box** — a `filter`/`blur` on a
+1. **Rounded-corner alpha inside a filtered box** — a `filter`/`blur` on a
    `border-radius` box shows square corners (GDI doesn't hand us coverage);
    recover it by rasterising the clip shape into the layer's alpha channel.
-4. **Advanced blend modes** — color-dodge/burn, hue/saturation/color/luminosity
+2. **Advanced blend modes** — color-dodge/burn, hue/saturation/color/luminosity
    currently fall back to source-over; add them to `BlendPixel`.
-5. **HiDPI** — the shell runs at density 1; read the per-monitor DPI and
+3. **HiDPI** — the shell runs at density 1; read the per-monitor DPI and
    supersample the layers.
 
-See `src/Tina4ShellWin.pas` (canvas) and `examples/htmlviewer/htmlviewer_win.pas`
-(the Win32 host + message loop).
+Reftests: **125/130** pass (the 5 fails are exactly the items above plus
+`clip-path`). See `src/Tina4ShellWin.pas` (canvas) and
+`examples/htmlviewer/htmlviewer_win.pas` (the Win32 host + message loop).
 
 ## The full stack
 
