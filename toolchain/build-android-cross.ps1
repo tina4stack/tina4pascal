@@ -196,5 +196,11 @@ if ($Zip) {
   $zipOut = Join-Path $Out "tina4-fpc-android-cross-$FpcVer-win64.zip"
   Remove-Item $zipOut -Force -ErrorAction SilentlyContinue
   Compress-Archive -Path (Join-Path $Pack '*') -DestinationPath $zipOut
+  # Ship an integrity checksum next to the asset so a download can be verified
+  # before install (the cheap, cert-free half of "signing the delivered assets";
+  # Authenticode-sign the .exe/.ps1 separately for SmartScreen / execution policy).
+  $sha = (Get-FileHash $zipOut -Algorithm SHA256).Hash.ToLower()
+  "$sha  $(Split-Path -Leaf $zipOut)" | Set-Content "$zipOut.sha256" -Encoding ascii
   Say "release asset: $zipOut ($([math]::Round((Get-Item $zipOut).Length/1MB,1)) MB)"
+  Say "sha256: $sha"
 }
