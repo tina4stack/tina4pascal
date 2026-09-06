@@ -5,16 +5,17 @@ unit Tina4ShellLinux;
   Implements the TTina4Canvas contract on plain Xlib (no GTK/Qt/LCL, no Xft) —
   the same idea as the Cocoa (AppKit) and Windows (GDI) shells. The host creates
   a Display, a back-buffer Pixmap and a GC; the engine paints into the Pixmap
-  through this canvas: solid/rounded rects, lines, clipping and antialiased-ish
-  core-font text; the host then XCopyArea's the Pixmap to the window per frame.
+  through this canvas, and the host XCopyArea's it to the window per frame.
 
-  v1 scope (parity foothold, mirrors the Android shell's "no compositing yet"):
-  shapes, gradients (via the portable software rasteriser in the base canvas),
-  text and clipping all render. CSS transforms, images and the offscreen
-  filter/blend/mask/3D compositor degrade safely (the base contract's no-ops),
-  and are the next step here — Xrender/XRender-picture or the software raster.
+  Renders: solid/rounded rects (XFillArc corners), lines, core scalable-font
+  text (XLFD/iso8859-1), an intersecting clip stack, gradients (via the portable
+  software rasteriser in the base canvas) AND the offscreen filter / mix-blend /
+  mask / 3D compositor — drawn into layer Pixmaps, read back with XGetImage, run
+  through the shared Tina4Compositor, and XPutImage'd onto the parent (the same
+  pipeline the Windows shell runs on a DIB section). CSS transforms and images
+  are the remaining v1 gaps (safe no-op degrade).
 
-  Colours are $AARRGGBB; the pixel sent to X assumes a 24-bit TrueColor visual
+  Colours are $AARRGGBB; the pixel sent to X assumes a 24/32-bit TrueColor visual
   (RGB in the low 3 bytes), which is what Xorg/XWayland give by default. }
 
 {$mode objfpc}{$H+}{$PACKRECORDS C}
@@ -22,7 +23,7 @@ unit Tina4ShellLinux;
 interface
 
 uses
-  ctypes, SysUtils, Classes, Tina4RenderBackend;
+  ctypes, SysUtils, Classes, Tina4RenderBackend, Tina4Compositor;
 
 type
   PXDisplay = Pointer;
@@ -32,21 +33,32 @@ type
 
   TClipState = record HasClip: Boolean; X, Y, W, H: cint; end;
 
+  TX11Layer = record
+    Pm: TXID; Saved: TDrawable; SavedW, SavedH: cint;
+    Ox, Oy, Bw, Bh: cint;
+    SavedOrgX, SavedOrgY: cint;
+    SavedClip: TClipState; SavedStackLen: Integer;
+  end;
+
   TX11Canvas = class(TTina4Canvas)
   private
     FDpy: PXDisplay;
     FScreen: cint;
     FGC: TGC;
     FDraw: TDrawable;
-    FW, FH: cint;
-    FFonts: TStringList;          // XLFD -> PXFontStruct (Objects)
+    FW, FH: cint;               // dims of the current draw target
+    FOrgX, FOrgY: cint;         // doc->target origin offset (nonzero inside a layer)
+    FFonts: TStringList;
     FCur: TClipState;
     FStack: array of TClipState;
+    FLayers: array of TX11Layer;
     function FontFor(SizePx: Single; Styles: TTina4FontStyles): Pointer;
     procedure SetFg(Color: TTina4Color);
     procedure ApplyClip;
     procedure PushState;
     procedure PopState;
+    function DX(v: Single): cint; inline;
+    function DY(v: Single): cint; inline;
   public
     constructor Create(ADpy: PXDisplay; AScreen: cint; AGC: TGC);
     destructor Destroy; override;
@@ -64,11 +76,14 @@ type
     procedure ClearClip; override;
     procedure SaveState; override;
     procedure RestoreState; override;
+    function BeginLayer(X, Y, W, H, Pad: Single): Integer; override;
+    procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); override;
+    procedure BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); override;
+    procedure EndLayer3D(Handle: Integer; const Corners: array of Single); override;
   end;
 
 { Grab the back-buffer pixels and write them to a 24-bit BMP — the headless
-  snapshot path for the reftest/compliance harness (mirrors the mac/win
-  `<page> --snapshot`). Returns True on success. }
+  snapshot path for the reftest/compliance harness. }
 function LinSaveBmp(ADpy: PXDisplay; ADraw: TDrawable; W, H: cint;
   const Path: string): Boolean;
 
@@ -113,6 +128,15 @@ type
     bytes_per_line: cint;
     bits_per_pixel: cint;
     red_mask, green_mask, blue_mask: culong;
+    obdata: Pointer;
+    f: record
+      create_image: Pointer;
+      destroy_image: function(img: PXImage): cint; cdecl;
+      get_pixel: Pointer;
+      put_pixel: Pointer;
+      sub_image: Pointer;
+      add_pixel: Pointer;
+    end;
   end;
 
 function XSetForeground(dpy: PXDisplay; gc: TGC; c: culong): cint; cdecl; external;
@@ -120,7 +144,6 @@ function XFillRectangle(dpy: PXDisplay; d: TDrawable; gc: TGC; x, y: cint; w, h:
 function XDrawRectangle(dpy: PXDisplay; d: TDrawable; gc: TGC; x, y: cint; w, h: cuint): cint; cdecl; external;
 function XDrawLine(dpy: PXDisplay; d: TDrawable; gc: TGC; x1, y1, x2, y2: cint): cint; cdecl; external;
 function XFillArc(dpy: PXDisplay; d: TDrawable; gc: TGC; x, y: cint; w, h: cuint; a1, a2: cint): cint; cdecl; external;
-function XDrawArc(dpy: PXDisplay; d: TDrawable; gc: TGC; x, y: cint; w, h: cuint; a1, a2: cint): cint; cdecl; external;
 function XSetLineAttributes(dpy: PXDisplay; gc: TGC; w: cuint; ls, cs, js: cint): cint; cdecl; external;
 function XSetClipRectangles(dpy: PXDisplay; gc: TGC; xo, yo: cint; r: Pointer; n, ordering: cint): cint; cdecl; external;
 function XSetClipMask(dpy: PXDisplay; gc: TGC; p: TXID): cint; cdecl; external;
@@ -130,32 +153,73 @@ function XSetFont(dpy: PXDisplay; gc: TGC; font: TXID): cint; cdecl; external;
 function XTextWidth(f: PXFontStruct; s: PChar; count: cint): cint; cdecl; external;
 function XDrawString(dpy: PXDisplay; d: TDrawable; gc: TGC; x, y: cint; s: PChar; len: cint): cint; cdecl; external;
 function XGetImage(dpy: PXDisplay; d: TDrawable; x, y: cint; w, h: cuint; plane: culong; fmt: cint): PXImage; cdecl; external;
+function XPutImage(dpy: PXDisplay; d: TDrawable; gc: TGC; img: PXImage; sx, sy, dx, dy: cint; w, h: cuint): cint; cdecl; external;
+function XCreatePixmap(dpy: PXDisplay; drw: TXID; w, h, depth: cuint): TXID; cdecl; external;
+function XFreePixmap(dpy: PXDisplay; p: TXID): cint; cdecl; external;
+function XRootWindow(dpy: PXDisplay; s: cint): TXID; cdecl; external;
+function XDefaultDepth(dpy: PXDisplay; s: cint): cint; cdecl; external;
 
 const
   ZPixmap = 2;
-  CoordModeOrigin = 0;
   Unsorted = 0;
+  AllPlanes = culong($FFFFFFFFFFFFFFFF);
 
-{ ---- helpers ---- }
+procedure DestroyImage(img: PXImage); inline;
+begin
+  if (img <> nil) and (img^.f.destroy_image <> nil) then img^.f.destroy_image(img);
+end;
 
-{ UTF-8 -> Latin-1 (best effort): core X fonts are 8-bit iso8859-1, so map the
-  BMP Latin-1 range and drop the rest to '?'. Fine for the Western demo text;
-  full Unicode text is a job for Xft/freetype (the quality upgrade). }
+function GetPx(img: PXImage; x, y: cint): LongWord; inline;
+var p: PByte;
+begin
+  p := img^.data + y * img^.bytes_per_line + x * (img^.bits_per_pixel div 8);
+  Result := (LongWord(p[2]) shl 16) or (LongWord(p[1]) shl 8) or LongWord(p[0]);
+end;
+
+procedure SetPx(img: PXImage; x, y: cint; rgb: LongWord); inline;
+var p: PByte;
+begin
+  p := img^.data + y * img^.bytes_per_line + x * (img^.bits_per_pixel div 8);
+  p[0] := rgb and $FF; p[1] := (rgb shr 8) and $FF; p[2] := (rgb shr 16) and $FF;
+end;
+
+{ blend one premultiplied source pixel (sr,sg,sb,sa) over an opaque RGB dest,
+  returning packed 0xRRGGBB — a straight port of the Windows shell's BlendPixel. }
+function BlendRGB(dst: LongWord; sr, sg, sb, sa: Single; const Blend: string): LongWord;
+var dr, dg, db, br, bg, bb: Single;
+begin
+  if sa <= 0 then Exit(dst);
+  dr := ((dst shr 16) and $FF) / 255; dg := ((dst shr 8) and $FF) / 255; db := (dst and $FF) / 255;
+  if Blend = '' then begin br := sr; bg := sg; bb := sb; end
+  else
+  begin
+    if sa > 0 then begin br := sr / sa; bg := sg / sa; bb := sb / sa; end else begin br := 0; bg := 0; bb := 0; end;
+    if Blend = 'multiply' then begin br := br*dr; bg := bg*dg; bb := bb*db; end
+    else if Blend = 'screen' then begin br := br+dr-br*dr; bg := bg+dg-bg*dg; bb := bb+db-bb*db; end
+    else if Blend = 'darken' then begin if dr<br then br:=dr; if dg<bg then bg:=dg; if db<bb then bb:=db; end
+    else if Blend = 'lighten' then begin if dr>br then br:=dr; if dg>bg then bg:=dg; if db>bb then bb:=db; end
+    else if Blend = 'difference' then begin br := Abs(br-dr); bg := Abs(bg-dg); bb := Abs(bb-db); end
+    else if Blend = 'overlay' then begin
+      if dr<=0.5 then br:=2*br*dr else br:=1-2*(1-br)*(1-dr);
+      if dg<=0.5 then bg:=2*bg*dg else bg:=1-2*(1-bg)*(1-dg);
+      if db<=0.5 then bb:=2*bb*db else bb:=1-2*(1-bb)*(1-db); end;
+    br := br*sa; bg := bg*sa; bb := bb*sa;
+  end;
+  dr := br + dr*(1-sa); dg := bg + dg*(1-sa); db := bb + db*(1-sa);
+  if dr<0 then dr:=0; if dr>1 then dr:=1; if dg<0 then dg:=0; if dg>1 then dg:=1; if db<0 then db:=0; if db>1 then db:=1;
+  Result := (Round(dr*255) shl 16) or (Round(dg*255) shl 8) or Round(db*255);
+end;
+
+{ UTF-8 -> Latin-1 (best effort) for the 8-bit iso8859-1 core fonts. }
 function ToLatin1(const S: string): AnsiString;
 var i, n, cp: Integer; b: Byte;
 begin
-  Result := '';
-  i := 1; n := Length(S);
+  Result := ''; i := 1; n := Length(S);
   while i <= n do
   begin
     b := Byte(S[i]);
     if b < $80 then begin Result := Result + AnsiChar(b); Inc(i); end
-    else if (b and $E0) = $C0 then
-    begin
-      cp := ((b and $1F) shl 6) or (Byte(S[i+1]) and $3F);
-      if cp <= 255 then Result := Result + AnsiChar(cp) else Result := Result + '?';
-      Inc(i, 2);
-    end
+    else if (b and $E0) = $C0 then begin cp := ((b and $1F) shl 6) or (Byte(S[i+1]) and $3F); if cp <= 255 then Result := Result + AnsiChar(cp) else Result := Result + '?'; Inc(i, 2); end
     else if (b and $F0) = $E0 then begin Result := Result + '?'; Inc(i, 3); end
     else if (b and $F8) = $F0 then begin Result := Result + '?'; Inc(i, 4); end
     else begin Result := Result + '?'; Inc(i); end;
@@ -166,9 +230,8 @@ constructor TX11Canvas.Create(ADpy: PXDisplay; AScreen: cint; AGC: TGC);
 begin
   inherited Create;
   FDpy := ADpy; FScreen := AScreen; FGC := AGC;
-  FFonts := TStringList.Create;
-  FFonts.Sorted := True; FFonts.Duplicates := dupIgnore;
-  FCur.HasClip := False;
+  FFonts := TStringList.Create; FFonts.Sorted := True; FFonts.Duplicates := dupIgnore;
+  FCur.HasClip := False; FOrgX := 0; FOrgY := 0;
 end;
 
 destructor TX11Canvas.Destroy;
@@ -180,18 +243,21 @@ begin
   inherited Destroy;
 end;
 
+function TX11Canvas.DX(v: Single): cint; begin Result := Round(v) - FOrgX; end;
+function TX11Canvas.DY(v: Single): cint; begin Result := Round(v) - FOrgY; end;
+
 procedure TX11Canvas.BeginFrame(ADraw: TDrawable; AW, AH: cint);
 begin
-  FDraw := ADraw; FW := AW; FH := AH;
-  SetLength(FStack, 0);
+  FDraw := ADraw; FW := AW; FH := AH; FOrgX := 0; FOrgY := 0;
+  SetLength(FStack, 0); SetLength(FLayers, 0);
   FCur.HasClip := False; ApplyClip;
-  XSetForeground(FDpy, FGC, $FFFFFF);           // white ground
+  XSetForeground(FDpy, FGC, $FFFFFF);
   XFillRectangle(FDpy, FDraw, FGC, 0, 0, AW, AH);
 end;
 
 procedure TX11Canvas.SetFg(Color: TTina4Color);
 begin
-  XSetForeground(FDpy, FGC, culong(Color and $FFFFFF));   // $AARRGGBB -> RGB
+  XSetForeground(FDpy, FGC, culong(Color and $FFFFFF));
 end;
 
 procedure TX11Canvas.ApplyClip;
@@ -203,20 +269,17 @@ begin
     XSetClipRectangles(FDpy, FGC, 0, 0, @r, 1, Unsorted);
   end
   else
-    XSetClipMask(FDpy, FGC, 0);   // None
+    XSetClipMask(FDpy, FGC, 0);
 end;
 
 procedure TX11Canvas.PushState;
 var n: Integer;
-begin
-  n := Length(FStack); SetLength(FStack, n + 1); FStack[n] := FCur;
-end;
+begin n := Length(FStack); SetLength(FStack, n + 1); FStack[n] := FCur; end;
 
 procedure TX11Canvas.PopState;
 var n: Integer;
 begin
-  n := Length(FStack);
-  if n = 0 then Exit;
+  n := Length(FStack); if n = 0 then Exit;
   FCur := FStack[n - 1]; SetLength(FStack, n - 1); ApplyClip;
 end;
 
@@ -230,12 +293,11 @@ begin
   if (first = '') or (first = 'sans-serif') or (first = 'system-ui') or (first = 'arial') then fam := 'helvetica'
   else if first = 'serif' then fam := 'times'
   else if (first = 'monospace') or (first = 'mono') or (first = 'consolas') then fam := 'courier'
-  else fam := 'helvetica';   // unknown/unavailable specific family -> safe core scalable face
+  else fam := 'helvetica';
   if (tfsBold in Styles) or (FontWeight >= 600) then weight := 'bold' else weight := 'medium';
   if tfsItalic in Styles then slant := 'i' else slant := 'r';
   px := Round(SizePx); if px < 6 then px := 6;
   xlfd := Format('-*-%s-%s-%s-normal--%d-0-0-0-*-0-iso8859-1', [fam, weight, slant, px]);
-
   p := FFonts.IndexOf(xlfd);
   if p >= 0 then Exit(Pointer(FFonts.Objects[p]));
   f := XLoadQueryFont(FDpy, PChar(xlfd));
@@ -249,14 +311,14 @@ procedure TX11Canvas.FillRect(X, Y, W, H: Single; Color: TTina4Color);
 begin
   if (W <= 0) or (H <= 0) then Exit;
   SetFg(Color);
-  XFillRectangle(FDpy, FDraw, FGC, Round(X), Round(Y), Round(W), Round(H));
+  XFillRectangle(FDpy, FDraw, FGC, DX(X), DY(Y), Round(W), Round(H));
 end;
 
 procedure TX11Canvas.StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color);
 begin
   SetFg(Color);
   XSetLineAttributes(FDpy, FGC, Round(Thickness), 0, 0, 0);
-  XDrawRectangle(FDpy, FDraw, FGC, Round(X), Round(Y), Round(W), Round(H));
+  XDrawRectangle(FDpy, FDraw, FGC, DX(X), DY(Y), Round(W), Round(H));
 end;
 
 procedure TX11Canvas.FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color);
@@ -266,22 +328,21 @@ begin
   r := Round(Radius);
   if r > Round(W / 2) then r := Round(W / 2);
   if r > Round(H / 2) then r := Round(H / 2);
-  xi := Round(X); yi := Round(Y); wi := Round(W); hi := Round(H);
-  if r <= 0 then begin FillRect(X, Y, W, H, Color); Exit; end;
+  xi := DX(X); yi := DY(Y); wi := Round(W); hi := Round(H);
+  if r <= 0 then begin SetFg(Color); XFillRectangle(FDpy, FDraw, FGC, xi, yi, wi, hi); Exit; end;
   SetFg(Color);
   d := 2 * r;
-  XFillRectangle(FDpy, FDraw, FGC, xi + r, yi, wi - d, hi);           // centre column
-  XFillRectangle(FDpy, FDraw, FGC, xi, yi + r, r, hi - d);            // left edge
-  XFillRectangle(FDpy, FDraw, FGC, xi + wi - r, yi + r, r, hi - d);   // right edge
-  XFillArc(FDpy, FDraw, FGC, xi, yi, d, d, 90*64, 90*64);                    // TL
-  XFillArc(FDpy, FDraw, FGC, xi + wi - d, yi, d, d, 0, 90*64);               // TR
-  XFillArc(FDpy, FDraw, FGC, xi, yi + hi - d, d, d, 180*64, 90*64);          // BL
-  XFillArc(FDpy, FDraw, FGC, xi + wi - d, yi + hi - d, d, d, 270*64, 90*64); // BR
+  XFillRectangle(FDpy, FDraw, FGC, xi + r, yi, wi - d, hi);
+  XFillRectangle(FDpy, FDraw, FGC, xi, yi + r, r, hi - d);
+  XFillRectangle(FDpy, FDraw, FGC, xi + wi - r, yi + r, r, hi - d);
+  XFillArc(FDpy, FDraw, FGC, xi, yi, d, d, 90*64, 90*64);
+  XFillArc(FDpy, FDraw, FGC, xi + wi - d, yi, d, d, 0, 90*64);
+  XFillArc(FDpy, FDraw, FGC, xi, yi + hi - d, d, d, 180*64, 90*64);
+  XFillArc(FDpy, FDraw, FGC, xi + wi - d, yi + hi - d, d, d, 270*64, 90*64);
 end;
 
 procedure TX11Canvas.StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color);
 begin
-  // v1: square stroke (rounded stroke is a later refinement)
   StrokeRect(X, Y, W, H, Thickness, Color);
 end;
 
@@ -289,12 +350,12 @@ procedure TX11Canvas.DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Co
 begin
   SetFg(Color);
   XSetLineAttributes(FDpy, FGC, Round(Thickness), 0, 0, 0);
-  XDrawLine(FDpy, FDraw, FGC, Round(X1), Round(Y1), Round(X2), Round(Y2));
+  XDrawLine(FDpy, FDraw, FGC, DX(X1), DY(Y1), DX(X2), DY(Y2));
 end;
 
 procedure TX11Canvas.DrawText(X, Y: Single; const Text: string; FontSize: Single;
   Styles: TTina4FontStyles; Color: TTina4Color);
-var f: PXFontStruct; s: AnsiString; baseline: cint;
+var f: PXFontStruct; s: AnsiString;
 begin
   if Text = '' then Exit;
   f := PXFontStruct(FontFor(FontSize, Styles));
@@ -302,8 +363,7 @@ begin
   XSetFont(FDpy, FGC, f^.fid);
   SetFg(Color);
   s := ToLatin1(Text);
-  baseline := Round(Y) + f^.ascent;
-  XDrawString(FDpy, FDraw, FGC, Round(X), baseline, PChar(s), Length(s));
+  XDrawString(FDpy, FDraw, FGC, DX(X), DY(Y) + f^.ascent, PChar(s), Length(s));
 end;
 
 function TX11Canvas.MeasureText(const Text: string; FontSize: Single;
@@ -315,15 +375,13 @@ begin
   if f <> nil then
   begin
     Result.Width := XTextWidth(f, PChar(s), Length(s));
-    Result.Ascent := f^.ascent;
-    Result.Descent := f^.descent;
+    Result.Ascent := f^.ascent; Result.Descent := f^.descent;
     Result.LineHeight := f^.ascent + f^.descent;
   end
   else
   begin
     Result.Width := Round(Length(s) * FontSize * 0.5);
-    Result.Ascent := Round(FontSize * 0.8);
-    Result.Descent := Round(FontSize * 0.2);
+    Result.Ascent := Round(FontSize * 0.8); Result.Descent := Round(FontSize * 0.2);
     Result.LineHeight := Round(FontSize);
   end;
 end;
@@ -332,7 +390,7 @@ procedure TX11Canvas.SetClip(X, Y, W, H: Single);
 var nx, ny, nr, nb, cr, cb: cint;
 begin
   PushState;
-  nx := Round(X); ny := Round(Y); nr := Round(X + W); nb := Round(Y + H);
+  nx := DX(X); ny := DY(Y); nr := nx + Round(W); nb := ny + Round(H);
   if FCur.HasClip then
   begin
     cr := FCur.X + FCur.W; cb := FCur.Y + FCur.H;
@@ -347,19 +405,211 @@ begin
   ApplyClip;
 end;
 
-procedure TX11Canvas.ClearClip;
+procedure TX11Canvas.ClearClip; begin PopState; end;
+procedure TX11Canvas.SaveState; begin PushState; end;
+procedure TX11Canvas.RestoreState; begin PopState; end;
+
+{ ---- offscreen compositor (filter / blend / mask / 3D) ---- }
+
+{ Decode a layer's XImage into a premultiplied RGBA Single buffer, synthesising
+  alpha from geometry: opaque inside the element's core box, transparent in the
+  pad ring so a blur/drop-shadow fades — identical to the Windows DecodeLayer. }
+function DecodeLayerImg(img: PXImage; padx, pady, coreW, coreH, bw, bh: cint): PSingle;
+var x, y, o: cint; a: Single; rgb: LongWord;
 begin
-  PopState;
+  GetMem(Result, bw * bh * 4 * SizeOf(Single));
+  for y := 0 to bh - 1 do
+    for x := 0 to bw - 1 do
+    begin
+      o := (y * bw + x) * 4;
+      if (x >= padx) and (x < padx + coreW) and (y >= pady) and (y < pady + coreH) then a := 1 else a := 0;
+      rgb := GetPx(img, x, y);
+      Result[o]   := (((rgb shr 16) and $FF) / 255) * a;
+      Result[o+1] := (((rgb shr 8) and $FF) / 255) * a;
+      Result[o+2] := ((rgb and $FF) / 255) * a;
+      Result[o+3] := a;
+    end;
 end;
 
-procedure TX11Canvas.SaveState;
+{ Composite a premultiplied Single RGBA buffer (layerW x layerH, its (0,0) at doc
+  ox,oy) onto the parent drawable, clamped to the parent's bounds. }
+procedure TX11Canvas.EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string);
+var
+  L: TX11Layer; buf: PSingle; layerImg, destImg: PXImage;
+  padx, pady, coreW, coreH: cint;
+  vx0, vy0, vx1, vy1, i, j, lx, ly, so: cint; blend: string; dpx: LongWord;
 begin
-  PushState;
+  if (Handle < 0) or (Handle > High(FLayers)) then Exit;
+  L := FLayers[Handle];
+  FDraw := L.Saved; FW := L.SavedW; FH := L.SavedH;
+  FOrgX := L.SavedOrgX; FOrgY := L.SavedOrgY;
+  FCur := L.SavedClip; SetLength(FStack, L.SavedStackLen); ApplyClip;
+
+  padx := 0; pady := 0; coreW := L.Bw; coreH := L.Bh;
+  if FilterSpec <> '' then
+  begin
+    padx := Round(FilterLayerPad(FilterSpec)); pady := padx;
+    coreW := L.Bw - 2*padx; coreH := L.Bh - 2*pady;
+    if coreW < 0 then coreW := L.Bw; if coreH < 0 then coreH := L.Bh;
+  end;
+
+  layerImg := XGetImage(FDpy, L.Pm, 0, 0, L.Bw, L.Bh, AllPlanes, ZPixmap);
+  if layerImg <> nil then
+  begin
+    buf := DecodeLayerImg(layerImg, padx, pady, coreW, coreH, L.Bw, L.Bh);
+    DestroyImage(layerImg);
+    if (FilterSpec <> '') or (MaskSpec <> '') then
+      ApplyFilterChainF(PSingleBuf(buf), L.Bw, L.Bh, FilterSpec, MaskSpec, 1);
+
+    // valid parent rect (clamp the layer's doc rect into the parent)
+    vx0 := L.Ox; if vx0 < 0 then vx0 := 0;
+    vy0 := L.Oy; if vy0 < 0 then vy0 := 0;
+    vx1 := L.Ox + L.Bw; if vx1 > L.SavedW then vx1 := L.SavedW;
+    vy1 := L.Oy + L.Bh; if vy1 > L.SavedH then vy1 := L.SavedH;
+    if (vx1 > vx0) and (vy1 > vy0) then
+    begin
+      destImg := XGetImage(FDpy, L.Saved, vx0, vy0, vx1 - vx0, vy1 - vy0, AllPlanes, ZPixmap);
+      if destImg <> nil then
+      begin
+        blend := LowerCase(BlendMode); if blend = 'normal' then blend := '';
+        for j := 0 to (vy1 - vy0) - 1 do
+          for i := 0 to (vx1 - vx0) - 1 do
+          begin
+            lx := (vx0 + i) - L.Ox; ly := (vy0 + j) - L.Oy;
+            so := (ly * L.Bw + lx) * 4;
+            if buf[so+3] > 0 then
+            begin
+              dpx := GetPx(destImg, i, j);
+              SetPx(destImg, i, j, BlendRGB(dpx, buf[so], buf[so+1], buf[so+2], buf[so+3], blend));
+            end;
+          end;
+        XPutImage(FDpy, L.Saved, FGC, destImg, 0, 0, vx0, vy0, vx1 - vx0, vy1 - vy0);
+        DestroyImage(destImg);
+      end;
+    end;
+    FreeMem(buf);
+  end;
+  XFreePixmap(FDpy, L.Pm);
+  SetLength(FLayers, Handle);
 end;
 
-procedure TX11Canvas.RestoreState;
+function TX11Canvas.BeginLayer(X, Y, W, H, Pad: Single): Integer;
+var ox, oy, bw, bh, n: cint; pm: TXID;
 begin
-  PopState;
+  ox := Round(X - Pad); oy := Round(Y - Pad);
+  bw := Round(W + 2*Pad); bh := Round(H + 2*Pad);
+  if (bw <= 0) or (bh <= 0) then Exit(-1);
+  pm := XCreatePixmap(FDpy, XRootWindow(FDpy, FScreen), bw, bh, XDefaultDepth(FDpy, FScreen));
+  if pm = 0 then Exit(-1);
+  n := Length(FLayers); SetLength(FLayers, n + 1);
+  FLayers[n].Pm := pm; FLayers[n].Saved := FDraw; FLayers[n].SavedW := FW; FLayers[n].SavedH := FH;
+  FLayers[n].Ox := ox; FLayers[n].Oy := oy; FLayers[n].Bw := bw; FLayers[n].Bh := bh;
+  FLayers[n].SavedOrgX := FOrgX; FLayers[n].SavedOrgY := FOrgY;
+  FLayers[n].SavedClip := FCur; FLayers[n].SavedStackLen := Length(FStack);
+  // redirect drawing into the layer pixmap, doc coords offset so (ox,oy)->(0,0)
+  FDraw := pm; FW := bw; FH := bh; FOrgX := ox; FOrgY := oy;
+  FCur.HasClip := False; ApplyClip;
+  XSetForeground(FDpy, FGC, $FFFFFF);
+  XFillRectangle(FDpy, pm, FGC, 0, 0, bw, bh);
+  Result := n;
+end;
+
+procedure TX11Canvas.EndLayer3D(Handle: Integer; const Corners: array of Single);
+var
+  L: TX11Layer; src: PSingle; dst: PByte; layerImg, destImg: PXImage;
+  minx, miny, maxx, maxy: Single; i, dpw, dph, j, vx0, vy0, vx1, vy1, lx, ly, so: cint;
+  quad: array[0..7] of Single; dpx: LongWord;
+begin
+  if (Handle < 0) or (Handle > High(FLayers)) then Exit;
+  L := FLayers[Handle];
+  FDraw := L.Saved; FW := L.SavedW; FH := L.SavedH;
+  FOrgX := L.SavedOrgX; FOrgY := L.SavedOrgY;
+  FCur := L.SavedClip; SetLength(FStack, L.SavedStackLen); ApplyClip;
+
+  layerImg := XGetImage(FDpy, L.Pm, 0, 0, L.Bw, L.Bh, AllPlanes, ZPixmap);
+  if layerImg <> nil then
+  begin
+    src := DecodeLayerImg(layerImg, 0, 0, L.Bw, L.Bh, L.Bw, L.Bh);
+    DestroyImage(layerImg);
+    minx := Corners[0]; maxx := Corners[0]; miny := Corners[1]; maxy := Corners[1];
+    for i := 1 to 3 do
+    begin
+      if Corners[i*2]   < minx then minx := Corners[i*2];
+      if Corners[i*2]   > maxx then maxx := Corners[i*2];
+      if Corners[i*2+1] < miny then miny := Corners[i*2+1];
+      if Corners[i*2+1] > maxy then maxy := Corners[i*2+1];
+    end;
+    dpw := Round(maxx - minx); dph := Round(maxy - miny);
+    if (dpw > 0) and (dph > 0) then
+    begin
+      for i := 0 to 3 do begin quad[i*2] := Corners[i*2] - minx; quad[i*2+1] := Corners[i*2+1] - miny; end;
+      GetMem(dst, dpw * dph * 4); FillChar(dst^, dpw * dph * 4, 0);
+      WarpQuad(PSingleBuf(src), L.Bw, L.Bh, quad, dst, dpw, dph);
+      vx0 := Round(minx); if vx0 < 0 then vx0 := 0;
+      vy0 := Round(miny); if vy0 < 0 then vy0 := 0;
+      vx1 := Round(minx) + dpw; if vx1 > L.SavedW then vx1 := L.SavedW;
+      vy1 := Round(miny) + dph; if vy1 > L.SavedH then vy1 := L.SavedH;
+      if (vx1 > vx0) and (vy1 > vy0) then
+      begin
+        destImg := XGetImage(FDpy, L.Saved, vx0, vy0, vx1 - vx0, vy1 - vy0, AllPlanes, ZPixmap);
+        if destImg <> nil then
+        begin
+          for j := 0 to (vy1 - vy0) - 1 do
+            for i := 0 to (vx1 - vx0) - 1 do
+            begin
+              lx := (vx0 + i) - Round(minx); ly := (vy0 + j) - Round(miny);
+              so := (ly * dpw + lx) * 4;
+              if dst[so+3] > 0 then
+              begin
+                dpx := GetPx(destImg, i, j);
+                SetPx(destImg, i, j, BlendRGB(dpx, dst[so]/255, dst[so+1]/255, dst[so+2]/255, dst[so+3]/255, ''));
+              end;
+            end;
+          XPutImage(FDpy, L.Saved, FGC, destImg, 0, 0, vx0, vy0, vx1 - vx0, vy1 - vy0);
+          DestroyImage(destImg);
+        end;
+      end;
+      FreeMem(dst);
+    end;
+    FreeMem(src);
+  end;
+  XFreePixmap(FDpy, L.Pm);
+  SetLength(FLayers, Handle);
+end;
+
+procedure TX11Canvas.BackdropFilter(X, Y, W, H: Single; const FilterSpec: string);
+var
+  img: PXImage; buf: PSingle; bx, by, bw, bh, i, j, so: cint; rgb: LongWord;
+begin
+  if FilterSpec = '' then Exit;
+  bx := DX(X); by := DY(Y); bw := Round(W); bh := Round(H);
+  if bx < 0 then begin bw := bw + bx; bx := 0; end;
+  if by < 0 then begin bh := bh + by; by := 0; end;
+  if bx + bw > FW then bw := FW - bx;
+  if by + bh > FH then bh := FH - by;
+  if (bw <= 0) or (bh <= 0) then Exit;
+  img := XGetImage(FDpy, FDraw, bx, by, bw, bh, AllPlanes, ZPixmap);
+  if img = nil then Exit;
+  GetMem(buf, bw * bh * 4 * SizeOf(Single));
+  try
+    for j := 0 to bh - 1 do
+      for i := 0 to bw - 1 do
+      begin
+        so := (j * bw + i) * 4; rgb := GetPx(img, i, j);
+        buf[so] := ((rgb shr 16) and $FF)/255; buf[so+1] := ((rgb shr 8) and $FF)/255;
+        buf[so+2] := (rgb and $FF)/255; buf[so+3] := 1;
+      end;
+    ApplyFilterChainF(PSingleBuf(buf), bw, bh, FilterSpec, '', 1);
+    for j := 0 to bh - 1 do
+      for i := 0 to bw - 1 do
+      begin
+        so := (j * bw + i) * 4;
+        SetPx(img, i, j, (Round(buf[so]*255) shl 16) or (Round(buf[so+1]*255) shl 8) or Round(buf[so+2]*255));
+      end;
+    XPutImage(FDpy, FDraw, FGC, img, 0, 0, bx, by, bw, bh);
+  finally
+    FreeMem(buf); DestroyImage(img);
+  end;
 end;
 
 { ---- BMP snapshot ---- }
@@ -368,8 +618,8 @@ function LinSaveBmp(ADpy: PXDisplay; ADraw: TDrawable; W, H: cint;
   const Path: string): Boolean;
 var
   img: PXImage; fs: TFileStream;
-  rowSize, imgSize, fileSize, off: LongWord;
-  x, y, bpp: Integer; px: LongWord; p: PByte;
+  rowSize, imgSize, fileSize: LongWord;
+  x, y, bpp: cint; px: LongWord; p: PByte;
   bfh: array[0..13] of Byte; bih: array[0..39] of Byte;
   row: array of Byte;
   procedure PutLE32(var a: array of Byte; i: Integer; v: LongWord);
@@ -378,10 +628,10 @@ var
   begin a[i]:=v and $FF; a[i+1]:=(v shr 8) and $FF; end;
 begin
   Result := False;
-  img := XGetImage(ADpy, ADraw, 0, 0, W, H, culong($FFFFFFFFFFFFFFFF), ZPixmap);
+  img := XGetImage(ADpy, ADraw, 0, 0, W, H, AllPlanes, ZPixmap);
   if img = nil then Exit;
   bpp := img^.bits_per_pixel div 8;
-  rowSize := ((LongWord(W) * 3 + 3) div 4) * 4;   // 24-bit rows padded to 4
+  rowSize := ((LongWord(W) * 3 + 3) div 4) * 4;
   imgSize := rowSize * LongWord(H);
   fileSize := 54 + imgSize;
   FillChar(bfh, SizeOf(bfh), 0); FillChar(bih, SizeOf(bih), 0);
@@ -394,7 +644,7 @@ begin
     fs := TFileStream.Create(Path, fmCreate);
     try
       fs.WriteBuffer(bfh, 14); fs.WriteBuffer(bih, 40);
-      for y := H - 1 downto 0 do                     // BMP is bottom-up
+      for y := H - 1 downto 0 do
       begin
         FillChar(row[0], rowSize, 0);
         p := img^.data + y * img^.bytes_per_line;
@@ -402,17 +652,16 @@ begin
         begin
           if bpp >= 4 then px := PLongWord(p + x * 4)^
           else px := (PByte(p + x*3 + 2)^ shl 16) or (PByte(p + x*3 + 1)^ shl 8) or PByte(p + x*3)^;
-          row[x*3]   := px and $FF;          // B
-          row[x*3+1] := (px shr 8) and $FF;  // G
-          row[x*3+2] := (px shr 16) and $FF; // R
+          row[x*3]   := px and $FF;
+          row[x*3+1] := (px shr 8) and $FF;
+          row[x*3+2] := (px shr 16) and $FF;
         end;
         fs.WriteBuffer(row[0], rowSize);
       end;
       Result := True;
     finally fs.Free; end;
-  except
-    Result := False;
-  end;
+  except Result := False; end;
+  DestroyImage(img);
 end;
 
 end.
