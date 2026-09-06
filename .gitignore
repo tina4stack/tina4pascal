@@ -9,14 +9,26 @@ ppas.sh
 nohup.out
 *.log
 
-# binaries
+# compiled test binaries (built from tests/*.pas) — track only the sources
+tests/test_*
+!tests/test_*.pas
+!tests/test_*.inc
+tests/*_live
+tests/leakcheck
+
+# compiled example/tool binaries
 examples/htmlviewer/htmlviewer
-tests/test_dom
+examples/canvas/main
+examples/macos/main
+examples/counter/counter
 toolchain/test/hello
+
+# python caches (tools/mcp)
+__pycache__/
+*.pyc
 
 # fetched caches
 csscache/
-tests/leakcheck
 
 # tina4pascal CLI build outputs
 /build/
@@ -26,4 +38,3 @@ _rel/
 _chk/
 _fpcbuild/
 *.exe
-examples/canvas/main
