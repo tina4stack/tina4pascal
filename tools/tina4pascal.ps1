@@ -147,10 +147,11 @@ function Invoke-Init($name, $norun) {
 {
   "name": "$name",
   "title": "$Title",
+  "main": "app.pas",
   "bundleId": "com.tina4.$name",
   "window": { "width": 900, "height": 640 },
   "entry": "src/templates/index.twig",
-  "targets": ["win64", "linux", "macos", "android", "ios"]
+  "targets": ["macos", "windows", "linux", "android", "ios"]
 }
 "@
   Write-File (Join-Path $proj '.gitignore') "build/`n*.o`n*.ppu`n*.exe`n"
@@ -179,7 +180,7 @@ end.
   <p style="color:#5b5c78;margin:0">Your Tina4Pascal app is running natively.</p>
 </body>
 "@
-  Write-File (Join-Path $proj 'src\app\main.pas') @"
+  Write-File (Join-Path $proj 'app.pas') @"
 program $name;
 {`$mode objfpc}{`$H+}
 uses Tina4App;
@@ -208,17 +209,26 @@ end.
   }
 }
 
+# Read a top-level "key": "value" from a project's tina4.json (matches the sh CLI's jget).
+function Get-T4($proj, $key, $default) {
+  $f = Join-Path $proj 'tina4.json'
+  if (-not (Test-Path $f)) { return $default }
+  $m = [regex]::Match((Get-Content $f -Raw), '"' + [regex]::Escape($key) + '"\s*:\s*"([^"]*)"')
+  if ($m.Success) { return $m.Groups[1].Value } else { return $default }
+}
+
 function Build-ProjectLinux($proj) {
   # cross to Linux through WSL (the desktop X11 target)
   if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) { Write-Host "wsl not available for the linux target" -ForegroundColor Red; return $null }
-  $name = Split-Path -Leaf $proj
+  $name = Get-T4 $proj 'name' (Split-Path -Leaf $proj)
+  $main = (Get-T4 $proj 'main' 'app.pas')
   $wproj = '/mnt/' + ($proj -replace '^([A-Za-z]):','$1').Substring(0,1).ToLower() + ($proj.Substring(2) -replace '\\','/')
   $wfw   = '/mnt/' + ($Src  -replace '^([A-Za-z]):','$1').Substring(0,1).ToLower() + ($Src.Substring(2)  -replace '\\','/')
   $sh = @"
 export PATH=`$HOME/fpc/bin:`$PATH
 mkdir -p `$HOME/xstublibs; [ -e `$HOME/xstublibs/libX11.so ] || ln -s /usr/lib/x86_64-linux-gnu/libX11.so.6 `$HOME/xstublibs/libX11.so
 cd '$wproj'; mkdir -p build/linux
-fpc -Mdelphi -O2 -Xs -Fu'$wfw' -Fusrc/app -Fusrc/routes -Fl`$HOME/xstublibs -k-L`$HOME/xstublibs -FEbuild/linux -FUbuild/linux -o$name src/app/main.pas 2>&1 | grep -iE 'error|fatal|linking' | tail -6
+fpc -Mdelphi -O2 -Xs -Fu'$wfw' -Fu. -Fusrc/routes -Fusrc/orm -Fusrc/services -Fl`$HOME/xstublibs -k-L`$HOME/xstublibs -FEbuild/linux -FUbuild/linux -o$name '$main' 2>&1 | grep -iE 'error|fatal|linking' | tail -6
 [ -x build/linux/$name ] && echo "OK build/linux/$name" || echo "FAILED"
 "@
   $tmp = Join-Path $env:TEMP 't4p_linux.sh'; [System.IO.File]::WriteAllText($tmp, ($sh -replace "`r`n","`n"))
@@ -229,6 +239,27 @@ fpc -Mdelphi -O2 -Xs -Fu'$wfw' -Fusrc/app -Fusrc/routes -Fl`$HOME/xstublibs -k-L
   return $null
 }
 
+# Compile a project for a Windows target. $dbg=$true → DWARF symbols into build\<t>-debug\.
+function Build-ProjectWin($proj, $t, $dbg) {
+  $fpc = Find-Fpc
+  if (-not $fpc) { Write-Host "fpc.exe not found - run doctor" -ForegroundColor Red; return $null }
+  $flags = @('-Twin64','-Px86_64'); if ($t -eq 'win32') { $flags=@() }
+  $name = Get-T4 $proj 'name' (Split-Path -Leaf $proj)
+  $main = ((Get-T4 $proj 'main' 'app.pas') -replace '/','\')
+  if ($dbg) { $opt = @('-gw','-gl','-O-'); $sub = "$t-debug" } else { $opt = @('-O2','-XX','-CX','-Xs'); $sub = $t }
+  $out = Join-Path $proj "build\$sub"
+  New-Item -ItemType Directory -Force -Path $out | Out-Null
+  Write-Host "Building $name for $t$(if($dbg){' (debug)'}) ..."
+  Push-Location $proj
+  try {
+    $fa = @('-Mdelphi') + $opt + $flags + @("-Fu$Src","-Fu.","-Fusrc\routes","-Fusrc\orm","-Fusrc\services","-FE$out","-FU$out","-o$name.exe",$main)
+    & $fpc @fa 2>&1 | Where-Object { $_ -match 'Error|Fatal|Linking' } | ForEach-Object { Write-Host $_ }
+  } finally { Pop-Location }
+  $exe = Join-Path $out "$name.exe"
+  if (Test-Path $exe) { Ok "built: $exe ($([math]::Round((Get-Item $exe).Length/1KB)) KB)"; return $exe }
+  Write-Host "build failed" -ForegroundColor Red; return $null
+}
+
 function Build-Project($proj, $t) {
   if ($t -eq 'linux') { return Build-ProjectLinux $proj }
   if ($t -eq 'all') {
@@ -237,40 +268,11 @@ function Build-Project($proj, $t) {
     Write-Host "(macos / android / ios build from a Mac via tools/tina4pascal - full cross toolchain)" -ForegroundColor DarkGray
     return $null
   }
-  $fpc = Find-Fpc
-  if (-not $fpc) { Write-Host "fpc.exe not found - run doctor" -ForegroundColor Red; return $null }
-  $flags = @('-Twin64','-Px86_64'); if ($t -eq 'win32') { $flags=@() }
-  $out = Join-Path $proj "build\$t"
-  New-Item -ItemType Directory -Force -Path $out | Out-Null
-  $name = Split-Path -Leaf $proj
-  Write-Host "Building $name for $t ..."
-  Push-Location $proj
-  try {
-    $fa = @('-Mdelphi','-O2','-XX','-CX','-Xs') + $flags + @("-Fu$Src","-Fusrc\app","-Fusrc\routes","-FE$out","-FU$out","-o$name.exe","src\app\main.pas")
-    & $fpc @fa 2>&1 | Where-Object { $_ -match 'Error|Fatal|Linking' } | ForEach-Object { Write-Host $_ }
-  } finally { Pop-Location }
-  $exe = Join-Path $out "$name.exe"
-  if (Test-Path $exe) { Ok "built: $exe ($([math]::Round((Get-Item $exe).Length/1KB)) KB)"; return $exe }
-  Write-Host "build failed" -ForegroundColor Red; return $null
+  return Build-ProjectWin $proj $t $false
 }
 
 # Build with DWARF symbols (no optimise/strip) into build\<t>-debug\ for gdb.
-function Build-ProjectDebug($proj, $t) {
-  $fpc = Find-Fpc
-  if (-not $fpc) { Write-Host "fpc.exe not found - run doctor" -ForegroundColor Red; return $null }
-  $flags = @('-Twin64','-Px86_64'); if ($t -eq 'win32') { $flags=@() }
-  $out = Join-Path $proj "build\$t-debug"
-  New-Item -ItemType Directory -Force -Path $out | Out-Null
-  $name = Split-Path -Leaf $proj
-  Write-Host "Building $name ($t debug) ..."
-  Push-Location $proj
-  try {
-    $fa = @('-Mdelphi','-gw','-gl','-O-') + $flags + @("-Fu$Src","-Fusrc\app","-Fusrc\routes","-FE$out","-FU$out","-o$name.exe","src\app\main.pas")
-    & $fpc @fa 2>&1 | Where-Object { $_ -match 'Error|Fatal|Linking' } | ForEach-Object { Write-Host $_ }
-  } finally { Pop-Location }
-  $exe = Join-Path $out "$name.exe"
-  if (Test-Path $exe) { return $exe } else { Write-Host "debug build failed" -ForegroundColor Red; return $null }
-}
+function Build-ProjectDebug($proj, $t) { return Build-ProjectWin $proj $t $true }
 
 # Is the current directory a Tina4Pascal project?
 function Project-Root { if (Test-Path (Join-Path (Get-Location) 'tina4.json')) { return (Get-Location).Path } else { return $null } }
