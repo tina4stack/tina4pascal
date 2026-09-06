@@ -2477,6 +2477,12 @@ var P: Integer; S: string;
         begin Result := args[0]; for u := 1 to na - 1 do Result := Max(Result, args[u]); end
         else if (fn = 'clamp') and (na >= 3) then
           Result := Min(Max(args[0], args[1]), args[2])
+        else if fn = 'env' then
+        begin
+          // env(<name>, <fallback>): safe-area insets etc. are 0 on desktop, so
+          // the named value is unavailable and the fallback (2nd arg) wins.
+          if na >= 2 then Result := args[1] else Result := 0;
+        end
         else if na > 0 then Result := args[0];
         Exit;
       end;
@@ -2557,12 +2563,12 @@ begin
   // pt/vw/vh/vmin/vmax). A % term needs the container size, so those are deferred
   // (a marker resolved by ResolveCalc at layout time); %-free exprs resolve now.
   if Str.StartsWith('calc(') or Str.StartsWith('min(') or
-     Str.StartsWith('max(') or Str.StartsWith('clamp(') then
+     Str.StartsWith('max(') or Str.StartsWith('clamp(') or Str.StartsWith('env(') then
   begin
     if Str.StartsWith('calc(') and Str.EndsWith(')') then
       CalcInner := Copy(Str, 6, Length(Str) - 6).Trim
     else
-      CalcInner := Str;   // min()/max()/clamp() are themselves the expression
+      CalcInner := Str;   // min()/max()/clamp()/env() are themselves the expression
     if Pos('%', CalcInner) > 0 then
     begin
       I := Length(GCalcExprs); SetLength(GCalcExprs, I + 1);

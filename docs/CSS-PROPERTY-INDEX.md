@@ -156,7 +156,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | `@keyframes` | ✅ | parsed into named stops; drives `animation` |
 | `@supports` | ✅ | feature query evaluated at parse time (`and`/`or`/`not`, parenthesised tests); the block's rules apply only if supported. The oracle answers yes for our broad feature set and no for the offscreen-compositing / 3D props we lack (filter, backdrop-filter, mask, blend-modes, perspective, 3D transforms). Nests inside `@media` |
 | `@import` | ❌ | skipped with the @-rule block |
-| clamp(), min(), max() | ✅ | evaluated via the calc() engine (nestable, same unit support). `env()` still 0 |
+| clamp(), min(), max() | ✅ | evaluated via the calc() engine (nestable, same unit support) |
+| env() | ✅ | `env(<name>, <fallback>)` resolves to its fallback — safe-area insets are 0 on desktop, so the named value is unavailable. Usable bare or inside calc() |
 
 ## Prioritised roadmap (by real-world impact ÷ effort)
 
@@ -184,7 +185,7 @@ mode renderer doesn't yet have):
     `direction`/`writing-mode` (bidi), `list-style-image`, `vertical-align`
     text-top/bottom/length.
 4. **user-select / resize** (need a selection model / drag-resize handle);
-    `env()`; `table-layout:fixed`; `empty-cells`; `@import`.
+    `table-layout:fixed`; `empty-cells`; `@import`.
 
 
 Each item ships with a reftest under `examples/compliance/` and flips its row
