@@ -99,7 +99,7 @@ type
     procedure CollectInlineText(Tag: THTMLTag; SB: TStringBuilder);
   public
     constructor Create(Canvas: TTina4Canvas; Sheet: TCSSStyleSheet);
-    function Build(Root: THTMLTag; ViewportW: Single): TLayoutBox;
+    function Build(Root: THTMLTag; ViewportW: Single; ViewportH: Single = 0): TLayoutBox;
     { Recompute styles only (hover/active/focus flips) without relayout —
       geometry is untouched, so this is cheap enough for mouse-move. }
     procedure RefreshStyles(Box: TLayoutBox); overload;
@@ -197,7 +197,8 @@ end;
   >=0 absolute px; -1 auto; <-1.5 percentage marker (-50 = 50%); -3 fit-content. }
 function ResolveSize(V, Avail: Single): Single;
 begin
-  if V >= 0 then Result := V
+  if V <= -99999 then Result := ResolveCalc(V, Avail)   // deferred %-bearing calc()
+  else if V >= 0 then Result := V
   else if (V < -1.5) and (V > -1000) and (V <> -3) then Result := Avail * (-V) / 100
   else Result := -1; // auto
 end;
@@ -2967,7 +2968,7 @@ begin
   end;
 end;
 
-function TLayoutEngine.Build(Root: THTMLTag; ViewportW: Single): TLayoutBox;
+function TLayoutEngine.Build(Root: THTMLTag; ViewportW: Single; ViewportH: Single = 0): TLayoutBox;
 var
   base: TComputedStyle;
   usedH: Single;
@@ -2993,6 +2994,8 @@ begin
   FBaseStyle := base;
   FViewportW := ViewportW;
   SetLength(FFloats, 0);   // fresh float context per layout
+  if ViewportH <= 0 then ViewportH := ViewportW * 0.66;   // rough default when unknown
+  SetCalcContext(ViewportW, ViewportH);   // vw/vh + reset deferred calc() table
   body := FindBody(Root);
   if body = nil then body := Root;
   Result := TLayoutBox.Create;

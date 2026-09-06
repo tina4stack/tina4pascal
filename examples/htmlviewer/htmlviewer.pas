@@ -370,7 +370,7 @@ begin
     FreeAndNil(Engine);
     Sheet.SetMediaContext(W, False);   // @media evaluates against the real viewport width
     Engine := TLayoutEngine.Create(Canvas, Sheet);
-    RootBox := Engine.Build(Parser.Root, W);
+    RootBox := Engine.Build(Parser.Root, W, ViewH);
   end;
   Canvas.FillRect(0, 0, W, H, $FFFFFFFF);
   PaintBox(Canvas, RootBox, ScrollY);

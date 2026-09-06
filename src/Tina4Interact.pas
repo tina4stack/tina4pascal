@@ -745,7 +745,7 @@ begin
   GSheet.SetMediaContext(W, GDarkMode);   // @media: viewport width + dark scheme
   LoadFontFaces;                          // @font-face: register downloadable fonts
   GEngine := TLayoutEngine.Create(GCanvas, GSheet);
-  GRoot := GEngine.Build(GParser.Root, W);
+  GRoot := GEngine.Build(GParser.Root, W, GViewH);
   GLayoutW := W;
   GDocDirty := False; GLayoutDirty := False;
   if AutofocusFirst(GParser.Root) then GAutoKeyboard := True;
@@ -762,7 +762,7 @@ begin
   if GRoot <> nil then FreeAndNil(GRoot);
   GSheet.SetMediaContext(W, GDarkMode);   // @media context may have changed
   GEngine := TLayoutEngine.Create(GCanvas, GSheet);
-  GRoot := GEngine.Build(GParser.Root, W);
+  GRoot := GEngine.Build(GParser.Root, W, GViewH);
   GLayoutW := W;
   GLayoutDirty := False;
 end;

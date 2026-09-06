@@ -139,11 +139,11 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | Feature | Status | Note |
 |---|---|---|
 | `--custom` + var() | ✅ | scoped 2-pass, fallback + recursion (colours included) |
-| calc() | 🟡 | additive only (+/-); **no \* /**, drops %/vw/vh terms |
+| calc() | ✅ | full expression eval: `+ − × ÷` with precedence + parens, px/em/rem/pt/vw/vh/vmin/vmax. `%` is resolved against the container for width/height (deferred to layout); in other properties a %-term is treated as 0 |
 | `@media` (in `<style>`) | ✅ | min/max-width breakpoints + `prefers-color-scheme` dark (incl. dark `:root` var swaps), live via `SetMediaContext` |
 | `@font-face` | ✅ | downloadable fonts: parse family + `src url()`, fetch (async/disk-cached like `<img>`) + register on all 3 shells (Cocoa/iOS CoreText, Android Typeface); CSS family aliased to the face's real name |
 | `@keyframes`, `@supports`, `@import` | ❌ | skipped with the @-rule block |
-| env(), clamp(), min(), max() | ❌ | evaluate to 0 |
+| clamp(), min(), max() | ✅ | evaluated via the calc() engine (nestable, same unit support). `env()` still 0 |
 
 ## Prioritised roadmap (by real-world impact ÷ effort)
 
@@ -164,16 +164,16 @@ col/row-resize.
 1. **Flexbox faithfulness**: reverse directions, wrap-reverse, `align-content` /
    `align-self` / `order`, per-axis `row-gap`/`column-gap`.
 2. **Grid**: explicit line placement, `grid-template-rows`/`areas`, multi-row span.
-3. **calc()** `*` `/` and %/vw/vh terms; **clamp() / min() / max() / env()** (all 0 today).
-4. **border-collapse / border-spacing / table-layout / empty-cells**.
-5. **transitions / animations** + `@keyframes` (needs the ticker + a timeline);
+3. **border-collapse / border-spacing / table-layout / empty-cells**.
+4. **transitions / animations** + `@keyframes` (needs the ticker + a timeline);
     `@supports` / `@import`.
-6. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
+5. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
     backdrop-filter / clip-path / mask**; blend-modes.
-7. Typography long tail: `font`/`font-variant`/`font-stretch` shorthands,
+6. Typography long tail: `font`/`font-variant`/`font-stretch` shorthands,
     `word-spacing`, `direction`/`writing-mode` (bidi), `list-style` shorthand +
     position/image, `vertical-align` text-top/bottom/length.
-8. **accent-color / caret-color**; **pointer-events / user-select / resize**.
+7. **accent-color / caret-color**; **pointer-events / user-select / resize**;
+    `env()`.
 
 
 Each item ships with a reftest under `examples/compliance/` and flips its row

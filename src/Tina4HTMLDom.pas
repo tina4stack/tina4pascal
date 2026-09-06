@@ -375,6 +375,13 @@ type
     class procedure ParseEdgeShorthand(const S: string; var E: TEdgeValues; EmSize: Single); static;
   end;
 
+{ Reset the deferred-calc table and set the viewport (px) for vw/vh in calc().
+  The layout engine calls this before each build. }
+procedure SetCalcContext(VpW, VpH: Single);
+{ Resolve a ParseLength result: if it was a deferred %-bearing calc() marker,
+  evaluate it now against PctBase; otherwise return V unchanged. }
+function ResolveCalc(V, PctBase: Single): Single;
+
 implementation
 
 // UTF-8 encoder used by entity decoding (Delphi appended UTF-16 code units;
@@ -2191,6 +2198,147 @@ begin
   end;
 end;
 
+{ ---- calc() / min() / max() / clamp() length evaluator ------------------- }
+
+var
+  GCalcVpW: Single = 0;     // viewport width  (px) for vw/vmin/vmax in calc
+  GCalcVpH: Single = 0;     // viewport height (px) for vh/vmin/vmax in calc
+  GCalcExprs: array of string;   // deferred %-bearing exprs, keyed by the marker
+                                 // returned from ParseLength ("<emSize>|<expr>")
+
+const
+  CALC_DEFER = -100000;     // ParseLength returns CALC_DEFER-idx for a deferred expr
+
+{ Reset the deferred-calc side table and set the viewport for vw/vh resolution
+  (called by the layout engine before each build). }
+procedure SetCalcContext(VpW, VpH: Single);
+begin
+  GCalcVpW := VpW; GCalcVpH := VpH;
+  SetLength(GCalcExprs, 0);
+end;
+
+{ Evaluate a calc/min/max/clamp expression to px. `+ - * /` with the usual
+  precedence, parens, px/em/rem/pt/vw/vh/vmin/vmax and % (% against PctBase; when
+  PctBase < 0 the % is unknown → contributes 0 and HadPct is set). NestFns lets
+  min()/max()/clamp() appear anywhere. }
+function EvalCalc(const Expr: string; EmSize, PctBase: Single; out HadPct: Boolean): Single;
+var P: Integer; S: string;
+
+  procedure Skip; begin while (P <= Length(S)) and (S[P] = ' ') do Inc(P); end;
+  function ParseE: Single; forward;
+
+  function UnitVal(const Num: string; const U: string): Single;
+  var n: Single;
+  begin
+    n := StrToFloatDef(Num, 0);
+    if U = 'px' then Result := n
+    else if U = 'rem' then Result := n * 16
+    else if U = 'em' then Result := n * EmSize
+    else if U = 'pt' then Result := n * 1.333
+    else if U = 'vw' then Result := n * GCalcVpW / 100
+    else if U = 'vh' then Result := n * GCalcVpH / 100
+    else if U = 'vmin' then Result := n * Min(GCalcVpW, GCalcVpH) / 100
+    else if U = 'vmax' then Result := n * Max(GCalcVpW, GCalcVpH) / 100
+    else if U = '%' then
+    begin
+      HadPct := True;
+      if PctBase >= 0 then Result := n * PctBase / 100 else Result := 0;
+    end
+    else Result := n;   // unitless
+  end;
+
+  function ParseFactor: Single;
+  var st, num, u: Integer; fn: string; args: array of Single; na: Integer;
+  begin
+    Skip;
+    Result := 0;
+    if P > Length(S) then Exit;
+    if S[P] = '(' then
+    begin Inc(P); Result := ParseE; Skip; if (P <= Length(S)) and (S[P] = ')') then Inc(P); Exit; end;
+    if S[P] = '-' then begin Inc(P); Exit(-ParseFactor); end;
+    if S[P] = '+' then begin Inc(P); Exit(ParseFactor); end;
+    // function: min / max / clamp
+    if (S[P] in ['a'..'z']) then
+    begin
+      st := P;
+      while (P <= Length(S)) and (S[P] in ['a'..'z']) do Inc(P);
+      fn := Copy(S, st, P - st);
+      Skip;
+      if (P <= Length(S)) and (S[P] = '(') then
+      begin
+        Inc(P); na := 0;
+        repeat
+          SetLength(args, na + 1); args[na] := ParseE; Inc(na); Skip;
+          if (P <= Length(S)) and (S[P] = ',') then begin Inc(P); Continue; end;
+          Break;
+        until False;
+        if (P <= Length(S)) and (S[P] = ')') then Inc(P);
+        if (fn = 'min') and (na > 0) then
+        begin Result := args[0]; for u := 1 to na - 1 do Result := Min(Result, args[u]); end
+        else if (fn = 'max') and (na > 0) then
+        begin Result := args[0]; for u := 1 to na - 1 do Result := Max(Result, args[u]); end
+        else if (fn = 'clamp') and (na >= 3) then
+          Result := Min(Max(args[0], args[1]), args[2])
+        else if na > 0 then Result := args[0];
+        Exit;
+      end;
+      Exit(0);   // bare identifier we don't know
+    end;
+    // number with optional unit
+    st := P;
+    while (P <= Length(S)) and (S[P] in ['0'..'9', '.']) do Inc(P);
+    num := st;
+    u := P;
+    while (P <= Length(S)) and (S[P] in ['a'..'z', '%']) do Inc(P);
+    Result := UnitVal(Copy(S, num, u - num), Copy(S, u, P - u));
+  end;
+
+  function ParseT: Single;
+  var op: Char; rhs: Single;
+  begin
+    Result := ParseFactor; Skip;
+    while (P <= Length(S)) and (S[P] in ['*', '/']) do
+    begin
+      op := S[P]; Inc(P); rhs := ParseFactor;
+      if op = '*' then Result := Result * rhs
+      else if rhs <> 0 then Result := Result / rhs else Result := 0;
+      Skip;
+    end;
+  end;
+
+  function ParseE: Single;
+  var op: Char;
+  begin
+    Result := ParseT; Skip;
+    while (P <= Length(S)) and (S[P] in ['+', '-']) do
+    begin
+      op := S[P]; Inc(P);
+      if op = '+' then Result := Result + ParseT else Result := Result - ParseT;
+      Skip;
+    end;
+  end;
+
+begin
+  HadPct := False;
+  S := Expr; P := 1;
+  Result := ParseE;
+end;
+
+{ Resolve a ParseLength result that was deferred (a %-bearing calc) now that the
+  percentage base is known. Returns V unchanged when it is not a deferred marker. }
+function ResolveCalc(V, PctBase: Single): Single;
+var idx, bar: Integer; rec, emS, expr: string; dummy: Boolean;
+begin
+  Result := V;
+  if V > CALC_DEFER + 1 then Exit;     // not a deferred marker
+  idx := Round(CALC_DEFER - V);
+  if (idx < 0) or (idx > High(GCalcExprs)) then Exit(0);
+  rec := GCalcExprs[idx];
+  bar := Pos('|', rec);
+  emS := Copy(rec, 1, bar - 1); expr := Copy(rec, bar + 1, MaxInt);
+  Result := EvalCalc(expr, StrToFloatDef(emS, 16), PctBase, dummy);
+end;
+
 class function TComputedStyle.ParseLength(const S: string; EmSize: Single): Single;
 var
   Str: string;
@@ -2198,6 +2346,7 @@ var
   Terms: TStringArray;
   Term: string;
   I: Integer;
+  HadPctDummy: Boolean;
 begin
   Str := S.Trim.ToLower;
   if Str = '' then Exit(0);
@@ -2206,27 +2355,24 @@ begin
   if (Str = 'fit-content') or (Str = 'min-content') or (Str = 'max-content') then
     Exit(-3);
 
-  // Handle calc() — sum all terms with units we support (rem, em, px, pt),
-  // ignore viewport-relative units (vw, vh, vmin, vmax) we can't resolve.
-  if Str.StartsWith('calc(') and Str.EndsWith(')') then
+  // calc() / min() / max() / clamp(): full expression eval (+ - * /, px/em/rem/
+  // pt/vw/vh/vmin/vmax). A % term needs the container size, so those are deferred
+  // (a marker resolved by ResolveCalc at layout time); %-free exprs resolve now.
+  if Str.StartsWith('calc(') or Str.StartsWith('min(') or
+     Str.StartsWith('max(') or Str.StartsWith('clamp(') then
   begin
-    CalcInner := Copy(Str, 6, Length(Str) - 6).Trim;
-    // Normalize: replace '-' with '+-' so we can split on '+'
-    CalcInner := CalcInner.Replace(' - ', ' + -');
-    Terms := CalcInner.Split(['+']);
-    Result := 0;
-    for I := 0 to High(Terms) do
+    if Str.StartsWith('calc(') and Str.EndsWith(')') then
+      CalcInner := Copy(Str, 6, Length(Str) - 6).Trim
+    else
+      CalcInner := Str;   // min()/max()/clamp() are themselves the expression
+    if Pos('%', CalcInner) > 0 then
     begin
-      Term := Terms[I].Trim;
-      if Term = '' then Continue;
-      // Skip viewport-relative units and percentages we can't resolve in calc
-      if Term.EndsWith('vw') or Term.EndsWith('vh') or
-         Term.EndsWith('vmin') or Term.EndsWith('vmax') or
-         Term.EndsWith('%') then
-        Continue;
-      // Recursively parse each supported term
-      Result := Result + ParseLength(Term, EmSize);
+      I := Length(GCalcExprs); SetLength(GCalcExprs, I + 1);
+      GCalcExprs[I] := FloatToStr(EmSize) + '|' + CalcInner;
+      Exit(CALC_DEFER - I);
     end;
+    Result := EvalCalc(CalcInner, EmSize, -1, HadPctDummy);
+    if Result < 0 then Result := 0;   // a negative size collides with %-markers; clamp
     Exit;
   end;
 
