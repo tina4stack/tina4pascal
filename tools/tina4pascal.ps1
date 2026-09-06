@@ -183,7 +183,7 @@ end.
   Write-File (Join-Path $proj 'src\app\main.pas') @"
 program $name;
 {`$mode objfpc}{`$H+}
-{`$R app.rc}
+{`$IFDEF WINDOWS}{`$R app.rc}{`$ENDIF}   // exe icon (Windows resource)
 uses Tina4App;
 begin
   RunApp('$Title', 'src/templates', 'index.twig', '{"name":"World"}', 'assets/icon.png', 900, 640);
