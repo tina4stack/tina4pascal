@@ -71,6 +71,49 @@ Run the DOM/CSS test suite:
 cd tests && PPC_CONFIG_PATH=$HOME/fpc/etc $HOME/fpc/bin/fpc -Mdelphi -Fu../src test_dom.pas && ./test_dom
 ```
 
+## Quick start (Windows)
+
+The Windows shell is Win32/GDI with **DIB-section offscreen compositing** — so
+`filter`, `mix-blend-mode`, `mask-image`, 3D `transform` and `backdrop-filter`
+all render, sharing the same `Tina4Compositor` as macOS/iOS.
+
+```bat
+:: 1. Install FPC 3.2.2 — the official installer from https://www.freepascal.org/download.html
+::    (puts fpc.exe on PATH; no extra config, unlike the Mac's self-contained ~/fpc)
+:: 2. Build + run the viewer:
+cd examples\htmlviewer
+fpc -Mdelphi -Fu..\..\src htmlviewer_win.pas
+htmlviewer_win.exe win-test.html      :: any .html; no arg loads the built-in @demo
+```
+
+Cross-compiling the `.exe` from macOS/Linux instead:
+
+```sh
+PPC_CONFIG_PATH=$HOME/fpc/etc $HOME/fpc/bin/fpc -Mdelphi -Twin64 -Px86_64 \
+  -FE/tmp/w -FU/tmp/w -Fusrc examples/htmlviewer/htmlviewer_win.pas
+```
+
+### What's next on Windows
+
+The GDI shell renders shapes, ClearType text, clipping, 2D transforms and the
+full compositing pipeline. Remaining work, in order:
+
+1. **Gradients + `<img>`** — `FillLinearGradient`/`DrawImage` are no-ops today;
+   wire GDI+ (or WIC) for gradient fills and image decode/draw.
+2. **Per-pixel alpha on ordinary fills** — plain `rgba()` / semi-transparent
+   backgrounds paint opaque (GDI limitation). The DIB-section path already
+   fixes alpha for *composited* elements; extend it to normal fills.
+3. **Rounded-corner alpha inside a filtered box** — a `filter`/`blur` on a
+   `border-radius` box shows square corners (GDI doesn't hand us coverage);
+   recover it by rasterising the clip shape into the layer's alpha channel.
+4. **Advanced blend modes** — color-dodge/burn, hue/saturation/color/luminosity
+   currently fall back to source-over; add them to `BlendPixel`.
+5. **HiDPI** — the shell runs at density 1; read the per-monitor DPI and
+   supersample the layers.
+
+See `src/Tina4ShellWin.pas` (canvas) and `examples/htmlviewer/htmlviewer_win.pas`
+(the Win32 host + message loop).
+
 ## The full stack
 
 ```
@@ -84,7 +127,7 @@ One HTML-driven model, six targets from one Mac. Each layer has a design doc:
 | Layer | Status | Doc |
 |---|---|---|
 | Renderer (DOM/CSS/layout) | working on macOS, systematic conformance push | [CONFORMANCE.md](docs/CONFORMANCE.md), [CSS-PROPERTY-INDEX.md](docs/CSS-PROPERTY-INDEX.md), [HTML-ELEMENT-INDEX.md](docs/HTML-ELEMENT-INDEX.md) |
-| Platform shells | macOS (Cocoa) done; SW rasterizer → Win/Linux/Android next | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Platform shells | macOS (Cocoa) + iOS (on-device) + Windows (GDI) done, all with offscreen filter/blend/mask/3D compositing; Android shell (no compositing yet); Linux/X11 host next | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Data layer (WS/SSE/API) | designed, ports of tina4delphi units | [ROADMAP-DATALAYER.md](docs/ROADMAP-DATALAYER.md) |
 | Frond template engine | designed, port of Tina4Frond.pas | [ROADMAP-FROND.md](docs/ROADMAP-FROND.md) |
 
