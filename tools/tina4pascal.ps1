@@ -254,6 +254,24 @@ function Build-Project($proj, $t) {
   Write-Host "build failed" -ForegroundColor Red; return $null
 }
 
+# Build with DWARF symbols (no optimise/strip) into build\<t>-debug\ for gdb.
+function Build-ProjectDebug($proj, $t) {
+  $fpc = Find-Fpc
+  if (-not $fpc) { Write-Host "fpc.exe not found - run doctor" -ForegroundColor Red; return $null }
+  $flags = @('-Twin64','-Px86_64'); if ($t -eq 'win32') { $flags=@() }
+  $out = Join-Path $proj "build\$t-debug"
+  New-Item -ItemType Directory -Force -Path $out | Out-Null
+  $name = Split-Path -Leaf $proj
+  Write-Host "Building $name ($t debug) ..."
+  Push-Location $proj
+  try {
+    $fa = @('-Mdelphi','-gw','-gl','-O-') + $flags + @("-Fu$Src","-Fusrc\app","-Fusrc\routes","-FE$out","-FU$out","-o$name.exe","src\app\main.pas")
+    & $fpc @fa 2>&1 | Where-Object { $_ -match 'Error|Fatal|Linking' } | ForEach-Object { Write-Host $_ }
+  } finally { Pop-Location }
+  $exe = Join-Path $out "$name.exe"
+  if (Test-Path $exe) { return $exe } else { Write-Host "debug build failed" -ForegroundColor Red; return $null }
+}
+
 # Is the current directory a Tina4Pascal project?
 function Project-Root { if (Test-Path (Join-Path (Get-Location) 'tina4.json')) { return (Get-Location).Path } else { return $null } }
 
@@ -309,6 +327,38 @@ if ($cmd -eq 'doctor') {
       if (Test-Path $out) { Get-Content $out -Raw } else { Write-Host "no output" -ForegroundColor Red }
     }
   }
+} elseif ($cmd -eq 'debug') {
+  $pr = Project-Root
+  if (-not $pr) { Write-Host "debug: run inside a project dir" -ForegroundColor Red }
+  else {
+    $exe = Build-ProjectDebug $pr 'win64'
+    if ($exe) {
+      $gdb = (Get-Command gdb -ErrorAction SilentlyContinue).Source
+      if (-not $gdb) {
+        $fg = Join-Path (Split-Path -Parent (Find-Fpc)) 'gdb.exe'
+        if (Test-Path $fg) { $gdb = $fg }
+      }
+      if (-not $gdb) { Write-Host "gdb not found - install one (choco install mingw) " -ForegroundColor Red }
+      else {
+        $img = Join-Path $env:TEMP 'tina4-dbg.png'
+        $lines = @('set pagination off','set confirm off')
+        if ($target -and $target -ne 'win64' -and $target -ne 'win32') { $lines += "break $target" }
+        $lines += @('run','bt full','info locals','quit')
+        $gcmd = Join-Path $env:TEMP 'tina4.gdb'
+        [System.IO.File]::WriteAllText($gcmd, ($lines -join "`n") + "`n")
+        Write-Host "gdb: run (headless) -> backtrace on crash"
+        $ep = $ErrorActionPreference; $ErrorActionPreference = 'SilentlyContinue'
+        $g = (& $gdb -q -batch -x $gcmd --args $exe --snapshot $img --width 1024 --height 800 2>&1 | Out-String)
+        $ErrorActionPreference = $ep
+        if ($g -match 'SIGSEGV|received signal|EAccessViolation|RunError|Access violation') {
+          Write-Host $g
+          Write-Host "-> crash caught (backtrace above)" -ForegroundColor Yellow
+        } else {
+          Ok "ran clean under gdb (no crash)"
+        }
+      }
+    }
+  }
 } else {
-  Write-Host "unknown command '$cmd' (doctor | init | build | run | render | dom | boxes | inspect | where)"
+  Write-Host "unknown command '$cmd' (doctor | init | build | run | render | dom | boxes | inspect | debug | where)"
 }

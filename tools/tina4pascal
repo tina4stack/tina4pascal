@@ -237,9 +237,10 @@ default_host_target() {
   case "$(uname -s)" in Darwin) echo macos ;; Linux) echo linux ;; *) echo linux ;; esac
 }
 
-# build the current project's native app for a target into build/<target>/<name>
+# build the current project's native app for a target into build/<target>/<name>.
+# 2nd arg --debug → DWARF symbols, no optimise/strip, into build/<target>-debug/.
 build_project() {
-  target="${1:-$(default_host_target)}"
+  target="${1:-$(default_host_target)}"; bpmode="${2:-}"
   is_project || die "not a Tina4Pascal project (no tina4.json)"
   if [ "$target" = "all" ]; then
     # every desktop/mobile target the toolchain can reach; skip the ones it can't
@@ -261,7 +262,12 @@ build_project() {
   esac
   flags="$(target_flags "$target")" || die "unknown target '$target'"
   need_fpc
-  out="$PWD/build/$target"; mkdir -p "$out"
+  if [ "$bpmode" = "--debug" ]; then
+    opts="-gw -gl -O-"; bsub="$target-debug"     # DWARF line info, no optimise/strip
+  else
+    opts="-O2 -Xs"; bsub="$target"
+  fi
+  out="$PWD/build/$bsub"; mkdir -p "$out"
   extra=""
   case "$target" in
     linux|linux-arm64)
@@ -272,10 +278,10 @@ build_project() {
         extra="-Fl$TINA4_HOME/xstub -k-L$TINA4_HOME/xstub"
       fi ;;
   esac
-  say "${D}fpc $flags $main${Z}"
-  "$FPC" -Mdelphi -O2 -Xs $flags -Fu"$SRC" -Fu. -Fusrc/routes -Fusrc/orm -Fusrc/services $extra \
+  say "${D}fpc $opts $flags $main${Z}"
+  "$FPC" -Mdelphi $opts $flags -Fu"$SRC" -Fu. -Fusrc/routes -Fusrc/orm -Fusrc/services $extra \
     -FE"$out" -FU"$out" -o"$name" "$main" 2>&1 | grep -Ei "error|fatal" && die "build failed" || true
-  ok "$name ($target) -> build/$target/$name"
+  ok "$name ($target${bpmode:+ debug}) -> build/$bsub/$name"
 }
 
 # Render the project's entry template (Twig, with {% include %}/{% extends %}
@@ -315,7 +321,7 @@ build_project_ios()     { proj_ios_build "$@"; }
 run_project() {
   target="${1:-$(default_host_target)}"
   build_project "$target"
-  name="$(basename "$PWD")"
+  name="$(jget name "$(basename "$PWD")")"
   say "→ running build/$target/$name"
   ( exec "$PWD/build/$target/$name" )
 }
@@ -347,7 +353,7 @@ run_headless() {
 render_project() {
   rtarget="${1:-$(default_host_target)}"; rout="${2:-shot}"; rw="${3:-900}"; rh="${4:-640}"; rov="${5:-}"
   build_project "$rtarget"
-  rname="$(basename "$PWD")"
+  rname="$(jget name "$(basename "$PWD")")"
   case "$rout" in *.*) : ;; *) case "$rtarget" in linux*) rout="$rout.bmp" ;; *) rout="$rout.png" ;; esac ;; esac
   if [ "$rov" = "--overlay" ]; then
     run_headless "$PWD/build/$rtarget/$rname" "$rtarget" --snapshot "$rout" --overlay --width "$rw" --height "$rh" || return 1
@@ -363,7 +369,7 @@ dump_project() {
   dkind="$1"; shift
   dtarget="$(default_host_target)"
   build_project "$dtarget"
-  dname="$(basename "$PWD")"
+  dname="$(jget name "$(basename "$PWD")")"
   dexe="$PWD/build/$dtarget/$dname"; dout="$PWD/.tina4-$dkind.json"
   case "$dkind" in
     dom)     run_headless "$dexe" "$dtarget" --dom "$dout" --width 1024 --height 800 ;;
@@ -373,7 +379,37 @@ dump_project() {
   esac
   if [ -f "$dout" ]; then cat "$dout"; echo; else bad "no $dkind output (linux headless needs Xvfb/DISPLAY)"; fi
 }
-where_project() { echo "$PWD/build/${1:-$(default_host_target)}/$(basename "$PWD")"; }
+where_project() { echo "$PWD/build/${1:-$(default_host_target)}/$(jget name "$(basename "$PWD")")"; }
+
+# native gdb debug of the desktop app: build with DWARF symbols, run one headless
+# frame under gdb, and print a Pascal backtrace (file:line) on any crash — else
+# the app renders and exits clean. usage: debug_native [--break <location>]
+debug_native() {
+  dbrk=""
+  if [ "${1:-}" = "--break" ] && [ -n "${2:-}" ]; then dbrk="$2"; shift 2; fi
+  dtgt="$(default_host_target)"
+  build_project "$dtgt" --debug
+  dname="$(jget name "$(basename "$PWD")")"; dexe="$PWD/build/$dtgt-debug/$dname"
+  gbin="$(command -v gdb || true)"
+  [ -n "$gbin" ] || { bad "gdb not found — install it (apt install gdb / brew install gdb / choco install mingw)"; return 1; }
+  # headless server + linux: run gdb (and its inferior) under Xvfb
+  pfx=""
+  case "$dtgt" in linux*) [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1 && pfx="xvfb-run -a" ;; esac
+  gcf="$PWD/.tina4-gdb"
+  { echo "set pagination off"; echo "set confirm off";
+    [ -n "$dbrk" ] && echo "break $dbrk";
+    echo "run"; echo "bt full"; echo "info locals"; echo "quit"; } > "$gcf"
+  say "${D}gdb: run (headless) → backtrace on crash${Z}"
+  gout="$($pfx "$gbin" -q -batch -x "$gcf" \
+    --args "$dexe" --snapshot /tmp/tina4-dbg.png --width 1024 --height 800 2>&1)"
+  rm -f "$gcf"
+  printf '%s\n' "$gout"
+  if printf '%s' "$gout" | grep -qiE 'received signal|SIGSEGV|SIGABRT|SIGBUS|SIGFPE'; then
+    bad "crash caught — backtrace above"
+  else
+    ok "ran clean under gdb (no crash)"
+  fi
+}
 
 # scaffold a full Tina4-backend-style project, then build + run it
 cmd_init() {
@@ -946,7 +982,7 @@ case "$cmd" in
   deploy)     case "${1:-}" in android|ios|macos|win64|windows|linux) cmd_run_target "$@" ;; *) cmd_deploy "$@" ;; esac ;;
   ios)        cmd_ios "$@" ;;
   launch)     cmd_launch "$@" ;;
-  debug)      cmd_debug "$@" ;;
+  debug)      if is_project; then debug_native "$@"; else cmd_debug "$@"; fi ;;
   screenshot) cmd_screenshot "$@" ;;
   tap)        cmd_tap "$@" ;;
   swipe)      cmd_swipe "$@" ;;
