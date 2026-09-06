@@ -1024,7 +1024,7 @@ proj_ios_deploy() {
     -allowProvisioningUpdates -derivedDataPath "$iwork/dd" build 2>&1 \
     | grep -qE "BUILD SUCCEEDED" || die "build/sign failed (set your team in App Store Connect)"
   app="$(find "$iwork/dd/Build/Products" -maxdepth 2 -name '*.app' -path '*iphoneos*' | head -1)"
-  say "→ installing on $udid…"
+  say "→ installing on ${udid}..."
   xcrun devicectl device install app --device "$udid" "$app" >/dev/null 2>&1 \
     || die "install failed (iPhone unlocked?)"
   xcrun devicectl device process launch --device "$udid" "$ibundle" >/dev/null 2>&1 || true
@@ -1143,7 +1143,7 @@ cmd_ios() {
   app="$(xcodebuild -project "$IOS_DIR/Tina4Pascal.xcodeproj" -scheme Tina4Pascal \
     -destination "generic/platform=iOS" -showBuildSettings 2>/dev/null \
     | awk -F' = ' '/ TARGET_BUILD_DIR /{d=$2} / FULL_PRODUCT_NAME /{n=$2} END{print d"/"n}')"
-  say "→ installing on $udid…"
+  say "→ installing on ${udid}..."
   xcrun devicectl device install app --device "$udid" "$app" >/dev/null 2>&1 \
     || die "install failed (is the iPhone unlocked?)"
   xcrun devicectl device process launch --device "$udid" "$IOS_BUNDLE" >/dev/null 2>&1 || true
