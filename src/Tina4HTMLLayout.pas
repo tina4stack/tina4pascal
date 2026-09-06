@@ -1134,7 +1134,7 @@ var
   mL, mR, mT, mB, availInner, ew, eh: Single;
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
   isCol: Boolean;
-  dir, jc, ai: string;
+  dir, jc, ai, ia: string;
   sumMain, freeMain, curr, gap, crossOff, usedFixed, sumGrow, targetW: Single;
   lineW, lineH, lineFree, lx, lgap, lineY, totalH, flexGap: Single;
   baseW, growF, shrinkF: array of Single;
@@ -1142,8 +1142,9 @@ var
   crossFixed: array of Boolean;   // item has an explicit cross-axis size (skip stretch)
   sb: TStringBuilder;
   m: TTina4TextMetrics;
-  i, k, lineEnd: Integer;
+  i, k, lineEnd, oi: Integer;
   fw: string;
+  fcTag: THTMLTag;
 begin
   st := TComputedStyle.ForTag(Tag, ParentStyle, FSheet);
   if LowerCase(st.Display) = 'none' then Exit(0);
@@ -1191,6 +1192,28 @@ begin
       if LowerCase(cs.Display) = 'none' then Continue;
       itemTags.Add(c);
     end;
+    // `order`: stable insertion-sort by the item's order (default 0)
+    for i := 1 to itemTags.Count - 1 do
+    begin
+      fcTag := itemTags[i];
+      oi := TComputedStyle.ForTag(fcTag, st, FSheet).CSSOrder;
+      k := i;
+      while (k > 0) and
+            (TComputedStyle.ForTag(itemTags[k - 1], st, FSheet).CSSOrder > oi) do
+      begin itemTags[k] := itemTags[k - 1]; Dec(k); end;
+      itemTags[k] := fcTag;
+    end;
+    // flex-direction: *-reverse places items in reverse main-axis order
+    if (dir = 'row-reverse') or (dir = 'column-reverse') then
+      for i := 0 to itemTags.Count div 2 - 1 do
+      begin
+        fcTag := itemTags[i];
+        itemTags[i] := itemTags[itemTags.Count - 1 - i];
+        itemTags[itemTags.Count - 1 - i] := fcTag;
+      end;
+    // per-axis gap: the main-axis gap is column-gap for a row, row-gap for a column
+    if isCol then flexGap := st.RowGap else flexGap := st.ColGap;
+    if flexGap < 0 then flexGap := 0;
 
     SetLength(crossFixed, itemTags.Count);
     if isCol then
@@ -1375,13 +1398,16 @@ begin
     for i := 0 to items.Count - 1 do
     begin
       cb := items[i];
+      // align-self overrides the container's align-items for this item
+      ia := LowerCase(cb.Style.AlignSelf);
+      if (ia = '') or (ia = 'auto') then ia := ai;
       if isCol then
       begin
         // cross axis = horizontal
-        if (ai = 'stretch') and not crossFixed[i] and (cb.W < contentW) then
+        if (ia = 'stretch') and not crossFixed[i] and (cb.W < contentW) then
           cb.W := contentW;                       // stretch: fill the cross axis
-        if (ai = 'center') then crossOff := (contentW - cb.W) / 2
-        else if (ai = 'flex-end') or (ai = 'end') then crossOff := contentW - cb.W
+        if (ia = 'center') then crossOff := (contentW - cb.W) / 2
+        else if (ia = 'flex-end') or (ia = 'end') then crossOff := contentW - cb.W
         else crossOff := 0;
         ShiftBoxTree(cb, contentX + crossOff, contentY + curr);
         curr := curr + cb.H + gap + flexGap;
@@ -1389,10 +1415,10 @@ begin
       else
       begin
         // cross axis = vertical
-        if (ai = 'stretch') and not crossFixed[i] and (cb.H < contentH) then
+        if (ia = 'stretch') and not crossFixed[i] and (cb.H < contentH) then
           cb.H := contentH;                       // stretch: equal-height items
-        if (ai = 'center') then crossOff := (contentH - cb.H) / 2
-        else if (ai = 'flex-end') or (ai = 'end') then crossOff := contentH - cb.H
+        if (ia = 'center') then crossOff := (contentH - cb.H) / 2
+        else if (ia = 'flex-end') or (ia = 'end') then crossOff := contentH - cb.H
         else crossOff := 0;
         ShiftBoxTree(cb, contentX + curr, contentY + crossOff);
         curr := curr + cb.W + gap + flexGap;

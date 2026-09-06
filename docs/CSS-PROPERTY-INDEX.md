@@ -52,13 +52,14 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 |---|---|---|
 | flex, flex-grow, flex-basis | ✅ | grow distributes free main space |
 | flex-shrink | ✅ | weighted shrink pass on overflowing non-wrapping rows |
-| flex-direction | 🟡 | row/column; reverse variants not reversed |
+| flex-direction | ✅ | row/column + row-reverse/column-reverse (items reversed along the main axis) |
 | flex-wrap | 🟡 | wrap works; wrap-reverse = plain wrap; grow disabled while wrapping |
 | flex-flow | ❌ | use longhands |
 | justify-content | ✅ | start/center/end/space-between/around/evenly |
 | align-items | ✅ | center/flex-end/stretch (the default, fills the cross axis); no baseline |
-| align-content, align-self, order | ❌ | no multi-line cross-align, per-item align, or reorder |
-| gap, row-gap, column-gap | 🟡 | one shared gap value (no per-axis distinction) |
+| align-self, order | ✅ | `align-self` overrides `align-items` per item (stretch/center/start/end); `order` reorders items (stable) before layout |
+| align-content | 🟡 | parsed; multi-line cross-distribution still uses the default packing |
+| gap, row-gap, column-gap | ✅ | per-axis: `gap: <row> <col>`; flex uses column-gap on a row / row-gap on a column |
 | grid-template-columns, gap, grid-column span | ✅ | see display grid. TODO: explicit line placement, grid-template-rows/areas, multi-row span |
 
 ## Typography
@@ -165,8 +166,8 @@ text-decoration color/style; the sub-keyword resize cursors beyond
 col/row-resize.
 
 **Outstanding — bigger rocks:**
-1. **Flexbox faithfulness**: reverse directions, wrap-reverse, `align-content` /
-   `align-self` / `order`, per-axis `row-gap`/`column-gap`.
+1. **Flexbox remainder**: `flex-wrap: wrap-reverse`; multi-line `align-content`
+   distribution (reverse directions, `align-self`/`order`, per-axis gap done).
 2. **Grid**: explicit line placement, `grid-template-rows`/`areas`, multi-row span.
 3. **transitions / animations** + `@keyframes` (needs the ticker + a timeline);
     `@supports` / `@import`.

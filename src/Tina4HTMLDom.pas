@@ -329,10 +329,13 @@ type
     FlexWrap: string;
     JustifyContent: string;
     AlignItems: string;
+    AlignContent: string;         // cross-axis distribution of wrapped lines
     FlexGrow: Single;
     FlexShrink: Single;
     FlexBasis: Single;
     FlexGap: Single;
+    AlignSelf: string;            // per-item cross alignment ('' = inherit align-items)
+    CSSOrder: Integer;            // flex/grid `order`
     // CSS Grid (subset)
     GridTemplateColumns: string;  // track list: px / % / fr / repeat(n, size) / auto
     GridTemplateRows: string;
@@ -2103,10 +2106,12 @@ begin
   Result.FlexWrap := 'nowrap';
   Result.JustifyContent := 'flex-start';
   Result.AlignItems := 'stretch';
+  Result.AlignContent := 'stretch';
   Result.FlexGrow := 0;
   Result.FlexShrink := 1;
   Result.FlexBasis := -1;
   Result.FlexGap := 0;
+  Result.AlignSelf := ''; Result.CSSOrder := 0;
   Result.GridTemplateColumns := ''; Result.GridTemplateRows := '';
   Result.GridColumn := ''; Result.GridRow := '';
   Result.RowGap := 0; Result.ColGap := 0;
@@ -2538,10 +2543,12 @@ begin
   Result.FlexWrap := 'nowrap';
   Result.JustifyContent := 'flex-start';
   Result.AlignItems := 'stretch';
+  Result.AlignContent := 'stretch';
   Result.FlexGrow := 0;
   Result.FlexShrink := 1;
   Result.FlexBasis := -1;
   Result.FlexGap := 0;
+  Result.AlignSelf := ''; Result.CSSOrder := 0;
   Result.GridTemplateColumns := ''; Result.GridTemplateRows := '';
   Result.GridColumn := ''; Result.GridRow := '';
   Result.RowGap := 0; Result.ColGap := 0;
@@ -3599,10 +3606,20 @@ begin
     Style.JustifyContent := Temp.Trim.ToLower;
   if Decls.TryGetValue('align-items', Temp) and not ShouldSkip(Temp) then
     Style.AlignItems := Temp.Trim.ToLower;
+  if Decls.TryGetValue('align-content', Temp) and not ShouldSkip(Temp) then
+    Style.AlignContent := Temp.Trim.ToLower;
+  if Decls.TryGetValue('align-self', Temp) and not ShouldSkip(Temp) then
+    Style.AlignSelf := Temp.Trim.ToLower;
+  if Decls.TryGetValue('order', Temp) and not ShouldSkip(Temp) then
+    Style.CSSOrder := StrToIntDef(Trim(Temp), 0);
   if Decls.TryGetValue('gap', Temp) and not ShouldSkip(Temp) then
   begin
-    Style.FlexGap := ParseLength(Temp, Style.FontSize);   // 'gap: R C' → first token
-    Style.RowGap := Style.FlexGap; Style.ColGap := Style.FlexGap;
+    // gap: <row> [<column>]  (one value = both axes)
+    OvParts := Temp.Trim.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    Style.RowGap := ParseLength(OvParts[0], Style.FontSize);
+    if Length(OvParts) >= 2 then Style.ColGap := ParseLength(OvParts[1], Style.FontSize)
+    else Style.ColGap := Style.RowGap;
+    Style.FlexGap := Style.RowGap;
   end;
   if Decls.TryGetValue('column-gap', Temp) and not ShouldSkip(Temp) then
   begin Style.FlexGap := ParseLength(Temp, Style.FontSize); Style.ColGap := Style.FlexGap; end;
