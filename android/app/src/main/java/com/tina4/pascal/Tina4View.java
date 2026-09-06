@@ -5,6 +5,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.media.MediaPlayer;
 import android.net.Uri;
+import android.os.SystemClock;
 import android.text.InputType;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -119,8 +120,15 @@ public class Tina4View extends View implements Runnable {
     // round-trip, and a full-document repaint at 60fps saturates the main thread
     // (janky scroll, laggy <video> overlay). 30fps halves that cost with no visible
     // slow-mo because the clock is wall-clock driven.
-    private static final long FRAME_MS = 32;   // ~30fps
+    private static final long FRAME_MS = 32;    // ~30fps ceiling on a fast device
+    private static final long MAX_DELAY = 750;   // floor of ~1.3fps on a very slow device
     private boolean ticking = false;
+    // Adaptive frame pacing: wait between anim frames in proportion to how long the
+    // LAST paint took, so a slow device (or a cold SwiftShader emulator, where the
+    // first paints take seconds) always yields the main thread and can never starve
+    // input/focus into an ANR. The anim clock is wall-clock driven, so a lower frame
+    // rate slows nothing down — it just draws fewer frames.
+    private long mNextDelay = FRAME_MS;
 
     // Retained backing-store. We keep a bitmap of the last FULL frame; an
     // animation-only tick blits that cache (one drawBitmap) and repaints ONLY the
@@ -156,7 +164,7 @@ public class Tina4View extends View implements Runnable {
     // last paint marked animated content active, so animation runs on load without
     // needing a fling; it self-stops when nativeTick() returns 0 (nothing animating).
     private void ensureTicking() {
-        if (!ticking) { ticking = true; postDelayed(this, FRAME_MS); }
+        if (!ticking) { ticking = true; postDelayed(this, mNextDelay); }
     }
     private void startFling() { ensureTicking(); }
     private void stopFling()  { removeCallbacks(this); ticking = false; }
@@ -181,6 +189,7 @@ public class Tina4View extends View implements Runnable {
     @Override
     protected void onDraw(Canvas canvas) {
         int w = getWidth(), h = getHeight();
+        long t0 = SystemClock.uptimeMillis();
         if (!USE_BACKING_STORE) {
             nativePaint(canvas, w, h, density);                 // proven hardware-canvas path
         } else {
@@ -202,7 +211,11 @@ public class Tina4View extends View implements Runnable {
                 canvas.drawBitmap(mBacking, 0, 0, null);               // present the (updated) frame
             }
         }
-        if (nativeAnimActive() != 0) ensureTicking();   // keep animating (throttled)
+        // pace the next anim frame to the cost of this one, so a slow paint always
+        // leaves the main thread time to service input/focus (never an ANR).
+        long dt = SystemClock.uptimeMillis() - t0;
+        mNextDelay = Math.max(FRAME_MS, Math.min(MAX_DELAY, dt));
+        if (nativeAnimActive() != 0) ensureTicking();   // keep animating (adaptively paced)
         // autofocus: the engine parses on the first frame, so poll here (it
         // returns 1 exactly once, after an input[autofocus] has been focused)
         if (nativeWantsKeyboard() != 0) showKeyboard();
