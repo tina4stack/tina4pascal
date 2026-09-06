@@ -72,6 +72,20 @@ function Invoke-Doctor {
     Miss "wsl.exe not found - Linux target unavailable from here"
   }
   Write-Host ""
+  Write-Host "Android (native APK from Windows):"
+  if ($fpc) {
+    if (Test-AndroidCross 'arm64-v8a')   { Ok "FPC cross arm64-v8a (ppcrossa64 + aarch64-android RTL)" } else { Miss "FPC arm64-v8a cross missing - tools\tina4pascal.ps1 setup android" }
+    if (Test-AndroidCross 'armeabi-v7a') { Ok "FPC cross armeabi-v7a (ppcrossarm + arm-android RTL)" } else { Miss "FPC armeabi-v7a cross missing - tools\tina4pascal.ps1 setup android" }
+  }
+  $sdk = Resolve-AndroidSdk
+  if ($sdk) {
+    Ok "Android SDK ($sdk)"
+    $bt = Resolve-BuildTools $sdk; if ($bt) { Ok "build-tools ($(Split-Path -Leaf $bt))" } else { Miss "build-tools missing (aapt2/d8/apksigner) - install via sdkmanager" }
+    $jar = Resolve-PlatformJar $sdk; if ($jar) { Ok "platform ($(Split-Path -Leaf (Split-Path -Parent $jar)))" } else { Miss "no android.jar platform - install one via sdkmanager" }
+    $ndk = Resolve-AndroidNdk $sdk; if ($ndk) { Ok "NDK ($(Split-Path -Leaf $ndk))" } else { Miss "NDK r21x missing - tools\tina4pascal.ps1 setup android" }
+  } else { Miss "Android SDK not found - set ANDROID_HOME (Android Studio / cmdline-tools)" }
+  $jdk = Resolve-Jdk; if ($jdk) { Ok "JDK ($jdk)" } else { Miss "JDK 17+ not found - set JAVA_HOME" }
+  Write-Host ""
   Write-Host "Build output: build\<target>\htmlviewer_win.exe"
   if ($fpc) { Write-Host "Ready. Try:  tools\tina4pascal.ps1 run win64" } else { Write-Host "Install FPC first, then re-run doctor." }
 }
@@ -268,10 +282,12 @@ function Build-ProjectWin($proj, $t, $dbg) {
 
 function Build-Project($proj, $t) {
   if ($t -eq 'linux') { return Build-ProjectLinux $proj }
+  if ($t -eq 'android') { return Build-ProjectAndroid $proj }
   if ($t -eq 'all') {
-    Build-Project $proj 'win64' | Out-Null
-    Build-Project $proj 'linux' | Out-Null
-    Write-Host "(macos / android / ios build from a Mac via tools/tina4pascal - full cross toolchain)" -ForegroundColor DarkGray
+    Build-Project $proj 'win64'   | Out-Null
+    Build-Project $proj 'linux'   | Out-Null
+    Build-Project $proj 'android' | Out-Null
+    Write-Host "(macos / ios build from a Mac via tools/tina4pascal - full cross toolchain)" -ForegroundColor DarkGray
     return $null
   }
   return Build-ProjectWin $proj $t $false
@@ -280,11 +296,238 @@ function Build-Project($proj, $t) {
 # Build with DWARF symbols (no optimise/strip) into build\<t>-debug\ for gdb.
 function Build-ProjectDebug($proj, $t) { return Build-ProjectWin $proj $t $true }
 
+# ── Android (native, from Windows) ────────────────────────────────────
+# Every path below is resolved explicitly (env var, then well-known location) so
+# the build never depends on what happens to be on PATH. The one thing stock FPC
+# lacks is the android cross-compiler + RTL; that ships as a version-locked pack
+# dropped into the FPC tree (see toolchain\build-android-cross.ps1 / 'setup android').
+
+function Fpc-Root { $f = Find-Fpc; if (-not $f) { return $null }; return (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $f))) }
+function Fpc-Bin  { $f = Find-Fpc; if (-not $f) { return $null }; return (Split-Path -Parent $f) }
+
+# Is the FPC android cross toolchain (compiler + RTL units) installed?
+function Test-AndroidCross([string]$abi) {
+  $bin = Fpc-Bin; $root = Fpc-Root
+  if (-not $bin) { return $false }
+  if ($abi -eq 'armeabi-v7a') { return (Test-Path (Join-Path $bin 'ppcrossarm.exe')) -and (Test-Path (Join-Path $root 'units\arm-android\rtl\system.ppu')) }
+  return (Test-Path (Join-Path $bin 'ppcrossa64.exe')) -and (Test-Path (Join-Path $root 'units\aarch64-android\rtl\system.ppu'))
+}
+
+function Resolve-AndroidSdk {
+  foreach ($c in @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT, (Join-Path $env:LOCALAPPDATA 'Android\Sdk'))) {
+    if ($c -and (Test-Path (Join-Path $c 'platform-tools'))) { return $c }
+  }
+  return $null
+}
+function Resolve-AndroidNdk($sdk) {
+  foreach ($c in @($env:ANDROID_NDK_HOME, $env:ANDROID_NDK)) {
+    if ($c -and (Test-Path (Join-Path $c 'source.properties'))) { return $c }
+  }
+  if ($sdk) {
+    $nd = Join-Path $sdk 'ndk'
+    if (Test-Path $nd) {
+      $r21 = Get-ChildItem $nd -Directory -Filter 'android-ndk-r21*' -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($r21) { return $r21.FullName }
+      # any NDK that still ships the gcc binutils FPC 3.2.2 needs
+      $any = Get-ChildItem $nd -Directory -ErrorAction SilentlyContinue |
+             Where-Object { Test-Path (Join-Path $_.FullName 'toolchains\aarch64-linux-android-4.9') } | Select-Object -First 1
+      if ($any) { return $any.FullName }
+    }
+  }
+  return $null
+}
+function Resolve-Jdk {
+  if ($env:JAVA_HOME -and (Test-Path (Join-Path $env:JAVA_HOME 'bin\javac.exe'))) { return $env:JAVA_HOME }
+  $bases = @("$env:ProgramFiles\Java", "$env:ProgramFiles\Eclipse Adoptium",
+             "$env:ProgramFiles\Microsoft", "$env:ProgramFiles\Android\Android Studio\jbr")
+  foreach ($base in $bases) {
+    if (Test-Path (Join-Path $base 'bin\javac.exe')) { return $base }
+    $j = Get-ChildItem $base -Directory -ErrorAction SilentlyContinue |
+         Where-Object { Test-Path (Join-Path $_.FullName 'bin\javac.exe') } | Sort-Object Name -Descending | Select-Object -First 1
+    if ($j) { return $j.FullName }
+  }
+  return $null
+}
+function Resolve-BuildTools($sdk) {
+  $bt = Join-Path $sdk 'build-tools'; if (-not (Test-Path $bt)) { return $null }
+  Get-ChildItem $bt -Directory | Sort-Object Name -Descending |
+    Where-Object { Test-Path (Join-Path $_.FullName 'aapt2.exe') } | Select-Object -First 1 -ExpandProperty FullName
+}
+function Resolve-PlatformJar($sdk) {
+  $pl = Join-Path $sdk 'platforms'; if (-not (Test-Path $pl)) { return $null }
+  Get-ChildItem $pl -Directory | Sort-Object Name -Descending |
+    ForEach-Object { Join-Path $_.FullName 'android.jar' } | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+
+# Per-ABI NDK bits + FPC codegen flags.
+function Ndk-BinDir($ndk, $abi) {
+  $tc = if ($abi -eq 'armeabi-v7a') { 'arm-linux-androideabi-4.9' } else { 'aarch64-linux-android-4.9' }
+  Join-Path $ndk "toolchains\$tc\prebuilt\windows-x86_64\bin"
+}
+function Ndk-Prefix($abi) { if ($abi -eq 'armeabi-v7a') { 'arm-linux-androideabi-' } else { 'aarch64-linux-android-' } }
+function Ndk-SysLib($ndk, $abi, $api) {
+  $triple = if ($abi -eq 'armeabi-v7a') { 'arm-linux-androideabi' } else { 'aarch64-linux-android' }
+  Join-Path $ndk "toolchains\llvm\prebuilt\windows-x86_64\sysroot\usr\lib\$triple\$api"
+}
+function Fpc-AbiFlags($abi) { if ($abi -eq 'armeabi-v7a') { @('-Parm','-CpARMV7A','-CfVFPV3') } else { @('-Paarch64') } }
+
+# numeric key from tina4.json (Get-T4 only does strings)
+function Get-T4Num($proj, $key, $default) {
+  $f = Join-Path $proj 'tina4.json'; if (-not (Test-Path $f)) { return $default }
+  $m = [regex]::Match((Get-Content $f -Raw), '"' + [regex]::Escape($key) + '"\s*:\s*([0-9]+)')
+  if ($m.Success) { return [int]$m.Groups[1].Value } else { return $default }
+}
+
+# Ensure a debug keystore exists (each host makes its own; it is gitignored).
+function Ensure-DebugKeystore($jdk) {
+  $ks = Join-Path $Root 'android\debug.keystore'
+  if (Test-Path $ks) { return $ks }
+  $kt = Join-Path $jdk 'bin\keytool.exe'
+  if (-not (Test-Path $kt)) { return $null }
+  & $kt -genkeypair -keystore $ks -storepass android -keypass android -alias androiddebugkey `
+        -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" 2>&1 | Out-Null
+  if (Test-Path $ks) { return $ks } else { return $null }
+}
+
+# Build a scaffolded project into a signed APK, entirely on Windows.
+function Build-ProjectAndroid($proj) {
+  $fpc = Find-Fpc
+  if (-not $fpc) { Write-Host "fpc.exe not found - run doctor" -ForegroundColor Red; return $null }
+  # 0. toolchain resolution (explicit; nothing from PATH)
+  $sdk = Resolve-AndroidSdk
+  if (-not $sdk) { Write-Host "Android SDK not found - set ANDROID_HOME or install it (Android Studio / cmdline-tools)." -ForegroundColor Red; return $null }
+  $ndk = Resolve-AndroidNdk $sdk
+  if (-not $ndk) { Write-Host "Android NDK r21x not found - run: tools\tina4pascal.ps1 setup android" -ForegroundColor Red; return $null }
+  $jdk = Resolve-Jdk
+  if (-not $jdk) { Write-Host "JDK (javac) not found - set JAVA_HOME or install a JDK 17+." -ForegroundColor Red; return $null }
+  $bt  = Resolve-BuildTools $sdk
+  if (-not $bt) { Write-Host "Android build-tools not found under $sdk\build-tools." -ForegroundColor Red; return $null }
+  $jar = Resolve-PlatformJar $sdk
+  if (-not $jar) { Write-Host "No android.jar platform found under $sdk\platforms." -ForegroundColor Red; return $null }
+
+  $name   = Get-T4 $proj 'name' (Split-Path -Leaf $proj)
+  $title  = Get-T4 $proj 'title' $name
+  $bundle = Get-T4 $proj 'bundleId' "com.tina4.$name"
+  $minsdk = Get-T4Num $proj 'androidMinSdk' 21
+  $tgtsdk = Get-T4Num $proj 'androidTargetSdk' 34
+  $abis   = @('arm64-v8a','armeabi-v7a')
+
+  # every ABI needs its cross installed
+  foreach ($abi in $abis) {
+    if (-not (Test-AndroidCross $abi)) {
+      Write-Host "FPC android cross for $abi not installed - run: tools\tina4pascal.ps1 setup android" -ForegroundColor Red; return $null
+    }
+  }
+
+  Write-Host "Building $name -> APK ($bundle) for $($abis -join ', ')" -ForegroundColor Cyan
+  $work = Join-Path $proj 'build\android'
+  $host_ = Join-Path $work 'host'; $aout = Join-Path $work 'out'
+  Remove-Item $host_,$aout -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path $work,(Join-Path $aout 'classes') | Out-Null
+
+  # 1. render the project UI -> showcase.html (build the win host, then --dump-html)
+  $winexe = Build-ProjectWin $proj 'win64' $false
+  if (-not $winexe) { Write-Host "could not build desktop host to render UI" -ForegroundColor Red; return $null }
+  $idx = Join-Path $work 'index.html'
+  & $winexe --dump-html $idx | Out-Null
+  if (-not (Test-Path $idx)) { Write-Host "could not render entry template (--dump-html)" -ForegroundColor Red; return $null }
+
+  # 2. stage the reference android host + overlay project bits
+  New-Item -ItemType Directory -Force -Path $host_ | Out-Null
+  Copy-Item -Path (Join-Path $Root 'android\*') -Destination $host_ -Recurse -Force
+  $appdir = Join-Path $host_ 'app\src\main'
+  Remove-Item (Join-Path $appdir 'jniLibs') -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path (Join-Path $appdir 'assets') | Out-Null
+  Copy-Item $idx (Join-Path $appdir 'assets\showcase.html') -Force
+  if (Test-Path (Join-Path $proj 'assets')) { Copy-Item (Join-Path $proj 'assets\*') (Join-Path $appdir 'assets') -Recurse -Force -ErrorAction SilentlyContinue }
+  $picon = Join-Path $proj 'assets\icon.png'
+  if (Test-Path $picon) { Get-ChildItem (Join-Path $appdir 'res') -Recurse -Filter 'ic_launcher*.png' | ForEach-Object { Copy-Item $picon $_.FullName -Force } }
+
+  # 3. native lib per ABI: fpc cross -> libtina4.so
+  foreach ($abi in $abis) {
+    $o = Join-Path $appdir "jniLibs\$abi"; New-Item -ItemType Directory -Force -Path $o | Out-Null
+    $bindir = Ndk-BinDir $ndk $abi; $prefix = Ndk-Prefix $abi; $syslib = Ndk-SysLib $ndk $abi $minsdk
+    Write-Host "  fpc $abi -> libtina4.so" -ForegroundColor DarkGray
+    $fa = @('-Mdelphi') + (Fpc-AbiFlags $abi) + @('-Tandroid','-O2','-Xs',
+           "-XP$prefix","-FD$bindir","-Fl$syslib","-Fu$Src",
+           "-FE$o","-FU$o","-o$o\libtina4.so",(Join-Path $host_ 'jni\tina4jni.pas'))
+    & $fpc @fa 2>&1 | Where-Object { $_ -match 'Error|Fatal|Can''t find' } | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+    if (-not (Test-Path (Join-Path $o 'libtina4.so'))) { Write-Host "native build produced no .so ($abi)" -ForegroundColor Red; return $null }
+  }
+
+  # 4. java -> dex
+  Write-Host "  javac + d8" -ForegroundColor DarkGray
+  $javac = Join-Path $jdk 'bin\javac.exe'
+  $javas = Get-ChildItem (Join-Path $appdir 'java') -Recurse -Filter '*.java' | ForEach-Object { $_.FullName }
+  & $javac --release 21 -classpath $jar -d (Join-Path $aout 'classes') @javas 2>&1 | Where-Object { $_ -match 'error:' } | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+  $classes = Get-ChildItem (Join-Path $aout 'classes') -Recurse -Filter '*.class' | ForEach-Object { $_.FullName }
+  & (Join-Path $bt 'd8.bat') --min-api $minsdk --lib $jar --output $aout @classes 2>&1 | Where-Object { $_ -match 'error|Exception' } | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+  if (-not (Test-Path (Join-Path $aout 'classes.dex'))) { Write-Host "d8 produced no dex" -ForegroundColor Red; return $null }
+
+  # 5. resources + manifest (rename applicationId to the project bundleId)
+  $res = @()
+  if (Test-Path (Join-Path $appdir 'res')) { & (Join-Path $bt 'aapt2.exe') compile --dir (Join-Path $appdir 'res') -o (Join-Path $aout 'res.zip') | Out-Null; $res = @((Join-Path $aout 'res.zip')) }
+  $manifest = Get-Content (Join-Path $appdir 'AndroidManifest.xml') -Raw
+  $manifest = $manifest -replace '<manifest ', '<manifest package="com.tina4.pascal" '
+  $manifest = $manifest -replace 'android:name="\.MainActivity"', 'android:name="com.tina4.pascal.MainActivity"'
+  $manifest = $manifest -replace 'android:label="[^"]*"', "android:label=`"$title`""
+  $pm = Join-Path $aout 'AndroidManifest.xml'; [System.IO.File]::WriteAllText($pm, $manifest)
+  & (Join-Path $bt 'aapt2.exe') link -o (Join-Path $aout 'base.apk') -I $jar --manifest $pm `
+      --rename-manifest-package $bundle --custom-package com.tina4.pascal `
+      --min-sdk-version $minsdk --target-sdk-version $tgtsdk -A (Join-Path $appdir 'assets') @res 2>&1 |
+      Where-Object { $_ -match 'error' } | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+  if (-not (Test-Path (Join-Path $aout 'base.apk'))) { Write-Host "aapt2 link failed" -ForegroundColor Red; return $null }
+
+  # 6. add dex + native libs, align, sign
+  Push-Location $aout
+  try {
+    New-Item -ItemType Directory -Force -Path 'lib' | Out-Null
+    foreach ($abi in $abis) { $s = Join-Path $appdir "jniLibs\$abi\libtina4.so"; if (Test-Path $s) { New-Item -ItemType Directory -Force -Path "lib\$abi" | Out-Null; Copy-Item $s "lib\$abi\" -Force } }
+    $zip = Join-Path (Fpc-Bin) 'zip.exe'
+    & $zip -qr 'base.apk' 'classes.dex' 'lib' | Out-Null
+  } finally { Pop-Location }
+  & (Join-Path $bt 'zipalign.exe') -f -p 4 (Join-Path $aout 'base.apk') (Join-Path $aout 'aligned.apk') | Out-Null
+
+  $apk = Join-Path $work "$name.apk"
+  $ks = Ensure-DebugKeystore $jdk
+  if ($env:TINA4_KEYSTORE) {
+    & (Join-Path $bt 'apksigner.bat') sign --ks $env:TINA4_KEYSTORE --ks-pass "pass:$env:TINA4_KS_PASS" `
+        --ks-key-alias $env:TINA4_KEY_ALIAS --key-pass ("pass:" + $(if ($env:TINA4_KEY_PASS) { $env:TINA4_KEY_PASS } else { $env:TINA4_KS_PASS })) `
+        --out $apk (Join-Path $aout 'aligned.apk') 2>&1 | Where-Object { $_ -match 'error|Exception' } | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+  } elseif ($ks) {
+    & (Join-Path $bt 'apksigner.bat') sign --ks $ks --ks-pass pass:android --key-pass pass:android --out $apk (Join-Path $aout 'aligned.apk') 2>&1 |
+        Where-Object { $_ -match 'error|Exception' } | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+  } else { Write-Host "no keystore and no keytool to make one" -ForegroundColor Red; return $null }
+
+  if (Test-Path $apk) {
+    Ok "APK -> $apk ($([math]::Round((Get-Item $apk).Length/1KB)) KB)"
+    Write-Host "  applicationId $bundle" -ForegroundColor DarkGray
+    Write-Host "  install:  adb install -r `"$apk`"" -ForegroundColor DarkGray
+    Write-Host "  launch:   adb shell am start -n $bundle/com.tina4.pascal.MainActivity" -ForegroundColor DarkGray
+    return $apk
+  }
+  Write-Host "APK signing failed" -ForegroundColor Red; return $null
+}
+
 # Is the current directory a Tina4Pascal project?
 function Project-Root { if (Test-Path (Join-Path (Get-Location) 'tina4.json')) { return (Get-Location).Path } else { return $null } }
 
 if ($cmd -eq 'doctor') {
   Invoke-Doctor
+} elseif ($cmd -eq 'setup') {
+  if ($target -eq 'android') {
+    # Provision the Android cross toolchain: build it from FPC source + NDK and
+    # install into the FPC tree. (A future release will fetch a prebuilt,
+    # version-matched pack first and only build as a fallback.)
+    $builder = Join-Path $PSScriptRoot '..\toolchain\build-android-cross.ps1'
+    if (-not (Test-Path $builder)) { Write-Host "builder not found: $builder" -ForegroundColor Red }
+    else {
+      Write-Host "Provisioning the FPC -> Android cross toolchain (first run downloads the NDK and builds the cross; ~15 min)..." -ForegroundColor Cyan
+      & $builder -Install
+    }
+  } else {
+    Write-Host "usage: tina4pascal.ps1 setup android" -ForegroundColor Yellow
+  }
 } elseif ($cmd -eq 'init') {
   Invoke-Init $target ($page -eq '--no-run')
 } elseif ($cmd -eq 'build') {
@@ -380,5 +623,5 @@ if ($cmd -eq 'doctor') {
     }
   }
 } else {
-  Write-Host "unknown command '$cmd' (doctor | init | build | run | render | dom | boxes | inspect | debug | script | where)"
+  Write-Host "unknown command '$cmd' (doctor | setup android | init | build [win64|win32|linux|android|all] | run | render | dom | boxes | inspect | debug | script | where)"
 }

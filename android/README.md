@@ -39,6 +39,32 @@ cd android
 adb shell am start -n com.tina4.pascal/.MainActivity
 ```
 
+## Build on Windows (no Gradle, no Mac, no WSL)
+
+A scaffolded project builds a signed APK entirely on a Windows host:
+
+```powershell
+tools\tina4pascal.ps1 setup android      # one-time: fetch NDK r21e + build the FPC cross
+cd myproject
+tools\tina4pascal.ps1 build android       # → build\android\myproject.apk (arm64-v8a + armeabi-v7a)
+```
+
+How it works — the CLI resolves every tool by explicit path (never `PATH`):
+
+- **FPC → `libtina4.so`**: stock FPC has no Android cross-compiler, so
+  `setup android` builds one from FPC source against **NDK r21e** (the last NDK
+  that still ships the GNU `as`/`ld` FPC 3.2.2 drives) and installs a
+  version-locked pack — `ppcrossa64.exe`/`ppcrossarm.exe` + `aarch64/arm-android`
+  RTL + `jni`/`fpkg` units — into the FPC tree. See
+  `toolchain\build-android-cross.ps1`; that same script is the "rebuild on every
+  FPC release" CI step (the `.ppu` are FPC-version-stamped, never committed).
+- **Packaging**: the project's UI is rendered to `showcase.html` (`--dump-html`),
+  then `javac → d8 → aapt2 → zipalign → apksigner` from the Windows Android SDK
+  build-tools produce a debug-signed APK with the project's own `applicationId`.
+
+`tools\tina4pascal.ps1 doctor` reports the whole chain (FPC crosses, SDK,
+build-tools, platform, NDK, JDK).
+
 Or open the `android/` folder in Android Studio and press **Run**. Gradle
 bundles the prebuilt `libtina4.so`; it does not rebuild it — re-run
 `./build.sh` after changing any Pascal source.
