@@ -32,7 +32,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | visibility | ✅ | hidden hides self+subtree, keeps space (was mislabelled 📦) |
 | display block/inline/inline-block/none/list-item/table | ✅ | |
 | display flex / inline-flex | ✅ | LayoutFlex (was mislabelled "no flex") |
-| display grid | ✅ | grid-template-columns (px/%/fr/auto/repeat), row/column gaps, row-major auto-placement **that skips occupied cells**, explicit line placement (`grid-column/row: N`, `N / M`, `N / span S`), column + **row span**. `grid-template-rows`/`areas` still TODO (rows auto-size) |
+| display grid | ✅ | grid-template-columns + **grid-template-rows** (px/%/fr/auto/repeat), row/column gaps, row-major auto-placement **that skips occupied cells**, explicit line placement (`grid-column/row: N`, `N / M`, `N / span S`), column + **row span**, `grid-template-areas` |
 | aspect-ratio | ✅ | `<w>/<h>` or a bare number; with a known width and auto height the block's height is derived (width ÷ ratio). Width-from-height is the rarer case (not re-laid-out) |
 
 ## Positioning
@@ -61,7 +61,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | align-content | ✅ | distributes wrapped lines on the cross axis (center/flex-end/space-between/space-around); stretch = default packing |
 | gap, row-gap, column-gap | ✅ | per-axis: `gap: <row> <col>`; flex uses column-gap on a row / row-gap on a column |
 | grid-column, grid-row | ✅ | explicit start line + span, or `N / M`; occupancy-aware auto-placement around them |
-| grid-template-rows | 🟡 | explicit **px** row-track heights honored; fr/%/auto rows still content-sized |
+| grid-template-rows | ✅ | px / % / fr / auto row tracks. fr and % resolve against a definite container height and distribute the leftover; with an indefinite height they fall back to content size (matches Chrome) |
 | grid-template-areas, grid-area | ✅ | `"a a b" "a a c"` named-area template; an item's `grid-area: name` is placed at that area's bounding cell rect (row/col start + span). Single or double quotes |
 
 ## Typography
@@ -177,12 +177,10 @@ mode renderer doesn't yet have):
     translate/rotate/scale/skew/matrix() + `transform-origin` done).
 2. **filter / backdrop-filter / clip-path / mask / blend-modes** — an offscreen
     render target + image-filter/compositing pass per shell.
-3. **Grid**: `grid-template-rows` fr/%/auto (px rows, template-areas, line
-    placement, column/row span, occupancy auto-placement done).
-4. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
+3. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
     `direction`/`writing-mode` (bidi), `list-style-image`, `vertical-align`
     text-top/bottom/length.
-5. **user-select / resize** (need a selection model / drag-resize handle);
+4. **user-select / resize** (need a selection model / drag-resize handle);
     `env()`; `table-layout:fixed`; `empty-cells`; `@supports` / `@import`.
 
 

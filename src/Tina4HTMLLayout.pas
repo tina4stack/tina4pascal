@@ -1646,9 +1646,10 @@ var
   itemTags: TList<THTMLTag>;
   mL, mR, mT, mB, availInner, ew, eh: Single;
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
-  rowGap, colGap, frUnit, fixedSum, frSum, cellW, cellH, colXk, rowYr: Single;
-  trackW, trackFr, colX, rowH: array of Single;
+  rowGap, colGap, frUnit, fixedSum, frSum, cellW, cellH, colXk, rowYr, defH: Single;
+  trackW, trackFr, colX, rowH, rowFr: array of Single;
   trackFixed: array of Boolean;
+  rowIsFr: array of Boolean;
   ncols, nrows, i, curRow, curCol, span, k, spanRows: Integer;
   colStart, rowStart, rowSpan, autoRow, autoCol: Integer;
   toks: TStringArray;
@@ -1940,14 +1941,53 @@ begin
           if cb.H / rowSpan > rowH[k] then rowH[k] := cb.H / rowSpan;
     end;
 
-    // grid-template-rows: explicit px row-track heights override the auto size
+    // grid-template-rows: px / % / fr / auto row-track heights override auto size.
+    // fr and % resolve against the container's definite inner height; with an
+    // indefinite height they fall back to the content (auto) size — matching Chrome.
+    eh := ResolveSize(st.ExplicitHeight, 0);
     if Trim(st.GridTemplateRows) <> '' then
     begin
       toks := Trim(st.GridTemplateRows).ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+      // definite inner height available to distribute across % / fr rows, else -1
+      if eh >= 0 then
+      begin
+        if SameText(st.BoxSizing, 'border-box') then defH := eh - edgeT - edgeB
+        else defH := eh;
+      end
+      else defH := -1;
+      SetLength(rowIsFr, nrows); SetLength(rowFr, nrows);
+      frSum := 0; fixedSum := 0;
+      for k := 0 to nrows - 1 do begin rowIsFr[k] := False; rowFr[k] := 0; end;
       for k := 0 to Min(High(toks), nrows - 1) do
       begin
         tk := Trim(toks[k]);
-        if tk.EndsWith('px') then rowH[k] := StrToFloatDef(Copy(tk, 1, Length(tk) - 2), rowH[k]);
+        if tk.EndsWith('px') then
+          rowH[k] := StrToFloatDef(Copy(tk, 1, Length(tk) - 2), rowH[k])
+        else if tk.EndsWith('fr') then
+        begin
+          if defH >= 0 then
+          begin
+            rowIsFr[k] := True;
+            rowFr[k] := StrToFloatDef(Copy(tk, 1, Length(tk) - 2), 1);
+            frSum := frSum + rowFr[k];
+          end; // indefinite height: leave rowH[k] as content size
+        end
+        else if tk.EndsWith('%') then
+        begin
+          if defH >= 0 then
+            rowH[k] := defH * StrToFloatDef(Copy(tk, 1, Length(tk) - 1), 0) / 100;
+        end;
+        // 'auto' (and indefinite fr) keep the content-derived rowH[k]
+      end;
+      // distribute the leftover definite height across fr tracks
+      if (defH >= 0) and (frSum > 0) then
+      begin
+        for k := 0 to nrows - 1 do
+          if not rowIsFr[k] then fixedSum := fixedSum + rowH[k];
+        frUnit := (defH - fixedSum - rowGap * Max(0, nrows - 1)) / frSum;
+        if frUnit < 0 then frUnit := 0;
+        for k := 0 to nrows - 1 do
+          if rowIsFr[k] then rowH[k] := frUnit * rowFr[k];
       end;
     end;
 
@@ -1955,7 +1995,6 @@ begin
     contentH := 0;
     for k := 0 to nrows - 1 do contentH := contentH + rowH[k];
     contentH := contentH + rowGap * Max(0, nrows - 1);
-    eh := ResolveSize(st.ExplicitHeight, 0);
     if eh >= 0 then
     begin
       if SameText(st.BoxSizing, 'border-box') then contentH := Max(contentH, eh - edgeT - edgeB)
