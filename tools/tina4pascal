@@ -956,6 +956,45 @@ proj_release() {
   esac
 }
 
+# deploy <android|ios|macos> for a scaffolded project — build + install + launch.
+proj_deploy() {
+  case "${1:-android}" in
+    android) proj_android_deploy ;;
+    ios)     proj_ios_deploy ;;
+    macos)   run_project macos ;;
+    *) die "deploy <android|ios|macos>" ;;
+  esac
+}
+
+proj_android_deploy() {
+  adb="$(command -v adb || echo "$ANDROID_SDK/platform-tools/adb")"
+  [ -x "$adb" ] || command -v adb >/dev/null 2>&1 || die "adb not found — tina4pascal setup android"
+  [ "$("$adb" devices 2>/dev/null | grep -cw device)" -gt 0 ] || die "no device/emulator (adb devices)"
+  build_project android                        # builds build/android/<name>.apk (clobbers name/out)
+  name="$(jget name "$(basename "$PWD")")"; bundle="$(jget bundleId "com.tina4.$name")"
+  say "→ installing $name.apk…"
+  "$adb" install -r "$PWD/build/android/$name.apk" >/dev/null || die "install failed"
+  "$adb" shell am start -n "$bundle/com.tina4.pascal.MainActivity" >/dev/null 2>&1
+  ok "installed + launched $bundle on device"
+}
+
+proj_ios_deploy() {
+  [ -n "${TINA4_IOS_TEAM:-}" ] || die "set TINA4_IOS_TEAM (your Apple Team ID) for a signed device install"
+  udid="$(ios_udid)"; [ -n "$udid" ] || die "no iOS device attached (idevice_id / devicectl)"
+  proj_ios_stage    # sets ihost/iname/ibundle/iwork
+  say "${D}xcodebuild build (device, signed)${Z}"
+  xcodebuild -project "$ihost/Tina4Pascal.xcodeproj" -scheme Tina4Pascal \
+    -destination 'generic/platform=iOS' DEVELOPMENT_TEAM="$TINA4_IOS_TEAM" \
+    -allowProvisioningUpdates -derivedDataPath "$iwork/dd" build 2>&1 \
+    | grep -qE "BUILD SUCCEEDED" || die "build/sign failed (set your team in App Store Connect)"
+  app="$(find "$iwork/dd/Build/Products" -maxdepth 2 -name '*.app' -path '*iphoneos*' | head -1)"
+  say "→ installing on $udid…"
+  xcrun devicectl device install app --device "$udid" "$app" >/dev/null 2>&1 \
+    || die "install failed (iPhone unlocked?)"
+  xcrun devicectl device process launch --device "$udid" "$ibundle" >/dev/null 2>&1 || true
+  ok "installed + launched $ibundle on device"
+}
+
 # publish <android|ios> — upload the release artifact to the store.
 proj_publish() {
   case "${1:-}" in
@@ -1340,7 +1379,7 @@ case "$cmd" in
   keygen)     cmd_keygen "$@" ;;
   release)    if is_project; then proj_release "$@"; else cmd_release "$@"; fi ;;
   publish)    if is_project; then proj_publish "$@"; else die "publish: run inside a project dir (publish <android|ios>)"; fi ;;
-  deploy)     case "${1:-}" in android|ios|macos|win64|windows|linux) cmd_run_target "$@" ;; *) cmd_deploy "$@" ;; esac ;;
+  deploy)     if is_project; then proj_deploy "$@"; else case "${1:-}" in android|ios|macos|win64|windows|linux) cmd_run_target "$@" ;; *) cmd_deploy "$@" ;; esac; fi ;;
   ios)        cmd_ios "$@" ;;
   launch)     cmd_launch "$@" ;;
   debug)      if is_project; then debug_native "$@"; else cmd_debug "$@"; fi ;;
