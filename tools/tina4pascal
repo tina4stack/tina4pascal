@@ -223,6 +223,20 @@ run_project() {
   ( exec "$PWD/build/$target/$name" )
 }
 
+# build + render one frame headless to an image (so an AI/CI can 'see' it).
+# NB: build_project clobbers the shell-global $out/$target/$name (POSIX sh has no
+# local scope here), so capture our own values into distinct names first.
+render_project() {
+  rtarget="${1:-$(default_host_target)}"; rout="${2:-shot}"; rw="${3:-900}"; rh="${4:-640}"
+  build_project "$rtarget"
+  rname="$(basename "$PWD")"
+  case "$rout" in *.*) : ;; *) case "$rtarget" in linux*) rout="$rout.bmp" ;; *) rout="$rout.png" ;; esac ;; esac
+  "$PWD/build/$rtarget/$rname" --snapshot "$rout" --width "$rw" --height "$rh" >/dev/null 2>&1 || true
+  if [ -f "$rout" ]; then ok "rendered $rout"; echo "$rout"
+  else bad "no snapshot — the linux target needs an X display (Xvfb/WSLg); macOS/Windows render headless"; fi
+}
+where_project() { echo "$PWD/build/${1:-$(default_host_target)}/$(basename "$PWD")"; }
+
 # scaffold a full Tina4-backend-style project, then build + run it
 cmd_init() {
   name=""; norun=0
@@ -699,6 +713,8 @@ case "$cmd" in
   dev)        cmd_dev "$@" ;;
   macos)      cmd_macos "$@" ;;
   run)        if is_project; then run_project "$@"; else cmd_run "$@"; fi ;;
+  render)     is_project && render_project "$@" || die "render: run inside a project dir" ;;
+  where)      is_project && where_project "$@" || die "where: run inside a project dir" ;;
   snapshot)   cmd_snapshot "$@" ;;
   compliance) cmd_compliance "$@" ;;
   apk)        cmd_apk "$@" ;;

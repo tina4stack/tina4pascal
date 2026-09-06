@@ -64,6 +64,21 @@ begin
     TinaSetHtml('<h1 style="font-family:sans-serif;padding:24px">Hello World!</h1>');
 end;
 
+{ Command-line: `<app> [--snapshot out] [--width N] [--height N]`. A snapshot
+  path makes the app render one frame headless and exit (AI/CI can 'see' it). }
+procedure ParseArgs(out Snap: string; var W, H: Integer);
+var i: Integer;
+begin
+  Snap := ''; i := 1;
+  while i <= ParamCount do
+  begin
+    if (ParamStr(i) = '--snapshot') and (i < ParamCount) then begin Inc(i); Snap := ParamStr(i); end
+    else if (ParamStr(i) = '--width') and (i < ParamCount) then begin Inc(i); W := StrToIntDef(ParamStr(i), W); end
+    else if (ParamStr(i) = '--height') and (i < ParamCount) then begin Inc(i); H := StrToIntDef(ParamStr(i), H); end;
+    Inc(i);
+  end;
+end;
+
 {$IFDEF WINDOWS}
 { ---- Windows / Win32 + GDI ---- }
 var
@@ -119,10 +134,35 @@ begin
   end;
 end;
 
+{ headless one-frame render to a PNG (no window) }
+procedure WinSnapshot(const TemplateDir, Template, JsonContext: string; sw, sh: Integer; const outPath: string);
+var mem: HDC; dib, oldb: HGDIOBJ; bmi: BITMAPINFO; bits: PByte; i: Integer; canvas: TWinCanvas;
+begin
+  mem := CreateCompatibleDC(0);
+  FillChar(bmi, SizeOf(bmi), 0);
+  bmi.bmiHeader.biSize := SizeOf(BITMAPINFOHEADER);
+  bmi.bmiHeader.biWidth := sw; bmi.bmiHeader.biHeight := -sh;
+  bmi.bmiHeader.biPlanes := 1; bmi.bmiHeader.biBitCount := 32; bmi.bmiHeader.biCompression := BI_RGB;
+  bits := nil; dib := CreateDIBSection(0, bmi, DIB_RGB_COLORS, bits, 0, 0);
+  oldb := SelectObject(mem, dib);
+  SetBkMode(mem, TRANSPARENT); SetGraphicsMode(mem, GM_ADVANCED);
+  if bits <> nil then for i := 0 to sw * sh - 1 do begin bits[i*4]:=255; bits[i*4+1]:=255; bits[i*4+2]:=255; bits[i*4+3]:=255; end;
+  canvas := TWinCanvas.Create;
+  TinaInit(canvas);
+  LoadUI(TemplateDir, Template, JsonContext);
+  canvas.BeginFrame(mem, bits, sw, sh);
+  TinaFrame(sw, sh, 1.0);
+  GdiFlush;
+  WinSaveDibPng(bits, sw, sh, outPath);
+  canvas.Free; SelectObject(mem, oldb); DeleteObject(dib); DeleteDC(mem);
+end;
+
 procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: string; W, H: Integer);
-var wc: WNDCLASSEXW; m: MSG; cls, cap: UnicodeString; ico: HICON;
+var wc: WNDCLASSEXW; m: MSG; cls, cap: UnicodeString; ico: HICON; snap: string;
 begin
   GW := W; GH := H;
+  ParseArgs(snap, GW, GH);
+  if snap <> '' then begin WinSnapshot(TemplateDir, Template, JsonContext, GW, GH, snap); Halt(0); end;
   cls := 'Tina4AppWindow';
   FillChar(wc, SizeOf(wc), 0);
   wc.cbSize := SizeOf(wc); wc.style := CS_HREDRAW or CS_VREDRAW;
@@ -187,6 +227,7 @@ procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: stri
 var
   dpy: PXDisplay; scr: cint; win, pixmap: TXID; gc: TGC; canvas: TX11Canvas;
   GWv, GHv, pmW, pmH: cint; mouseDown: Boolean; wmDelete: TXID; ev: array[0..191] of Byte; etype: Integer;
+  snap: string; aw, ah: Integer;
 
   procedure EnsurePixmap;
   begin
@@ -208,6 +249,20 @@ begin
   if dpy = nil then begin Writeln('cannot open X display (set DISPLAY)'); Halt(1); end;
   scr := XDefaultScreen(dpy);
   gc := XCreateGC(dpy, XRootWindow(dpy, scr), 0, nil);
+  aw := GWv; ah := GHv; ParseArgs(snap, aw, ah); GWv := aw; GHv := ah;
+  if snap <> '' then
+  begin
+    pixmap := XCreatePixmap(dpy, XRootWindow(dpy, scr), GWv, GHv, XDefaultDepth(dpy, scr));
+    canvas := TX11Canvas.Create(dpy, scr, gc);
+    TinaInit(canvas);
+    LoadUI(TemplateDir, Template, JsonContext);
+    canvas.BeginFrame(pixmap, GWv, GHv);
+    TinaFrame(GWv, GHv, 1.0);
+    XFlush(dpy);
+    LinSaveBmp(dpy, pixmap, GWv, GHv, snap);
+    XCloseDisplay(dpy);
+    Halt(0);
+  end;
   win := XCreateSimpleWindow(dpy, XRootWindow(dpy, scr), 0, 0, GWv, GHv, 0,
     XBlackPixel(dpy, scr), XWhitePixel(dpy, scr));
   XStoreName(dpy, win, PChar(Title));
@@ -252,8 +307,11 @@ procedure MScroll(X, Y, DX, DY: Single); begin TinaScrollBy(X, Y, DX, DY); GShel
 procedure MTick; begin if TinaTick = 1 then GShell.Invalidate; end;
 
 procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: string; W, H: Integer);
+var snap: string; aw, ah: Integer;
 begin
+  aw := W; ah := H; ParseArgs(snap, aw, ah);
   GShell := TCocoaShell.Create;
+  if snap <> '' then GShell.Headless := True;
   TinaInit(GShell.GetMeasuringCanvas);
   LoadUI(TemplateDir, Template, JsonContext);
   GShell.OnPaint := @MPaint;
@@ -263,7 +321,8 @@ begin
   GShell.OnMouseDrag := @MDrag;
   GShell.OnScroll := @MScroll;
   GShell.OnTick := @MTick;
-  GShell.Initialize(W, H, Title);
+  GShell.Initialize(aw, ah, Title);
+  if snap <> '' then begin GShell.Snapshot(snap); Halt(0); end;
   GShell.StartTicker(16);
   GShell.Run;
 end;

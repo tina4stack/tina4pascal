@@ -282,6 +282,19 @@ if ($cmd -eq 'doctor') {
   $pr = Project-Root
   if ($pr) { Write-Host (Join-Path (Join-Path $pr "build\$target") ((Split-Path -Leaf $pr) + '.exe')) }
   else { Write-Host (Join-Path (Join-Path $Build $target) 'htmlviewer_win.exe') }
+} elseif ($cmd -eq 'render') {
+  $pr = Project-Root
+  if (-not $pr) { Write-Host "render: run inside a project dir" -ForegroundColor Red }
+  else {
+    $t = if ($target) { $target } else { 'win64' }
+    $exe = Build-Project $pr $t
+    if ($exe) {
+      $img = if ($page) { $page } else { Join-Path $pr 'shot.png' }
+      & $exe --snapshot $img --width 900 --height 640
+      Start-Sleep -Milliseconds 600
+      if (Test-Path $img) { Ok "rendered: $img"; Write-Host $img } else { Write-Host "no snapshot" -ForegroundColor Red }
+    }
+  }
 } else {
-  Write-Host "unknown command '$cmd' (doctor | init | build | run | where)"
+  Write-Host "unknown command '$cmd' (doctor | init | build | run | render | where)"
 }

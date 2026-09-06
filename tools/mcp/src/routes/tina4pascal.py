@@ -83,6 +83,27 @@ def run(project: str, target: str = ""):
     return {"ok": True, "exe": exe, "log": build_log}
 
 
+@mcp_tool("tina4_where", description="Print the built app's path for a project "
+          "+ target (no build). Pass the project dir; target defaults to the host.",
+          server=mcp)
+def where(project: str, target: str = ""):
+    return _run(["where", target] if target else ["where"], cwd=project)
+
+
+@mcp_tool("tina4_render", description="Build a project and render one frame "
+          "HEADLESS to an image so you can SEE the desktop build (no window). "
+          "Returns the image path — read it to view. Windows/macOS render fully "
+          "headless; the linux target needs an X display (Xvfb/WSLg).",
+          server=mcp)
+def render(project: str, target: str = "", out: str = "shot",
+           width: int = 900, height: int = 640):
+    tgt = target or ("macos" if os.uname().sysname == "Darwin" else "linux")
+    log = _run(["render", tgt, out, str(width), str(height)], cwd=project)
+    # the CLI prints the final image path as its last line
+    img = (log.strip().splitlines() or [""])[-1].strip()
+    return {"image": img, "log": log}
+
+
 @mcp_tool("tina4_test", description="Build + run all DOM/CSS unit suites.",
           server=mcp)
 def test():
