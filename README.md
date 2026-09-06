@@ -314,6 +314,19 @@ asset ships a `.sha256`. The macOS build is GPG-signed rather than Apple-notariz
 so a browser download may be quarantined — verify it, then
 `xattr -dr com.apple.quarantine <binary>` to clear the Gatekeeper flag.
 
+### v1.0.2
+
+- **Bundled fonts on every platform** — drop `.ttf` files in a project's `fonts/`
+  folder and the app ships and renders with them identically on Linux, Windows,
+  macOS, Android and iOS. `init` scaffolds the folder; `build` bundles it; the
+  renderer registers the fonts with each OS text engine and resolves them
+  bundled-first (generic `sans-serif`/`serif`/`monospace` → the bundled DejaVu
+  family when present, else the system font). Empty `fonts/` → system fonts.
+- **iOS** — `deploy ios` fixed and `CFBundleIdentifier` parameterised so device
+  builds sign + install.
+- macOS downloads are GPG-signed (not notarized); clear Gatekeeper with
+  `xattr -dr com.apple.quarantine <binary>` after verifying.
+
 ### v1.0.1
 
 - **WebP** — pure-Pascal decoder (VP8L lossless, lossy VP8, lossy + ALPH alpha),
