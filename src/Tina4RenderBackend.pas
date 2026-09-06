@@ -109,6 +109,16 @@ type
     function LoadImage(const Src: string): Integer; virtual;
     function ImageSize(Handle: Integer; out W, H: Single): Boolean; virtual;
     procedure DrawImage(Handle: Integer; X, Y, W, H: Single); virtual;
+    { Offscreen compositing for CSS filter / mix-blend-mode. BeginLayer redirects
+      all subsequent drawing into an offscreen buffer covering the doc-space rect
+      (X,Y,W,H) grown by Pad on every side (Pad gives blur/shadow room). It
+      returns a layer handle, or -1 when the backend has no offscreen support —
+      the caller then draws directly and the effect is skipped (a safe degrade).
+      EndLayerFiltered pops the buffer, applies the CSS `filter` chain to its
+      pixels, and composites it back onto the parent using BlendMode ('' / 'normal'
+      = source-over). Nesting is a stack; always balance the Begin/End pair. }
+    function BeginLayer(X, Y, W, H, Pad: Single): Integer; virtual;
+    procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode: string); virtual;
   end;
 
   TTina4PaintEvent = procedure(Canvas: TTina4Canvas; Width, Height: Single) of object;
@@ -368,5 +378,7 @@ procedure TTina4Canvas.Scale(SX, SY: Single); begin end;
 procedure TTina4Canvas.Skew(AngleXDeg, AngleYDeg: Single); begin end;
 procedure TTina4Canvas.TransformMatrix(A, B, C, D, E, F: Single); begin end;
 procedure TTina4Canvas.ClipPolygon(const Pts: TTina4PointArray); begin end;
+function TTina4Canvas.BeginLayer(X, Y, W, H, Pad: Single): Integer; begin Result := -1; end;
+procedure TTina4Canvas.EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode: string); begin end;
 
 end.

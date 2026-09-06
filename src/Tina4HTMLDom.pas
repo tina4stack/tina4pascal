@@ -390,6 +390,8 @@ type
     TransformMatrixSet: Boolean;   // CSS matrix(a,b,c,d,e,f) present
     TransformMat: array[0..5] of Single; // a,b,c,d,e,f
     ClipPath: string;              // CSS clip-path (inset/circle/ellipse/polygon), '' = none
+    Filter: string;                // CSS filter chain (blur/grayscale/…), '' = none
+    MixBlendMode: string;          // CSS mix-blend-mode, '' = normal
     TransformOriginX: Single;      // px, or a %-marker (<-1.5); default -50 = 50%
     TransformOriginY: Single;
     // CSS animation (@keyframes-driven). Resolved per frame at paint time.
@@ -2314,6 +2316,7 @@ begin
   Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
   Result.TransformMatrixSet := False;
   Result.ClipPath := '';
+  Result.Filter := ''; Result.MixBlendMode := '';
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 end;
@@ -2764,6 +2767,7 @@ begin
   Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
   Result.TransformMatrixSet := False;
   Result.ClipPath := '';
+  Result.Filter := ''; Result.MixBlendMode := '';
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 
@@ -4243,6 +4247,16 @@ begin
   begin
     if SameText(Trim(Temp), 'none') then Style.ClipPath := ''
     else Style.ClipPath := Trim(Temp);
+  end;
+  if Decls.TryGetValue('filter', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.Filter := ''
+    else Style.Filter := Trim(Temp);
+  end;
+  if Decls.TryGetValue('mix-blend-mode', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'normal') then Style.MixBlendMode := ''
+    else Style.MixBlendMode := LowerCase(Trim(Temp));
   end;
 end;
 

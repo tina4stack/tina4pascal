@@ -832,6 +832,40 @@ begin
   begin Shift := StrToFloatDef(t, 0); Result := (Shift = 0); end;  // only 0 is a valid bare number
 end;
 
+{ Extra padding (px) an offscreen filter layer needs so a blur/drop-shadow isn't
+  clipped at the box edge. Reads the blur radius and any drop-shadow blur+offset. }
+function FilterLayerPad(const Spec: string): Single;
+var s, num: string; p, q, i: Integer; r: Single;
+begin
+  Result := 0;
+  s := LowerCase(Spec);
+  // blur(<len>)
+  p := Pos('blur(', s);
+  if p > 0 then
+  begin
+    q := p + 5; num := '';
+    while (q <= Length(s)) and (s[q] in ['0'..'9', '.']) do begin num := num + s[q]; Inc(q); end;
+    r := StrToFloatDef(num, 0);
+    if r * 3 + 2 > Result then Result := r * 3 + 2;   // ~3σ Gaussian reach
+  end;
+  // drop-shadow(<x> <y> <blur> <color>) — pad by |offset| + blur reach
+  p := Pos('drop-shadow(', s);
+  if p > 0 then
+  begin
+    q := p + 12;
+    for i := 1 to 3 do
+    begin
+      while (q <= Length(s)) and (s[q] = ' ') do Inc(q);
+      num := '';
+      while (q <= Length(s)) and (s[q] in ['0'..'9', '.', '-']) do begin num := num + s[q]; Inc(q); end;
+      while (q <= Length(s)) and (s[q] in ['a'..'z', '%']) do Inc(q); // skip unit
+      r := Abs(StrToFloatDef(num, 0));
+      if i = 3 then r := r * 3;   // the 3rd value is blur
+      if r + 2 > Result then Result := r + 2;
+    end;
+  end;
+end;
+
 { Interpolate two colours (ARGB) by t. }
 function LerpColor(A, B: TTina4Color; t: Single): TTina4Color;
   function Ch(sh: Integer): Cardinal;
@@ -3947,7 +3981,9 @@ var
   r: TTextRun;
   st: TComputedStyle;
   y, innerOfs, thumbH, thumbY, thumbW, thumbX, cx, cy, gy: Single;
-  mkImgSz: Single;
+  mkImgSz, filterPad: Single;
+  filterLayer: Integer;
+  useLayer: Boolean;
   sizeTxt, val: string;
   m: TTina4TextMetrics;
   didClip: Boolean;
@@ -4019,6 +4055,16 @@ begin
     // subtree to it (border-box reference; radius/mask etc. still TODO)
     if st.ClipPath <> '' then
       Canvas.ClipPolygon(ClipPathPolygon(st.ClipPath, Box.X, y, Box.W, Box.H));
+  end;
+  // CSS filter / mix-blend-mode: render this box + subtree into an offscreen
+  // layer, then composite it back with the pixel effect. BeginLayer returns -1
+  // on backends without offscreen support, so the effect is simply skipped.
+  useLayer := (st.Filter <> '') or (st.MixBlendMode <> '');
+  filterLayer := -1;
+  if useLayer then
+  begin
+    filterPad := FilterLayerPad(st.Filter);
+    filterLayer := Canvas.BeginLayer(Box.X, y, Box.W, Box.H, filterPad);
   end;
   // CSS opacity multiplies down the subtree; visibility:hidden hides self+subtree
   op := Opacity;
@@ -4434,6 +4480,9 @@ begin
     end;
   end;
   finally
+    // composite the filter/blend layer back before undoing the transform
+    if useLayer and (filterLayer >= 0) then
+      Canvas.EndLayerFiltered(filterLayer, st.Filter, st.MixBlendMode);
     if hasRS then Canvas.RestoreState;
     if shifted then ShiftBoxTree(Box, -tx, -ty);
   end;

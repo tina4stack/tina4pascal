@@ -116,8 +116,9 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | transform-origin | ✅ | keyword/px/% pivot for rotate/scale/skew (default 50% 50%) |
 | perspective | ❌ | needs a 3D pipeline |
 | clip-path | ✅ | `inset()` / `circle()` / `ellipse()` / `polygon()` — the core tessellates the shape to a polygon in border-box coords and clips the subtree via the `ClipPolygon` contract method (Cocoa: `NSBezierPath.addClip`). Radius on `inset(... round)`, `path()`, and URL references not yet applied |
-| filter, backdrop-filter, mask, mix-blend-mode | ❌ | need an offscreen render target + compositing pass |
-| mix-blend-mode, background-blend-mode | ❌ | |
+| filter | ✅ | `blur` · `grayscale` · `brightness` · `contrast` · `invert` · `saturate` · `sepia` · `hue-rotate` · `opacity`, chained. Rendered through a new offscreen-layer contract (`BeginLayer`/`EndLayerFiltered`): the element+subtree draw into an offscreen buffer, the pixels are filtered (separable box-blur ≈ Gaussian; the rest are colour-matrix ops), then composited back. `drop-shadow` reserves blur/offset room but is not yet painted |
+| mix-blend-mode | ✅ | all 16 separable + non-separable modes (multiply/screen/overlay/darken/lighten/color-dodge/color-burn/soft-light/hard-light/difference/exclusion/hue/saturation/color/luminosity) via `CGContextSetBlendMode` when the layer composites back |
+| backdrop-filter, mask, background-blend-mode | ❌ | backdrop-filter needs a read-back of what's behind; mask needs a second offscreen channel |
 | animation, @keyframes | ✅ | `@keyframes` parsed; `animation` shorthand + longhands (name/duration/delay/timing/iteration/direction). Per-frame interpolation at paint off the ticker: transform (translate/rotate/scale), opacity, background-color, color; timing linear/ease/ease-in/-out; iteration + alternate/reverse |
 | transition | ✅ | eases a property toward its computed value when it changes (hover/focus/DOM): background-color, color, opacity, transform (translate/rotate/scale). Per-element from/start tracked on the tag; duration/delay/timing/property from the shorthand + longhands. Mid-transition reversal supported |
 | will-change, contain | ❌ | |
@@ -179,9 +180,10 @@ col/row-resize.
 mode renderer doesn't yet have):
 1. **transform** 3D + `perspective` — a 3D projection pipeline (2D
     translate/rotate/scale/skew/matrix() + `transform-origin` done).
-2. **filter / backdrop-filter / mask / blend-modes** — an offscreen
-    render target + image-filter/compositing pass per shell (clip-path basic
-    shapes done via polygon clip).
+2. **backdrop-filter / mask** — extend the offscreen-layer subsystem
+    (`filter`, `mix-blend-mode` and clip-path basic shapes are done):
+    backdrop-filter needs a read-back of the pixels behind the element;
+    mask needs a second offscreen alpha channel. `drop-shadow` filter too.
 3. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
     `direction`/`writing-mode` (bidi), `vertical-align`
     text-top/text-bottom.

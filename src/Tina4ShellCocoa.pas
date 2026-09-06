@@ -13,16 +13,24 @@ uses
   { NOTE: do not instantiate generics (TList<>/TDictionary<>) with objcclass
     types — FPC 3.2.2/aarch64 dies with Internal error 2009092303. Plain
     TList/TStringList are used for the image store instead. }
-  SysUtils, Classes, MD5, CocoaAll, AVKit, AVFoundation, CTFontManager,
+  SysUtils, Classes, MD5, CocoaAll, MacOSAll, AVKit, AVFoundation, CTFontManager,
   CTFontDescriptor, CFBase, CFURL, CFArray, CFString, CFError, Tina4RenderBackend;
 
 type
   TCocoaShell = class;
 
+  { one entry of the offscreen filter/blend layer stack }
+  TLayerRec = record
+    rep: NSBitmapImageRep;   // pixel buffer being drawn into
+    ctx: NSGraphicsContext;  // graphics context wrapping rep (pushed as current)
+    ox, oy, w, h: Single;    // doc-space origin + logical size of the buffer
+  end;
+
   TCocoaCanvas = class(TTina4Canvas)
   private
     FImages: TList;                   // handle -> NSImage (retained, as Pointer)
     FImageBySrc: TStringList;         // src -> handle in Objects[] (sorted)
+    FLayers: array of TLayerRec;      // offscreen compositing stack
     function FontFor(FontSize: Single; Styles: TTina4FontStyles): NSFont;
     function AttrsFor(FontSize: Single; Styles: TTina4FontStyles;
       Color: TTina4Color): NSDictionary;
@@ -61,6 +69,8 @@ type
     procedure Skew(AngleXDeg, AngleYDeg: Single); override;
     procedure TransformMatrix(A, B, C, D, E, F: Single); override;
     procedure ClipPolygon(const Pts: TTina4PointArray); override;
+    function BeginLayer(X, Y, W, H, Pad: Single): Integer; override;
+    procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode: string); override;
   end;
 
   { NSTimer target bridging into the shell's OnTick }
@@ -722,6 +732,334 @@ begin
   for i := 1 to High(Pts) do p.lineToPoint(NSMakePoint(Pts[i].X, Pts[i].Y));
   p.closePath;
   p.addClip; // intersects with the current clip; undone by RestoreState
+end;
+
+{ ---- offscreen filter / blend compositing -------------------------------- }
+
+{ Map a CSS mix-blend-mode name to a CoreGraphics CGBlendMode. '' / 'normal'
+  is kCGBlendModeNormal (plain source-over). }
+function CGBlendOf(const Mode: string): CGBlendMode;
+begin
+  if Mode = 'multiply' then Result := kCGBlendModeMultiply
+  else if Mode = 'screen' then Result := kCGBlendModeScreen
+  else if Mode = 'overlay' then Result := kCGBlendModeOverlay
+  else if Mode = 'darken' then Result := kCGBlendModeDarken
+  else if Mode = 'lighten' then Result := kCGBlendModeLighten
+  else if Mode = 'color-dodge' then Result := kCGBlendModeColorDodge
+  else if Mode = 'color-burn' then Result := kCGBlendModeColorBurn
+  else if Mode = 'soft-light' then Result := kCGBlendModeSoftLight
+  else if Mode = 'hard-light' then Result := kCGBlendModeHardLight
+  else if Mode = 'difference' then Result := kCGBlendModeDifference
+  else if Mode = 'exclusion' then Result := kCGBlendModeExclusion
+  else if Mode = 'hue' then Result := kCGBlendModeHue
+  else if Mode = 'saturation' then Result := kCGBlendModeSaturation
+  else if Mode = 'color' then Result := kCGBlendModeColor
+  else if Mode = 'luminosity' then Result := kCGBlendModeLuminosity
+  else Result := kCGBlendModeNormal;
+end;
+
+{ Parse the numeric amount of a CSS filter function argument (e.g. "50%", "1.2",
+  "4px", "90deg"). Percentages return the 0..1 fraction. }
+function FilterArg(const S: string; DefV: Single): Single;
+var t, num: string; i: Integer; pct: Boolean;
+begin
+  t := Trim(S); num := ''; pct := False;
+  for i := 1 to Length(t) do
+    if t[i] in ['0'..'9', '.', '-'] then num := num + t[i]
+    else if t[i] = '%' then pct := True;
+  if num = '' then Exit(DefV);
+  Result := StrToFloatDef(num, DefV);
+  if pct then Result := Result / 100;
+end;
+
+{ Separable box blur (3 passes ≈ Gaussian) over premultiplied RGBA, radius in px. }
+{ IEEE-754 binary16 (half) <-> single. The offscreen buffer AppKit hands us is
+  16-bit float RGBA; we decode to Single, filter, and re-encode. }
+function Half2Single(h: Word): Single;
+var sgn, exp, man: LongWord; f: LongWord;
+begin
+  sgn := (h and $8000) shl 16;
+  exp := (h shr 10) and $1F;
+  man := h and $3FF;
+  if exp = 0 then
+  begin
+    if man = 0 then f := sgn
+    else
+    begin
+      exp := 127 - 15 + 1;
+      while (man and $400) = 0 do begin man := man shl 1; Dec(exp); end;
+      man := man and $3FF;
+      f := sgn or (exp shl 23) or (man shl 13);
+    end;
+  end
+  else if exp = $1F then
+    f := sgn or $7F800000 or (man shl 13)
+  else
+    f := sgn or ((exp - 15 + 127) shl 23) or (man shl 13);
+  Result := PSingle(@f)^;
+end;
+
+function Single2Half(s: Single): Word;
+var f, sgn, man: LongWord; exp: LongInt;
+begin
+  f := PLongWord(@s)^;
+  sgn := (f shr 16) and $8000;
+  exp := LongInt((f shr 23) and $FF) - 127 + 15;
+  man := f and $7FFFFF;
+  if exp <= 0 then
+  begin
+    if exp < -10 then Exit(Word(sgn));
+    man := man or $800000;
+    man := man shr (1 - exp + 13);
+    Exit(Word(sgn or man));
+  end
+  else if exp >= $1F then
+    Exit(Word(sgn or $7C00))
+  else
+    Result := Word(sgn or (LongWord(exp) shl 10) or (man shr 13));
+end;
+
+{ Separable box blur (3 passes approx a Gaussian) on a planar float RGBA buffer. }
+procedure BoxBlurFloat(buf: PSingle; pw, ph, radius: Integer);
+var tmp: PSingle; pass, y, x, c, i0, i1, k: Integer; win: Single; acc: Single; row: Integer;
+begin
+  if radius < 1 then Exit;
+  win := radius * 2 + 1;
+  GetMem(tmp, pw * ph * 4 * SizeOf(Single));
+  try
+    for pass := 1 to 3 do
+    begin
+      for y := 0 to ph - 1 do
+      begin
+        row := y * pw * 4;
+        for c := 0 to 3 do
+        begin
+          acc := 0;
+          for k := -radius to radius do
+          begin i0 := k; if i0 < 0 then i0 := 0; if i0 > pw - 1 then i0 := pw - 1;
+            acc := acc + buf[row + i0 * 4 + c]; end;
+          for x := 0 to pw - 1 do
+          begin
+            tmp[row + x * 4 + c] := acc / win;
+            i0 := x - radius;    if i0 < 0 then i0 := 0; if i0 > pw - 1 then i0 := pw - 1;
+            i1 := x + radius + 1; if i1 < 0 then i1 := 0; if i1 > pw - 1 then i1 := pw - 1;
+            acc := acc + buf[row + i1 * 4 + c] - buf[row + i0 * 4 + c];
+          end;
+        end;
+      end;
+      for x := 0 to pw - 1 do
+        for c := 0 to 3 do
+        begin
+          acc := 0;
+          for k := -radius to radius do
+          begin i0 := k; if i0 < 0 then i0 := 0; if i0 > ph - 1 then i0 := ph - 1;
+            acc := acc + tmp[(i0 * pw + x) * 4 + c]; end;
+          for y := 0 to ph - 1 do
+          begin
+            buf[(y * pw + x) * 4 + c] := acc / win;
+            i0 := y - radius;    if i0 < 0 then i0 := 0; if i0 > ph - 1 then i0 := ph - 1;
+            i1 := y + radius + 1; if i1 < 0 then i1 := 0; if i1 > ph - 1 then i1 := ph - 1;
+            acc := acc + tmp[(i1 * pw + x) * 4 + c] - tmp[(i0 * pw + x) * 4 + c];
+          end;
+        end;
+    end;
+  finally
+    FreeMem(tmp);
+  end;
+end;
+
+{ Apply the CSS filter chain to a bitmap rep. Decodes the rep (8-bit or 16-bit
+  float, pre- or non-premultiplied RGBA) into a planar premultiplied Single
+  buffer, runs the chain, and writes it back. }
+procedure ApplyFilterToRep(rep: NSBitmapImageRep; const Spec: string; Scale: Single);
+var
+  data: PByte; buf: PSingle;
+  pw, ph, bpr, bps, n, i, o, so: Integer;
+  premult, isFloat: Boolean;
+  s, fn, arg: string; p, q, depth: Integer;
+
+  function ReadSample(byteOff: Integer): Single;
+  begin
+    if isFloat then Result := Half2Single(PWord(data + byteOff)^)
+    else Result := data[byteOff] / 255;
+  end;
+  procedure WriteSample(byteOff: Integer; v: Single);
+  begin
+    if v < 0 then v := 0; if v > 1 then v := 1;
+    if isFloat then PWord(data + byteOff)^ := Single2Half(v)
+    else data[byteOff] := Round(v * 255);
+  end;
+
+  { per-pixel colour transform; buf holds premultiplied RGBA in 0..1 }
+  procedure ColorOp(Kind: Integer; A: Single);
+  var j, k2: Integer; r, g, b, al, nr, ng, nb, lum, cs2, sn: Single;
+  begin
+    for j := 0 to pw * ph - 1 do
+    begin
+      k2 := j * 4; al := buf[k2 + 3];
+      if al <= 0 then
+      begin
+        if Kind = 7 then buf[k2 + 3] := al * A;   // opacity on transparent stays 0
+        Continue;
+      end;
+      r := buf[k2] / al; g := buf[k2 + 1] / al; b := buf[k2 + 2] / al;   // unpremult
+      case Kind of
+        0: begin lum := 0.2126*r + 0.7152*g + 0.0722*b;
+             r := r + (lum - r)*A; g := g + (lum - g)*A; b := b + (lum - b)*A; end;
+        1: begin r := r*A; g := g*A; b := b*A; end;
+        2: begin r := (r-0.5)*A+0.5; g := (g-0.5)*A+0.5; b := (b-0.5)*A+0.5; end;
+        3: begin r := r*(1-A) + (1-r)*A; g := g*(1-A) + (1-g)*A; b := b*(1-A) + (1-b)*A; end;
+        4: begin lum := 0.2126*r + 0.7152*g + 0.0722*b;
+             r := lum + (r-lum)*A; g := lum + (g-lum)*A; b := lum + (b-lum)*A; end;
+        5: begin nr := 0.393*r + 0.769*g + 0.189*b; ng := 0.349*r + 0.686*g + 0.168*b;
+             nb := 0.272*r + 0.534*g + 0.131*b;
+             r := r + (nr-r)*A; g := g + (ng-g)*A; b := b + (nb-b)*A; end;
+        6: begin cs2 := Cos(A); sn := Sin(A);
+             nr := (0.213+cs2*0.787-sn*0.213)*r + (0.715-cs2*0.715-sn*0.715)*g + (0.072-cs2*0.072+sn*0.928)*b;
+             ng := (0.213-cs2*0.213+sn*0.143)*r + (0.715+cs2*0.285+sn*0.140)*g + (0.072-cs2*0.072-sn*0.283)*b;
+             nb := (0.213-cs2*0.213-sn*0.787)*r + (0.715-cs2*0.715+sn*0.715)*g + (0.072+cs2*0.928+sn*0.072)*b;
+             r := nr; g := ng; b := nb; end;
+        7: al := al * A;
+      end;
+      if r < 0 then r := 0; if r > 1 then r := 1;
+      if g < 0 then g := 0; if g > 1 then g := 1;
+      if b < 0 then b := 0; if b > 1 then b := 1;
+      if al < 0 then al := 0; if al > 1 then al := 1;
+      buf[k2] := r*al; buf[k2+1] := g*al; buf[k2+2] := b*al; buf[k2+3] := al;   // repremult
+    end;
+  end;
+
+begin
+  data := PByte(rep.bitmapData);
+  pw := rep.pixelsWide; ph := rep.pixelsHigh; bpr := rep.bytesPerRow;
+  if (data = nil) or (pw = 0) or (ph = 0) then Exit;
+  isFloat := (rep.bitmapFormat and 4) <> 0;      // NSBitmapFormatFloatingPointSamples
+  premult := (rep.bitmapFormat and 2) = 0;       // clear Nonpremultiplied bit
+  bps := (rep.bitsPerPixel div 8) div 4;         // bytes per sample (1 or 2)
+  n := pw * ph;
+  GetMem(buf, n * 4 * SizeOf(Single));
+  try
+    // decode -> premultiplied Single RGBA
+    for i := 0 to n - 1 do
+    begin
+      o := (i div pw) * bpr + (i mod pw) * bps * 4;
+      so := i * 4;
+      buf[so]   := ReadSample(o);           buf[so+1] := ReadSample(o + bps);
+      buf[so+2] := ReadSample(o + bps*2);   buf[so+3] := ReadSample(o + bps*3);
+      if not premult then
+      begin
+        buf[so] := buf[so]*buf[so+3]; buf[so+1] := buf[so+1]*buf[so+3]; buf[so+2] := buf[so+2]*buf[so+3];
+      end;
+    end;
+    // run the filter chain
+    s := LowerCase(Spec); p := 1;
+    while p <= Length(s) do
+    begin
+      if not (s[p] in ['a'..'z', '-']) then begin Inc(p); Continue; end;
+      q := p;
+      while (q <= Length(s)) and (s[q] in ['a'..'z', '-']) do Inc(q);
+      fn := Copy(s, p, q - p);
+      if (q > Length(s)) or (s[q] <> '(') then begin p := q; Continue; end;
+      Inc(q); depth := 1; arg := '';
+      while (q <= Length(s)) and (depth > 0) do
+      begin
+        if s[q] = '(' then Inc(depth)
+        else if s[q] = ')' then begin Dec(depth); if depth = 0 then Break; end;
+        arg := arg + s[q]; Inc(q);
+      end;
+      p := q + 1;
+      if fn = 'blur' then BoxBlurFloat(buf, pw, ph, Round(FilterArg(arg, 0) * Scale))
+      else if fn = 'grayscale' then ColorOp(0, FilterArg(arg, 1))
+      else if fn = 'brightness' then ColorOp(1, FilterArg(arg, 1))
+      else if fn = 'contrast' then ColorOp(2, FilterArg(arg, 1))
+      else if fn = 'invert' then ColorOp(3, FilterArg(arg, 1))
+      else if fn = 'saturate' then ColorOp(4, FilterArg(arg, 1))
+      else if fn = 'sepia' then ColorOp(5, FilterArg(arg, 1))
+      else if fn = 'hue-rotate' then ColorOp(6, FilterArg(arg, 0) * Pi / 180)
+      else if fn = 'opacity' then ColorOp(7, FilterArg(arg, 1));
+    end;
+    // encode back
+    for i := 0 to n - 1 do
+    begin
+      o := (i div pw) * bpr + (i mod pw) * bps * 4;
+      so := i * 4;
+      if premult then
+      begin
+        WriteSample(o, buf[so]); WriteSample(o + bps, buf[so+1]);
+        WriteSample(o + bps*2, buf[so+2]); WriteSample(o + bps*3, buf[so+3]);
+      end
+      else
+      begin
+        if buf[so+3] > 0 then
+        begin
+          WriteSample(o, buf[so]/buf[so+3]); WriteSample(o + bps, buf[so+1]/buf[so+3]);
+          WriteSample(o + bps*2, buf[so+2]/buf[so+3]);
+        end
+        else begin WriteSample(o, 0); WriteSample(o + bps, 0); WriteSample(o + bps*2, 0); end;
+        WriteSample(o + bps*3, buf[so+3]);
+      end;
+    end;
+  finally
+    FreeMem(buf);
+  end;
+end;
+function TCocoaCanvas.BeginLayer(X, Y, W, H, Pad: Single): Integer;
+var img: NSImage; t: NSAffineTransform; ox, oy, bw, bh: Single; n: Integer;
+begin
+  ox := X - Pad; oy := Y - Pad; bw := W + 2 * Pad; bh := H + 2 * Pad;
+  if (bw <= 0) or (bh <= 0) then Exit(-1);
+  img := NSImage.alloc.initWithSize(NSMakeSize(bw, bh));
+  img.lockFocusFlipped(True);           // top-left origin: text renders upright
+  t := NSAffineTransform.transform;
+  t.translateXBy_yBy(-ox, -oy);         // doc coords -> buffer coords
+  t.concat;
+  n := Length(FLayers);
+  SetLength(FLayers, n + 1);
+  FLayers[n].rep := nil;                 // rasterised on End
+  FLayers[n].ctx := NSGraphicsContext(img);   // stash the NSImage in ctx slot
+  FLayers[n].ox := ox; FLayers[n].oy := oy; FLayers[n].w := bw; FLayers[n].h := bh;
+  Result := n;
+end;
+
+procedure TCocoaCanvas.EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode: string);
+var
+  img: NSImage; rep: NSBitmapImageRep;
+  ox, oy, bw, bh, sc: Single;
+  cg: CGContextRef;
+begin
+  if (Handle < 0) or (Handle > High(FLayers)) then Exit;
+  img := NSImage(FLayers[Handle].ctx);
+  ox := FLayers[Handle].ox; oy := FLayers[Handle].oy;
+  bw := FLayers[Handle].w; bh := FLayers[Handle].h;
+  img.unlockFocus;                       // restore the parent context
+  // rasterise to an 8-bit pixel buffer via the image's CGImage (TIFFRepresentation
+  // hands back 16-bit float samples, which we don't want to touch per-pixel)
+  rep := NSBitmapImageRep(NSBitmapImageRep.alloc.initWithCGImage(
+    img.CGImageForProposedRect_context_hints(nil, nil, nil)));
+  if rep <> nil then
+  begin
+    if bw > 0 then sc := rep.pixelsWide / bw else sc := 1;
+    if FilterSpec <> '' then ApplyFilterToRep(rep, FilterSpec, sc);
+    if BlendMode <> '' then
+    begin
+      // mix-blend-mode: draw the CGImage directly so CGContextSetBlendMode is
+      // honoured (NSImageRep.drawInRect would reset the blend mode). The extra
+      // translate+scale keeps the image upright in the flipped view context.
+      cg := CGContextRef(NSGraphicsContext.currentContext.CGContext);
+      CGContextSaveGState(cg);
+      CGContextSetBlendMode(cg, CGBlendOf(LowerCase(BlendMode)));
+      CGContextTranslateCTM(cg, ox, oy + bh);
+      CGContextScaleCTM(cg, 1, -1);
+      CGContextDrawImage(cg, CGRectMake(0, 0, bw, bh), rep.CGImage);
+      CGContextRestoreGState(cg);
+    end
+    else
+      rep.drawInRect_fromRect_operation_fraction_respectFlipped_hints(
+        NSMakeRect(ox, oy, bw, bh), NSZeroRect, 2 {SourceOver}, 1.0, True, nil);
+    rep.release;
+  end;
+  img.release;
+  SetLength(FLayers, Handle);            // pop
 end;
 
 { TTina4View }
