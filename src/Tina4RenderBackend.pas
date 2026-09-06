@@ -9,6 +9,13 @@ unit Tina4RenderBackend;
 
 interface
 
+uses SysUtils, Classes, base64, Tina4WebP;
+
+const
+  { Handles at/above this are base-class RGBA images (pure-Pascal WebP decode),
+    distinguishing them from a shell's native image handles. }
+  WEBP_HANDLE_BASE = $40000000;
+
 type
   TTina4Color = Cardinal; // $AARRGGBB
 
@@ -139,6 +146,18 @@ type
       the core keeps a direct-draw fallback for backends that don't implement it. }
     function SupportsRGBA: Boolean; virtual;
     procedure DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single); virtual;
+    destructor Destroy; override;
+  protected
+    { Base-class pure-Pascal image store: decodes formats the shell's native
+      loader can't (currently WebP) from a local file or data: URI, and renders
+      them via the DrawRGBA contract. Shells fall back to this from LoadImage and
+      delegate WEBP_HANDLE_BASE handles back here in ImageSize/DrawImage. Headless
+      canvases (e.g. the PDF exporter) that override neither get WebP for free. }
+    FBaseSrc: TStringList;                    // Src -> handle (in Objects)
+    FBasePix: array of array of Cardinal;     // per-handle $AARRGGBB pixels
+    FBaseW, FBaseH: array of Integer;
+    FBaseCount: Integer;
+    function DecodeToBaseStore(const Src: string): Integer;
   end;
 
   TTina4PaintEvent = procedure(Canvas: TTina4Canvas; Width, Height: Single) of object;
@@ -520,15 +539,84 @@ begin
   FillRoundRect(X, Y, W, H, Radius, Color);
 end;
 
-function TTina4Canvas.LoadImage(const Src: string): Integer;
+{ Decode a WebP (local file or data: URI) to the base RGBA store, converting the
+  decoder's R,G,B,A bytes to $AARRGGBB Cardinals (endian-safe). Cached by Src. }
+function TTina4Canvas.DecodeToBaseStore(const Src: string): Integer;
+var
+  idx, comma, i, n: Integer;
+  raw, rgba: TBytes; dec: RawByteString; ms: TMemoryStream;
+  w, h: Integer; px: array of Cardinal;
 begin
   Result := -1;
+  if FBaseSrc = nil then FBaseSrc := TStringList.Create;
+  idx := FBaseSrc.IndexOf(Src);
+  if idx >= 0 then Exit(Integer(PtrInt(FBaseSrc.Objects[idx])));
+  raw := nil;
+  if Copy(LowerCase(Src), 1, 5) = 'data:' then
+  begin
+    comma := Pos(',', Src);
+    if comma > 0 then
+    begin
+      try dec := DecodeStringBase64(Copy(Src, comma + 1, MaxInt), False); except dec := ''; end;
+      SetLength(raw, Length(dec));
+      if Length(dec) > 0 then Move(dec[1], raw[0], Length(dec));
+    end;
+  end
+  else if FileExists(Src) then
+  begin
+    ms := TMemoryStream.Create;
+    try
+      ms.LoadFromFile(Src);
+      SetLength(raw, ms.Size);
+      if ms.Size > 0 then Move(ms.Memory^, raw[0], ms.Size);
+    finally ms.Free; end;
+  end;
+  if Length(raw) < 12 then Exit;
+  // Sniff the RIFF/WEBP container — only WebP is handled here (the shell owns
+  // PNG/JPEG via its native decoder); leave everything else to fail cleanly.
+  if not ((raw[0] = Ord('R')) and (raw[1] = Ord('I')) and (raw[2] = Ord('F')) and (raw[3] = Ord('F'))
+      and (raw[8] = Ord('W')) and (raw[9] = Ord('E')) and (raw[10] = Ord('B')) and (raw[11] = Ord('P'))) then Exit;
+  if not Tina4DecodeWebP(@raw[0], Length(raw), rgba, w, h) then Exit;
+  if (w <= 0) or (h <= 0) or (Length(rgba) < w * h * 4) then Exit;
+  n := w * h;
+  SetLength(px, n);
+  for i := 0 to n - 1 do
+    px[i] := (Cardinal(rgba[i*4+3]) shl 24) or (Cardinal(rgba[i*4+0]) shl 16)
+          or (Cardinal(rgba[i*4+1]) shl 8) or Cardinal(rgba[i*4+2]);
+  if FBaseCount = Length(FBasePix) then
+  begin
+    SetLength(FBasePix, FBaseCount + 8); SetLength(FBaseW, FBaseCount + 8); SetLength(FBaseH, FBaseCount + 8);
+  end;
+  FBasePix[FBaseCount] := px; FBaseW[FBaseCount] := w; FBaseH[FBaseCount] := h;
+  Result := WEBP_HANDLE_BASE + FBaseCount;
+  FBaseSrc.AddObject(Src, TObject(PtrInt(Result)));
+  Inc(FBaseCount);
+end;
+
+function TTina4Canvas.LoadImage(const Src: string): Integer;
+begin
+  // The base class can itself decode WebP (pure Pascal) from a file/data: URI.
+  Result := DecodeToBaseStore(Src);
 end;
 
 function TTina4Canvas.ImageSize(Handle: Integer; out W, H: Single): Boolean;
+var i: Integer;
 begin
   W := 0; H := 0;
+  if Handle >= WEBP_HANDLE_BASE then
+  begin
+    i := Handle - WEBP_HANDLE_BASE;
+    Result := (i >= 0) and (i < FBaseCount);
+    if Result then begin W := FBaseW[i]; H := FBaseH[i]; end;
+    Exit;
+  end;
   Result := False;
+end;
+
+destructor TTina4Canvas.Destroy;
+begin
+  FBaseSrc.Free;
+  inherited Destroy;
 end;
 
 function TTina4Canvas.RegisterFont(const Family, Src: string): Boolean;
@@ -537,8 +625,16 @@ begin
 end;
 
 procedure TTina4Canvas.DrawImage(Handle: Integer; X, Y, W, H: Single);
+var i: Integer;
 begin
-  // no-op in the base class
+  // Base-store (WebP) handles render through the DrawRGBA contract (virtual
+  // dispatch → the shell's real blit, or a headless canvas's XObject embed).
+  if Handle >= WEBP_HANDLE_BASE then
+  begin
+    i := Handle - WEBP_HANDLE_BASE;
+    if (i >= 0) and (i < FBaseCount) and (Length(FBasePix[i]) > 0) then
+      DrawRGBA(@FBasePix[i][0], FBaseW[i], FBaseH[i], X, Y, W, H);
+  end;
 end;
 
 procedure TTina4Canvas.SaveState; begin end;

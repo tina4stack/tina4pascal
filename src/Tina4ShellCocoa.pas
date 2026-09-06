@@ -310,7 +310,10 @@ begin
   img := NSImage.alloc.initWithData(data);
   if img = nil then
   begin
-    FImageBySrc.AddObject(Src, TObject(PtrInt(-1)));
+    // Native decode failed (e.g. WebP on older macOS) — try the base class's
+    // pure-Pascal decoder, which renders via DrawRGBA.
+    Result := inherited LoadImage(Src);
+    FImageBySrc.AddObject(Src, TObject(PtrInt(Result)));
     Exit;
   end;
   FImages.Add(img);
@@ -323,6 +326,7 @@ var
   sz: NSSize;
 begin
   W := 0; H := 0;
+  if Handle >= WEBP_HANDLE_BASE then Exit(inherited ImageSize(Handle, W, H));
   Result := (Handle >= 0) and (Handle < FImages.Count) and (FImages[Handle] <> nil);
   if Result then
   begin
@@ -333,6 +337,7 @@ end;
 
 procedure TCocoaCanvas.DrawImage(Handle: Integer; X, Y, W, H: Single);
 begin
+  if Handle >= WEBP_HANDLE_BASE then begin inherited DrawImage(Handle, X, Y, W, H); Exit; end;
   if (Handle < 0) or (Handle >= FImages.Count) or (FImages[Handle] = nil) then Exit;
   NSImage(FImages[Handle]).drawInRect_fromRect_operation_fraction_respectFlipped_hints(
     NSMakeRect(X, Y, W, H), NSZeroRect, NSCompositeSourceOver, 1.0, True, nil);
