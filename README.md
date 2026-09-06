@@ -99,6 +99,27 @@ OS date dialog):
 <p><img src="docs/images/calendar.png" width="420" alt="Tina4 native calendar picker"></p>
 </details>
 
+## Beyond the browser
+
+And it goes the other way too — native widgets a plain HTML renderer *can't* do,
+with no `<script>`, no CDN, no JS runtime:
+
+![QR, Lottie and SVG rendered natively by Tina4Pascal](docs/images/native-widgets.png)
+
+```html
+<!-- a real, scannable QR — generated and drawn by the engine -->
+<qrcode value="https://github.com/tina4stack/tina4pascal" width="180"></qrcode>
+
+<!-- a Bodymovin animation, animated by the pure-Pascal core (no Skia, no lottie.js) -->
+<lottie width="280" height="280">{ "v":"5.5.2", "fr":60, ...bodymovin JSON... }</lottie>
+
+<!-- inline SVG: paths, shapes, strokes -->
+<svg viewBox="0 0 100 100"><path d="M30 52 L45 67 L72 34" stroke="#fff" .../></svg>
+```
+
+The `<qrcode>` and `<lottie>` tags are part of the engine — the same markup
+renders on every target. See `examples/pages/native-widgets.html`.
+
 ## Toolsets
 
 Everything you drive the stack with — by hand, from an IDE, or from an AI agent.

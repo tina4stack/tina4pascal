@@ -1069,13 +1069,14 @@ begin
           St.Padding.SetAll(TC_PAD_V);
           St.Padding.Left := TC_PAD_H; St.Padding.Right := TC_PAD_H;
         end;
-        if (St.BackgroundColor shr 24) = 0 then St.BackgroundColor := TC_SURFACE;
+        if ((St.BackgroundColor shr 24) = 0) and (not St.BgGradientActive) then St.BackgroundColor := TC_SURFACE;
         if St.Color = TAlphaColors.Black then St.Color := TC_INK;
         if St.BorderRadius < 0 then St.BorderRadius := TC_RADIUS;
       end;
     ckButton, ckFile:
       begin
-        if (St.BackgroundColor shr 24) = 0 then
+        // a CSS background gradient on the control wins over the UA default fill
+        if ((St.BackgroundColor shr 24) = 0) and (not St.BgGradientActive) then
         begin
           if Primary then
           begin // submit → indigo primary
