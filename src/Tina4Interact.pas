@@ -50,6 +50,9 @@ procedure TinaSetHtml(const Html: string);
 procedure TinaSetTemplateDir(const Dir: string);   // for {% include %}/{% extends %}
 procedure TinaRenderTemplate(const Template, JsonContext: string);
 procedure TinaRenderContext(const JsonContext: string);   // reuse last template
+{ The HTML the current template rendered to (Twig → HTML). Lets a host dump the
+  UI without a window — e.g. to bundle as a mobile asset (`--dump-html`). }
+function TinaCurrentHtml: string;
 { Lay out (if needed) and paint one frame. The shell must have already called
   Canvas.BeginFrame for this frame; WPx/HPx are the surface size in physical
   pixels and Density is points-per-pixel (1 on a non-scaled desktop). }
@@ -1329,6 +1332,11 @@ end;
 procedure TinaSetDebugOverlay(OverlayOn: Boolean);
 begin
   GDebugOverlay := OverlayOn;
+end;
+
+function TinaCurrentHtml: string;
+begin
+  Result := GHtml;
 end;
 
 procedure TinaFrame(WPx, HPx: Integer; Density: Single);

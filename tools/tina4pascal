@@ -13,13 +13,67 @@ ROOT="$(cd "$SELF/.." && pwd)"
 SRC="$ROOT/src"
 BUILD="$ROOT/build"
 
-FPC_HOME="${FPC_HOME:-$HOME/fpc}"
-FPC="$FPC_HOME/bin/fpc"
-export PPC_CONFIG_PATH="${PPC_CONFIG_PATH:-$FPC_HOME/etc}"
+# Per-machine toolchain cache: one place `setup` downloads everything into, shared
+# by every project and never committed. A project pins tool VERSIONS (tina4.json);
+# the CLI resolves the PATHS here so `git clone && tina4pascal setup && build` works
+# on anyone's computer. Resolution order everywhere: explicit env → ~/.tina4 →
+# common system locations. Override the root with TINA4_HOME.
+TINA4_HOME="${TINA4_HOME:-$HOME/.tina4}"
+TC="$TINA4_HOME/toolchains"
+KEYSTORE_DIR="${TINA4_KEYSTORE_DIR:-$TINA4_HOME/keystores}"   # release signing (secrets)
 
-# Android SDK / NDK (brew-cask defaults; override with env)
-ANDROID_SDK="${ANDROID_SDK:-${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}}"
-ANDROID_NDK="${ANDROID_NDK:-/opt/homebrew/share/android-ndk}"
+# ---- minimal tina4.json reader (top-level "key": "value" / number) -----------
+# Not a general JSON parser — just enough to read the flat config keys we own.
+# jq is used when present (robust); otherwise a sed fallback. Comments (// ...)
+# are tolerated so a scaffolded tina4.json can explain itself.
+jget() { # jget <key> [default]  (reads ./tina4.json in $PWD)
+  _k="$1"; _def="${2:-}"; _f="$PWD/tina4.json"; _v=""
+  [ -f "$_f" ] || { printf '%s' "$_def"; return; }
+  if command -v jq >/dev/null 2>&1; then
+    _v="$(sed 's://.*$::' "$_f" | jq -r --arg k "$_k" '(.[$k] // empty) | if type=="object" or type=="array" then empty else . end' 2>/dev/null)"
+  fi
+  [ -z "$_v" ] && _v="$(sed 's://.*$::' "$_f" | grep -oE "\"$_k\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed -E "s/.*:[[:space:]]*\"([^\"]*)\".*/\1/")"
+  [ -z "$_v" ] && _v="$_def"
+  printf '%s' "$_v"
+}
+
+# ---- FPC (env → ~/.tina4/toolchains/fpc → ~/fpc → PATH) ----------------------
+_resolve_fpc_home() {
+  [ -n "${FPC_HOME:-}" ] && { printf '%s' "$FPC_HOME"; return; }
+  for c in "$TC/fpc" "$HOME/fpc"; do
+    [ -x "$c/bin/fpc" ] && { printf '%s' "$c"; return; }
+  done
+  _p="$(command -v fpc 2>/dev/null)" && { printf '%s' "$(cd "$(dirname "$_p")/.." && pwd)"; return; }
+  printf '%s' "$TC/fpc"       # where `setup fpc` will install it
+}
+FPC_HOME="$(_resolve_fpc_home)"
+FPC="$FPC_HOME/bin/fpc"
+[ -d "$FPC_HOME/etc" ] && export PPC_CONFIG_PATH="${PPC_CONFIG_PATH:-$FPC_HOME/etc}"
+
+# ---- Android SDK / NDK (env → ~/.tina4 → common OS locations) ----------------
+_resolve_android_sdk() {
+  for c in "${ANDROID_SDK:-}" "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" \
+           "$TC/android/sdk" "/opt/homebrew/share/android-commandlinetools" \
+           "$HOME/Library/Android/sdk" "$HOME/Android/Sdk" \
+           "${LOCALAPPDATA:-}/Android/Sdk"; do
+    [ -n "$c" ] && [ -d "$c" ] && { printf '%s' "$c"; return; }
+  done
+  printf '%s' "$TC/android/sdk"   # where `setup android` will install it
+}
+ANDROID_SDK="$(_resolve_android_sdk)"
+_resolve_android_ndk() {
+  for c in "${ANDROID_NDK:-}" "${ANDROID_NDK_HOME:-}" "$TC/android/ndk" \
+           "/opt/homebrew/share/android-ndk"; do
+    [ -n "$c" ] && [ -e "$c/toolchains" ] && { printf '%s' "$c"; return; }
+  done
+  # a versioned ndk under the SDK (…/ndk/<ver>) — pick the highest
+  if [ -d "$ANDROID_SDK/ndk" ]; then
+    _n="$(ls -1 "$ANDROID_SDK/ndk" 2>/dev/null | sort -V | tail -1)"
+    [ -n "$_n" ] && { printf '%s' "$ANDROID_SDK/ndk/$_n"; return; }
+  fi
+  printf '%s' "${ANDROID_NDK:-/opt/homebrew/share/android-ndk}"
+}
+ANDROID_NDK="$(_resolve_android_ndk)"
 BT_VER="34.0.0"; PLATFORM_VER="android-34"
 
 # iOS (physical device via Xcode + libimobiledevice/pymobiledevice3)
@@ -195,7 +249,16 @@ build_project() {
     done
     return
   fi
-  name="$(basename "$PWD")"
+  name="$(jget name "$(basename "$PWD")")"
+  # Entry point: configurable in tina4.json ("main"), defaults to app.pas at the
+  # project root. Desktop targets compile it to an executable; android/ios go
+  # through their own host build (a program's RunApp isn't the entry there).
+  main="$(jget main app.pas)"
+  [ -f "$PWD/$main" ] || die "entry point '$main' not found (set \"main\" in tina4.json)"
+  case "$target" in
+    android) build_project_android; return ;;
+    ios)     build_project_ios; return ;;
+  esac
   flags="$(target_flags "$target")" || die "unknown target '$target'"
   need_fpc
   out="$PWD/build/$target"; mkdir -p "$out"
@@ -204,16 +267,50 @@ build_project() {
     linux|linux-arm64)
       # make -lX11 resolvable without libx11-dev
       if [ ! -e /usr/lib/x86_64-linux-gnu/libX11.so ] && [ -e /usr/lib/x86_64-linux-gnu/libX11.so.6 ]; then
-        mkdir -p "$HOME/.tina4/xstub"
-        ln -sf /usr/lib/x86_64-linux-gnu/libX11.so.6 "$HOME/.tina4/xstub/libX11.so"
-        extra="-Fl$HOME/.tina4/xstub -k-L$HOME/.tina4/xstub"
+        mkdir -p "$TINA4_HOME/xstub"
+        ln -sf /usr/lib/x86_64-linux-gnu/libX11.so.6 "$TINA4_HOME/xstub/libX11.so"
+        extra="-Fl$TINA4_HOME/xstub -k-L$TINA4_HOME/xstub"
       fi ;;
   esac
-  say "${D}fpc $flags src/app/main.pas${Z}"
-  "$FPC" -Mdelphi -O2 -Xs $flags -Fu"$SRC" -Fusrc/app -Fusrc/routes $extra \
-    -FE"$out" -FU"$out" -o"$name" src/app/main.pas 2>&1 | grep -Ei "error|fatal" && die "build failed" || true
+  say "${D}fpc $flags $main${Z}"
+  "$FPC" -Mdelphi -O2 -Xs $flags -Fu"$SRC" -Fu. -Fusrc/routes -Fusrc/orm -Fusrc/services $extra \
+    -FE"$out" -FU"$out" -o"$name" "$main" 2>&1 | grep -Ei "error|fatal" && die "build failed" || true
   ok "$name ($target) -> build/$target/$name"
 }
+
+# Render the project's entry template (Twig, with {% include %}/{% extends %}
+# resolved from src/templates) to a static HTML file — bundled as the mobile
+# host's asset, the same way the desktop app renders it. Uses the host build's
+# --dump-html mode so templating stays identical across every target.
+proj_dump_html() {
+  out="$1"
+  htgt="$(default_host_target)"
+  build_project "$htgt" >/dev/null 2>&1 || build_project "$htgt"
+  name="$(jget name "$(basename "$PWD")")"
+  "$PWD/build/$htgt/$name" --dump-html "$out" >/dev/null 2>&1 \
+    || die "could not render entry template to HTML (--dump-html)"
+  [ -s "$out" ] || die "rendered HTML is empty: check the entry template"
+}
+
+# Android/iOS host builds for a scaffolded project produce a signable app package
+# (APK/AAB, .app/IPA), not a bare executable. The gradle-free Android generator
+# and the iOS xcodeproj generator bundle proj_dump_html output and sign from the
+# resolved keystore / provisioning profile. Being implemented (see
+# docs/TOOLING-DISTRIBUTION.md); until then, give a clear pointer, don't crash.
+proj_android_build() {
+  name="$(jget name "$(basename "$PWD")")"
+  warn "scaffolded-project Android packaging is landing next (docs/TOOLING-DISTRIBUTION.md)."
+  say  "  For now build the reference app:  ${D}cd $ROOT/android && ABIS=arm64-v8a sh build.sh && sh build-apk.sh${Z}"
+  say  "  --dump-html renders this project's UI:  ${D}(cd \"$PWD\" && build/$(default_host_target)/$name --dump-html ui.html)${Z}"
+  return 0
+}
+proj_ios_build() {
+  warn "scaffolded-project iOS packaging is landing next (docs/TOOLING-DISTRIBUTION.md)."
+  say  "  For now use the reference app in ${D}$ROOT/ios${Z}."
+  return 0
+}
+build_project_android() { proj_android_build "$@"; }
+build_project_ios()     { proj_ios_build "$@"; }
 
 run_project() {
   target="${1:-$(default_host_target)}"
@@ -287,20 +384,110 @@ cmd_init() {
   need_fpc
   title="$(printf '%s' "$name" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
   d="$name"
-  mkdir -p "$d/migrations" "$d/assets" "$d/src/app" "$d/src/routes" "$d/src/orm" "$d/src/services" "$d/src/templates"
+  mkdir -p "$d/migrations" "$d/assets" "$d/src/routes" "$d/src/orm" "$d/src/services" "$d/src/templates" "$d/signing"
 
+  # tina4.json — the project's build config. Uses // comments (the CLI tolerates
+  # them) so it explains itself. A clone + `tina4pascal setup` + `build` works on
+  # anyone's machine because the project pins tool VERSIONS, not machine paths.
   cat > "$d/tina4.json" <<EOF
 {
+  // Tina4Pascal project — built by the \`tina4pascal\` CLI. This file is portable:
+  // commit it, zip it, clone it anywhere.
   "name": "$name",
   "title": "$title",
+
+  // Entry .pas compiled for desktop targets. Defaults to app.pas in the project
+  // root; point it wherever you like (e.g. "src/app/main.pas").
+  "main": "app.pas",
+
+  // Reverse-DNS id used by the app stores (Play applicationId / iOS bundle id).
   "bundleId": "com.tina4.$name",
+
   "window": { "width": 900, "height": 640 },
-  "entry": "src/templates/index.twig",
-  "targets": ["macos", "linux", "win64", "android", "ios"]
+  "entry":  "src/templates/index.twig",   // Twig template rendered as the UI
+  "targets": ["macos", "windows", "linux", "android", "ios"],
+
+  // Tool VERSIONS this project builds against. \`tina4pascal setup\` installs them
+  // into ~/.tina4 so a fresh clone reproduces the same build on any computer.
+  "toolchain": {
+    "fpc": "3.2.2",
+    "androidBuildTools": "34.0.0",
+    "androidPlatform": "android-34",
+    "androidMinSdk": 21,
+    "androidTargetSdk": 34
+  },
+
+  // Signing. signing/debug.keystore is SAFE to commit (installable debug builds
+  // only). The RELEASE key is a SECRET — keep it in ~/.tina4/keystores or point
+  // TINA4_KEYSTORE at it, and NEVER commit it. See signing/README.md.
+  "android": {
+    "signing": {
+      "debug":   "signing/debug.keystore",
+      "release": { "keystore": "\${TINA4_KEYSTORE}", "alias": "\${TINA4_KEY_ALIAS}" }
+    }
+  },
+  "ios": { "team": "\${TINA4_IOS_TEAM}" }   // Apple Developer Team ID (signing/TestFlight)
 }
 EOF
-  printf 'build/\n*.o\n*.ppu\n*.exe\n' > "$d/.gitignore"
-  printf '# %s\n\nA Tina4Pascal native app. `tina4pascal run` builds and launches it.\n' "$title" > "$d/README.md"
+  cat > "$d/.gitignore" <<'EOF'
+# build outputs
+build/
+platforms/*/out/
+*.o
+*.ppu
+*.exe
+*.apk
+*.aab
+*.ipa
+# per-machine tool overrides
+.tina4/
+# release signing is SECRET — never commit it (debug key is allowed below)
+*.jks
+*.keystore
+!signing/debug.keystore
+EOF
+  cat > "$d/signing/README.md" <<'EOF'
+# Signing
+
+- **debug.keystore** — committed, shared debug key (password `android`, alias
+  `androiddebugkey`). Makes installable *debug* builds reproducibly on any machine.
+  It is NOT a secret and NOT accepted by the stores.
+- **Release key** — a SECRET you create once and reuse for every update (Play and
+  the App Store reject a changed key). Keep it OUT of the repo:
+
+      tina4pascal keygen ~/.tina4/keystores/com.tina4.myapp.jks myalias
+      export TINA4_KEYSTORE=~/.tina4/keystores/com.tina4.myapp.jks
+      export TINA4_KEY_ALIAS=myalias TINA4_KS_PASS=… TINA4_KEY_PASS=…
+      tina4pascal release android      # builds a signed AAB/APK
+
+  `tina4.json.android.signing.release` references these env vars, so the config
+  is portable while the key stays private.
+EOF
+  # committable debug keystore — deterministic installable debug builds anywhere
+  if command -v keytool >/dev/null 2>&1; then
+    keytool -genkeypair -noprompt -keystore "$d/signing/debug.keystore" \
+      -storepass android -keypass android -alias androiddebugkey \
+      -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 \
+      -validity 10000 >/dev/null 2>&1 || true
+  fi
+  # app.pas — the entry point (configurable via tina4.json "main")
+  cat > "$d/app.pas" <<EOF
+program $name;
+{ $title — Tina4Pascal native app entry point.
+
+  RunApp(Title, TemplateDir, Template, JsonContext, IconPath, Width, Height) opens
+  the native window and renders the Twig template (src/templates) as the UI. Edit
+  the title/size here or in tina4.json. Event handlers (onclick="Home:hello") live
+  in src/routes/*.pas. Build + run with:  tina4pascal run
+
+  This file is the entry point named by tina4.json "main" (default: app.pas). }
+{\$mode objfpc}{\$H+}
+uses Tina4App;
+begin
+  RunApp('$title', 'src/templates', 'index.twig', '{"name":"World"}', 'assets/icon.png', 900, 640);
+end.
+EOF
+  printf '# %s\n\nA Tina4Pascal native app. `tina4pascal run` builds and launches it.\nEntry point: `app.pas` (configurable in `tina4.json`).\n' "$title" > "$d/README.md"
   printf -- '-- 0001_init: first migration\n-- CREATE TABLE example (id INTEGER PRIMARY KEY, name TEXT);\n' > "$d/migrations/0001_init.sql"
   : > "$d/src/orm/.gitkeep"; : > "$d/src/services/.gitkeep"
   cat > "$d/src/routes/home.pas" <<'EOF'
@@ -322,14 +509,6 @@ EOF
   <h1 style="color:#2b41e6;margin:18px 0 4px;font-size:34px">Hello {{ name }}!</h1>
   <p style="color:#5b5c78;margin:0">Your Tina4Pascal app is running natively.</p>
 </body>
-EOF
-  cat > "$d/src/app/main.pas" <<EOF
-program $name;
-{\$mode objfpc}{\$H+}
-uses Tina4App;
-begin
-  RunApp('$title', 'src/templates', 'index.twig', '{"name":"World"}', 'assets/icon.png', 900, 640);
-end.
 EOF
   [ -f "$ROOT/branding/icon.png" ] && cp "$ROOT/branding/icon.png" "$d/assets/icon.png"
   ok "scaffolded ${B}$d/${Z}"

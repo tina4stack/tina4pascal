@@ -64,23 +64,31 @@ begin
     TinaSetHtml('<h1 style="font-family:sans-serif;padding:24px">Hello World!</h1>');
 end;
 
+var
+  { Set by `--dump-html <file>`: render the template to HTML and exit (no window),
+    so the mobile host build can bundle the exact same UI as a static asset. }
+  GDumpHtml: string = '';
+
 { Command-line (headless dev/inspection modes; any combination):
     --snapshot <img>          render one frame to an image and exit
     --overlay                 with --snapshot: draw layout-box outlines
     --dom <file>              write the DOM tree JSON and exit
     --boxes <file>            write the layout-box tree JSON and exit
     --inspect <x> <y> <file>  write the element-at-(x,y) JSON and exit
+    --dump-html <file>        render the template to HTML and exit (mobile asset)
     --width N / --height N     viewport size for the above
   Any of these makes the app run headless (no window). }
 procedure ParseArgs(out Snap: string; var W, H: Integer; out Overlay: Boolean;
   out DumpKind, DumpOut: string; out IX, IY: Single);
 var i: Integer;
 begin
-  Snap := ''; Overlay := False; DumpKind := ''; DumpOut := ''; IX := 0; IY := 0; i := 1;
+  Snap := ''; Overlay := False; DumpKind := ''; DumpOut := ''; IX := 0; IY := 0;
+  GDumpHtml := ''; i := 1;
   while i <= ParamCount do
   begin
     if (ParamStr(i) = '--snapshot') and (i < ParamCount) then begin Inc(i); Snap := ParamStr(i); end
     else if ParamStr(i) = '--overlay' then Overlay := True
+    else if (ParamStr(i) = '--dump-html') and (i < ParamCount) then begin Inc(i); GDumpHtml := ParamStr(i); end
     else if (ParamStr(i) = '--width') and (i < ParamCount) then begin Inc(i); W := StrToIntDef(ParamStr(i), W); end
     else if (ParamStr(i) = '--height') and (i < ParamCount) then begin Inc(i); H := StrToIntDef(ParamStr(i), H); end
     else if (ParamStr(i) = '--dom') and (i < ParamCount) then begin Inc(i); DumpKind := 'dom'; DumpOut := ParamStr(i); end
@@ -111,6 +119,19 @@ begin
   if DumpKind = 'dom' then WriteStrFile(DumpOut, TinaDumpDom)
   else if DumpKind = 'boxes' then WriteStrFile(DumpOut, TinaBoxTree)
   else if DumpKind = 'inspect' then WriteStrFile(DumpOut, TinaHitTestInfo(IX, IY));
+end;
+
+{ After LoadUI has rendered the template into the engine, write the resulting HTML
+  to the --dump-html path and exit. Called by every platform's RunApp so the same
+  code renders the asset regardless of which desktop host runs the dump. }
+procedure DumpHtmlAndExitIfRequested;
+var sl: TStringList;
+begin
+  if GDumpHtml = '' then Exit;
+  sl := TStringList.Create;
+  try sl.Text := TinaCurrentHtml; sl.SaveToFile(GDumpHtml);
+  finally sl.Free; end;
+  Halt(0);
 end;
 
 {$IFDEF WINDOWS}
@@ -225,6 +246,7 @@ begin
   GCanvas := TWinCanvas.Create;
   TinaInit(GCanvas);
   LoadUI(TemplateDir, Template, JsonContext);
+  DumpHtmlAndExitIfRequested;    // --dump-html: write HTML, exit (no window)
   SetWindowTextW(GHwnd, PWideChar(cap));
   SetTimer(GHwnd, 1, 16, nil);
   ShowWindow(GHwnd, SW_SHOW); UpdateWindow(GHwnd);
@@ -316,6 +338,7 @@ begin
   canvas := TX11Canvas.Create(dpy, scr, gc);
   TinaInit(canvas);
   LoadUI(TemplateDir, Template, JsonContext);
+  DumpHtmlAndExitIfRequested;    // --dump-html: write HTML, exit (no window)
   while True do
   begin
     XNextEvent(dpy, @ev); etype := LI32(ev, 0);
@@ -335,35 +358,54 @@ end;
 {$ENDIF}
 
 {$IFDEF DARWIN}
-{ ---- macOS / Cocoa ---- wires TCocoaShell into the shared Tina4Interact engine }
+{ ---- macOS / Cocoa ---- wires TCocoaShell into the shared Tina4Interact engine.
+  The shell's On* events are method pointers (procedure ... of object), so the
+  handlers live on a small driver object rather than being standalone procedures
+  (the same pattern the htmlviewer example uses). }
+type
+  TAppDriver = class
+    Shell: TCocoaShell;
+    procedure Paint(Canvas: TTina4Canvas; W, H: Single);
+    procedure Down(X, Y: Single);
+    procedure Up(X, Y: Single);
+    procedure Move(X, Y: Single);
+    procedure Drag(X, Y: Single);
+    procedure Scroll(X, Y, DX, DY: Single);
+    procedure Tick;
+  end;
+
 var
   GShell: TCocoaShell;
+  GDriver: TAppDriver;
 
-procedure MPaint(Canvas: TTina4Canvas; W, H: Single);
+procedure TAppDriver.Paint(Canvas: TTina4Canvas; W, H: Single);
 begin TinaFrame(Round(W), Round(H), 1.0); end;
-procedure MDown(X, Y: Single); begin TinaTouch(0, X, Y); GShell.Invalidate; end;
-procedure MUp(X, Y: Single);   begin TinaTouch(1, X, Y); GShell.Invalidate; end;
-procedure MMove(X, Y: Single); begin TinaHover(X, Y); end;
-procedure MDrag(X, Y: Single); begin TinaTouch(2, X, Y); GShell.Invalidate; end;
-procedure MScroll(X, Y, DX, DY: Single); begin TinaScrollBy(X, Y, DX, DY); GShell.Invalidate; end;
-procedure MTick; begin if TinaTick = 1 then GShell.Invalidate; end;
+procedure TAppDriver.Down(X, Y: Single); begin TinaTouch(0, X, Y); Shell.Invalidate; end;
+procedure TAppDriver.Up(X, Y: Single);   begin TinaTouch(1, X, Y); Shell.Invalidate; end;
+procedure TAppDriver.Move(X, Y: Single); begin TinaHover(X, Y); end;
+procedure TAppDriver.Drag(X, Y: Single); begin TinaTouch(2, X, Y); Shell.Invalidate; end;
+procedure TAppDriver.Scroll(X, Y, DX, DY: Single); begin TinaScrollBy(X, Y, DX, DY); Shell.Invalidate; end;
+procedure TAppDriver.Tick; begin if TinaTick = 1 then Shell.Invalidate; end;
 
 procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: string; W, H: Integer);
 var snap, dk, dout: string; aw, ah: Integer; overlay: Boolean; ix, iy: Single;
 begin
   aw := W; ah := H; ParseArgs(snap, aw, ah, overlay, dk, dout, ix, iy);
   GShell := TCocoaShell.Create;
+  GDriver := TAppDriver.Create;
+  GDriver.Shell := GShell;
   if (snap <> '') or (dk <> '') then GShell.Headless := True;
   TinaInit(GShell.GetMeasuringCanvas);
   LoadUI(TemplateDir, Template, JsonContext);
+  DumpHtmlAndExitIfRequested;    // --dump-html: write HTML, exit (no window)
   if overlay then TinaSetDebugOverlay(True);
-  GShell.OnPaint := @MPaint;
-  GShell.OnMouseDown := @MDown;
-  GShell.OnMouseUp := @MUp;
-  GShell.OnMouseMove := @MMove;
-  GShell.OnMouseDrag := @MDrag;
-  GShell.OnScroll := @MScroll;
-  GShell.OnTick := @MTick;
+  GShell.OnPaint := @GDriver.Paint;
+  GShell.OnMouseDown := @GDriver.Down;
+  GShell.OnMouseUp := @GDriver.Up;
+  GShell.OnMouseMove := @GDriver.Move;
+  GShell.OnMouseDrag := @GDriver.Drag;
+  GShell.OnScroll := @GDriver.Scroll;
+  GShell.OnTick := @GDriver.Tick;
   GShell.Initialize(aw, ah, Title);
   if (snap <> '') or (dk <> '') then
   begin
