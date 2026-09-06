@@ -59,6 +59,10 @@ type
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); override;
     procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); override;
     procedure StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color); override;
+    procedure FillLinearGradient(X, Y, W, H, Radius, AngleDeg: Single;
+      const Colors: array of TTina4Color; const Positions: array of Single); override;
+    procedure FillRadialGradient(X, Y, W, H, Radius: Single;
+      const Colors: array of TTina4Color; const Positions: array of Single); override;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); override;
     procedure DrawText(X, Y: Single; const Text: string; FontSize: Single;
       Styles: TTina4FontStyles; Color: TTina4Color); override;
@@ -101,6 +105,7 @@ const
   The GDI world transform used for CSS transforms is GDI-only and not seen by
   GDI+, so an image inside a `transform` paints unwarped in v1. }
 type
+  TGpRectF = record x, y, w, h: Single; end;
   TGdiplusStartupInput = record
     GdiplusVersion: LongWord;
     DebugEventCallback: Pointer;
@@ -146,6 +151,15 @@ function GdipFillPath(graphics, brush, path: Pointer): Integer; stdcall; externa
 function GdipDrawPath(graphics, pen, path: Pointer): Integer; stdcall; external 'gdiplus.dll';
 function GdipFillRectangle(graphics, brush: Pointer; x, y, w, h: Single): Integer; stdcall; external 'gdiplus.dll';
 function GdipCreateMatrix2(m11, m12, m21, m22, dx, dy: Single; out matrix: Pointer): Integer; stdcall; external 'gdiplus.dll';
+{ gradient brushes (anti-aliased, multi-stop, alpha-aware) }
+function GdipCreateLineBrushFromRectWithAngle(const rect: TGpRectF; c1, c2: LongWord;
+  angle: Single; isAngleScalable: LongBool; wrapMode: Integer; out brush: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipSetLinePresetBlend(brush: Pointer; blend: PLongWord; positions: PSingle; count: Integer): Integer; stdcall; external 'gdiplus.dll';
+function GdipCreatePathGradientFromPath(path: Pointer; out brush: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipSetPathGradientCenterColor(brush: Pointer; c: LongWord): Integer; stdcall; external 'gdiplus.dll';
+function GdipSetPathGradientSurroundColorsWithCount(brush: Pointer; colors: PLongWord; var count: Integer): Integer; stdcall; external 'gdiplus.dll';
+function GdipSetPathGradientPresetBlend(brush: Pointer; blend: PLongWord; positions: PSingle; count: Integer): Integer; stdcall; external 'gdiplus.dll';
+function GdipSetPathGradientCenterPointI(brush: Pointer; const pt: TPoint): Integer; stdcall; external 'gdiplus.dll';
 function GdipSetWorldTransform(graphics, matrix: Pointer): Integer; stdcall; external 'gdiplus.dll';
 function GdipDeleteMatrix(matrix: Pointer): Integer; stdcall; external 'gdiplus.dll';
 
@@ -498,6 +512,84 @@ begin
   oldBr := SelectObject(DC, GetStockObject(NULL_BRUSH));
   Windows.RoundRect(DC, Round(X), Round(Y), Round(X + W), Round(Y + H), d, d);
   SelectObject(DC, oldBr); SelectObject(DC, old); DeleteObject(hpen);
+end;
+
+procedure TWinCanvas.FillLinearGradient(X, Y, W, H, Radius, AngleDeg: Single;
+  const Colors: array of TTina4Color; const Positions: array of Single);
+var
+  g, br, path: Pointer; rc: TGpRectF; n, i: Integer;
+  argb: array of LongWord; pos: array of Single; loc, gdipAngle: Single;
+begin
+  n := Length(Colors);
+  if (n = 0) or (W <= 0) or (H <= 0) then Exit;
+  g := GpBegin(DC);
+  if g = nil then begin inherited FillLinearGradient(X, Y, W, H, Radius, AngleDeg, Colors, Positions); Exit; end;
+  SetLength(argb, n); SetLength(pos, n);
+  for i := 0 to n - 1 do
+  begin
+    argb[i] := ArgbOf(Colors[i]);
+    if (i < Length(Positions)) and (Positions[i] >= 0) then loc := Positions[i]
+    else if n > 1 then loc := i / (n - 1) else loc := 0;
+    if (i > 0) and (loc < pos[i-1]) then loc := pos[i-1];
+    pos[i] := loc;
+  end;
+  pos[0] := 0; pos[n-1] := 1;                 // preset blend needs the endpoints
+  rc.x := X; rc.y := Y; rc.w := W; rc.h := H;
+  gdipAngle := AngleDeg - 90;                 // CSS 0=up,90=right -> GDI+ 0=L->R
+  if GdipCreateLineBrushFromRectWithAngle(rc, argb[0], argb[n-1], gdipAngle, False, 0, br) = 0 then
+  begin
+    if n > 2 then GdipSetLinePresetBlend(br, @argb[0], @pos[0], n);
+    if GdipCreatePath(0, path) = 0 then
+    begin
+      GpRoundRectPath(path, X, Y, W, H, Radius);
+      GdipFillPath(g, br, path);
+      GdipDeletePath(path);
+    end;
+    GdipDeleteBrush(br);
+  end;
+  GdipDeleteGraphics(g);
+end;
+
+procedure TWinCanvas.FillRadialGradient(X, Y, W, H, Radius: Single;
+  const Colors: array of TTina4Color; const Positions: array of Single);
+var
+  g, br, path: Pointer; n, i, cnt: Integer;
+  argb: array of LongWord; pos: array of Single; loc: Single;
+  surround: array[0..0] of LongWord; ctr: TPoint;
+begin
+  n := Length(Colors);
+  if (n = 0) or (W <= 0) or (H <= 0) then Exit;
+  g := GpBegin(DC);
+  if g = nil then begin inherited FillRadialGradient(X, Y, W, H, Radius, Colors, Positions); Exit; end;
+  if GdipCreatePath(0, path) <> 0 then begin GdipDeleteGraphics(g); Exit; end;
+  GpRoundRectPath(path, X, Y, W, H, Radius);
+  if GdipCreatePathGradientFromPath(path, br) = 0 then
+  begin
+    GdipSetPathGradientCenterColor(br, ArgbOf(Colors[0]));         // CSS: first = centre
+    surround[0] := ArgbOf(Colors[n-1]); cnt := 1;                  // last = edge
+    GdipSetPathGradientSurroundColorsWithCount(br, @surround[0], cnt);
+    ctr.x := Round(X + W/2); ctr.y := Round(Y + H/2);
+    GdipSetPathGradientCenterPointI(br, ctr);
+    if n > 2 then
+    begin
+      // path-gradient blend runs boundary(0)->centre(1): reverse the CSS stops
+      SetLength(argb, n); SetLength(pos, n);
+      for i := 0 to n - 1 do
+      begin
+        argb[i] := ArgbOf(Colors[n-1-i]);
+        if (n-1-i < Length(Positions)) and (Positions[n-1-i] >= 0) then loc := 1 - Positions[n-1-i]
+        else loc := i / (n - 1);
+        if (i > 0) and (loc < pos[i-1]) then loc := pos[i-1];
+        pos[i] := loc;
+      end;
+      pos[0] := 0; pos[n-1] := 1;
+      GdipSetPathGradientPresetBlend(br, @argb[0], @pos[0], n);
+    end;
+    GdipFillPath(g, br, path);
+    GdipDeleteBrush(br);
+  end;
+  GdipDeletePath(path);
+  GdipDeleteGraphics(g);
 end;
 
 procedure TWinCanvas.DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color);
