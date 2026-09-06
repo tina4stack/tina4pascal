@@ -131,6 +131,42 @@ function GdipCreateBitmapFromScan0(w, h, stride, format: Integer; scan0: PByte;
   out bitmap: Pointer): Integer; stdcall; external 'gdiplus.dll';
 function GdipSaveImageToFile(image: Pointer; filename: PWideChar;
   const clsid: TGUID; encoderParams: Pointer): Integer; stdcall; external 'gdiplus.dll';
+{ vector shapes with anti-aliasing + true ARGB alpha }
+function GdipSetSmoothingMode(graphics: Pointer; mode: Integer): Integer; stdcall; external 'gdiplus.dll';
+function GdipCreateSolidFill(argb: LongWord; out brush: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipDeleteBrush(brush: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipCreatePen1(argb: LongWord; width: Single; unit_: Integer; out pen: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipDeletePen(pen: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipCreatePath(brushMode: Integer; out path: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipDeletePath(path: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipAddPathArc(path: Pointer; x, y, w, h, startAngle, sweepAngle: Single): Integer; stdcall; external 'gdiplus.dll';
+function GdipAddPathLine(path: Pointer; x1, y1, x2, y2: Single): Integer; stdcall; external 'gdiplus.dll';
+function GdipClosePathFigure(path: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipFillPath(graphics, brush, path: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipDrawPath(graphics, pen, path: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipFillRectangle(graphics, brush: Pointer; x, y, w, h: Single): Integer; stdcall; external 'gdiplus.dll';
+function GdipCreateMatrix2(m11, m12, m21, m22, dx, dy: Single; out matrix: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipSetWorldTransform(graphics, matrix: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipDeleteMatrix(matrix: Pointer): Integer; stdcall; external 'gdiplus.dll';
+
+{ Append a rounded-rect figure to a GDI+ path (radius clamped to half the box). }
+procedure GpRoundRectPath(path: Pointer; x, y, w, h, r: Single);
+var d: Single;
+begin
+  if r > w / 2 then r := w / 2;
+  if r > h / 2 then r := h / 2;
+  if r <= 0 then
+  begin
+    GdipAddPathLine(path, x, y, x+w, y); GdipAddPathLine(path, x+w, y, x+w, y+h);
+    GdipAddPathLine(path, x+w, y+h, x, y+h); GdipClosePathFigure(path); Exit;
+  end;
+  d := 2 * r;
+  GdipAddPathArc(path, x, y, d, d, 180, 90);
+  GdipAddPathArc(path, x + w - d, y, d, d, 270, 90);
+  GdipAddPathArc(path, x + w - d, y + h - d, d, d, 0, 90);
+  GdipAddPathArc(path, x, y + h - d, d, d, 90, 90);
+  GdipClosePathFigure(path);
+end;
 
 function URLDownloadToFileW(caller: Pointer; url, filename: PWideChar;
   reserved: DWORD; cb: Pointer): HRESULT; stdcall; external 'urlmon.dll';
@@ -147,6 +183,21 @@ begin
   FillChar(si, SizeOf(si), 0);
   si.GdiplusVersion := 1;
   if GdiplusStartup(GGdiplusToken, si, nil) = 0 then GGdiplusOK := True;
+end;
+
+{ Open a GDI+ graphics on the current DC, anti-aliased and carrying the DC's GDI
+  world transform (so CSS transforms still apply). Returns nil if GDI+ is off. }
+function GpBegin(dc: HDC): Pointer;
+var g, m: Pointer; xf: Windows.XFORM;
+begin
+  Result := nil;
+  EnsureGdiplus; if not GGdiplusOK then Exit;
+  if GdipCreateFromHDC(dc, g) <> 0 then Exit;
+  GdipSetSmoothingMode(g, 4);              // SmoothingModeAntiAlias
+  if GetWorldTransform(dc, xf) then
+    if GdipCreateMatrix2(xf.eM11, xf.eM12, xf.eM21, xf.eM22, xf.eDx, xf.eDy, m) = 0 then
+    begin GdipSetWorldTransform(g, m); GdipDeleteMatrix(m); end;
+  Result := g;
 end;
 
 { Write raw bytes to a file (whole-buffer). }
@@ -361,13 +412,24 @@ begin
 end;
 
 procedure TWinCanvas.FillRect(X, Y, W, H: Single; Color: TTina4Color);
-var r: Windows.RECT; br: HBRUSH;
+var r: Windows.RECT; hbr: HBRUSH; g, br: Pointer; a: LongWord;
 begin
   if (W <= 0) or (H <= 0) then Exit;
+  a := (LongWord(Color) shr 24) and $FF;
+  if (a > 0) and (a < $FF) then    // genuine partial alpha (rgba/shadow) -> GDI+ blend
+  begin
+    g := GpBegin(DC);
+    if g <> nil then
+    begin
+      if GdipCreateSolidFill(LongWord(Color), br) = 0 then
+      begin GdipFillRectangle(g, br, X, Y, W, H); GdipDeleteBrush(br); end;
+      GdipDeleteGraphics(g); Exit;
+    end;
+  end;
   r.Left := Round(X); r.Top := Round(Y); r.Right := Round(X + W); r.Bottom := Round(Y + H);
-  br := CreateSolidBrush(ColorRefOf(Color));
-  Windows.FillRect(DC, r, br);
-  DeleteObject(br);
+  hbr := CreateSolidBrush(ColorRefOf(Color));
+  Windows.FillRect(DC, r, hbr);
+  DeleteObject(hbr);
 end;
 
 procedure TWinCanvas.StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color);
@@ -381,29 +443,61 @@ begin
   SelectObject(DC, old); DeleteObject(pen);
 end;
 
+{ alpha 0 from the engine means "opaque, unset" (the old GDI path ignored alpha);
+  a real partial alpha like the box-shadow's 0x14 is honoured. }
+function ArgbOf(Color: TTina4Color): LongWord; inline;
+begin
+  Result := LongWord(Color);
+  if (Result shr 24) = 0 then Result := Result or $FF000000;
+end;
+
 procedure TWinCanvas.FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color);
-var br, old, oldPen: HGDIOBJ; d: Integer;
+var g, br, path: Pointer; hbr, oldbr, oldpen: HGDIOBJ; d: Integer;
 begin
   if (W <= 0) or (H <= 0) then Exit;
-  d := Round(Radius * 2);
-  br := CreateSolidBrush(ColorRefOf(Color));
-  old := SelectObject(DC, br);
-  oldPen := SelectObject(DC, GetStockObject(NULL_PEN));
+  g := GpBegin(DC);
+  if g <> nil then
+  begin
+    if GdipCreatePath(0, path) = 0 then
+    begin
+      GpRoundRectPath(path, X, Y, W, H, Radius);
+      if GdipCreateSolidFill(ArgbOf(Color), br) = 0 then
+      begin GdipFillPath(g, br, path); GdipDeleteBrush(br); end;
+      GdipDeletePath(path);
+    end;
+    GdipDeleteGraphics(g);
+    Exit;
+  end;
+  d := Round(Radius * 2);                       // GDI fallback
+  hbr := CreateSolidBrush(ColorRefOf(Color));
+  oldbr := SelectObject(DC, hbr);
+  oldpen := SelectObject(DC, GetStockObject(NULL_PEN));
   Windows.RoundRect(DC, Round(X), Round(Y), Round(X + W) + 1, Round(Y + H) + 1, d, d);
-  SelectObject(DC, oldPen);
-  SelectObject(DC, old); DeleteObject(br);
+  SelectObject(DC, oldpen); SelectObject(DC, oldbr); DeleteObject(hbr);
 end;
 
 procedure TWinCanvas.StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color);
-var pen, old, oldBr: HGDIOBJ; d: Integer;
+var g, pen, path: Pointer; hpen, old, oldBr: HGDIOBJ; d: Integer;
 begin
+  g := GpBegin(DC);
+  if g <> nil then
+  begin
+    if GdipCreatePath(0, path) = 0 then
+    begin
+      GpRoundRectPath(path, X, Y, W, H, Radius);
+      if GdipCreatePen1(ArgbOf(Color), Thickness, 2, pen) = 0 then   // unit 2 = pixel
+      begin GdipDrawPath(g, pen, path); GdipDeletePen(pen); end;
+      GdipDeletePath(path);
+    end;
+    GdipDeleteGraphics(g);
+    Exit;
+  end;
   d := Round(Radius * 2);
-  pen := CreatePen(PS_SOLID, Round(Thickness), ColorRefOf(Color));
-  old := SelectObject(DC, pen);
+  hpen := CreatePen(PS_SOLID, Round(Thickness), ColorRefOf(Color));
+  old := SelectObject(DC, hpen);
   oldBr := SelectObject(DC, GetStockObject(NULL_BRUSH));
   Windows.RoundRect(DC, Round(X), Round(Y), Round(X + W), Round(Y + H), d, d);
-  SelectObject(DC, oldBr);
-  SelectObject(DC, old); DeleteObject(pen);
+  SelectObject(DC, oldBr); SelectObject(DC, old); DeleteObject(hpen);
 end;
 
 procedure TWinCanvas.DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color);
