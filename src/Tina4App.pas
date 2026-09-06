@@ -29,7 +29,7 @@ procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: stri
 implementation
 
 uses
-  SysUtils, Classes,
+  SysUtils, Classes, Tina4CanvasPdf,
 {$IFDEF WINDOWS}
   Windows, Tina4RenderBackend, Tina4ShellWin, Tina4Interact;
 {$ENDIF}
@@ -71,6 +71,9 @@ var
   { Set by `--script <file>`: replay a UI script headlessly (click/type/scroll +
     snap between steps) — deterministic repro / automated testing. }
   GScript: string = '';
+  { Set by `--pdf <file>`: render the whole document to a PDF and exit (no window).
+    The SAME engine paints into a Tina4CanvasPdf — headless HTML→PDF. }
+  GPdfOut: string = '';
 
 type
   TRenderProc = procedure;                     // (re)render the current frame headless
@@ -90,13 +93,14 @@ procedure ParseArgs(out Snap: string; var W, H: Integer; out Overlay: Boolean;
 var i: Integer;
 begin
   Snap := ''; Overlay := False; DumpKind := ''; DumpOut := ''; IX := 0; IY := 0;
-  GDumpHtml := ''; GScript := ''; i := 1;
+  GDumpHtml := ''; GScript := ''; GPdfOut := ''; i := 1;
   while i <= ParamCount do
   begin
     if (ParamStr(i) = '--snapshot') and (i < ParamCount) then begin Inc(i); Snap := ParamStr(i); end
     else if ParamStr(i) = '--overlay' then Overlay := True
     else if (ParamStr(i) = '--dump-html') and (i < ParamCount) then begin Inc(i); GDumpHtml := ParamStr(i); end
     else if (ParamStr(i) = '--script') and (i < ParamCount) then begin Inc(i); GScript := ParamStr(i); end
+    else if (ParamStr(i) = '--pdf') and (i < ParamCount) then begin Inc(i); GPdfOut := ParamStr(i); end
     else if (ParamStr(i) = '--width') and (i < ParamCount) then begin Inc(i); W := StrToIntDef(ParamStr(i), W); end
     else if (ParamStr(i) = '--height') and (i < ParamCount) then begin Inc(i); H := StrToIntDef(ParamStr(i), H); end
     else if (ParamStr(i) = '--dom') and (i < ParamCount) then begin Inc(i); DumpKind := 'dom'; DumpOut := ParamStr(i); end
@@ -139,6 +143,25 @@ begin
   sl := TStringList.Create;
   try sl.Text := TinaCurrentHtml; sl.SaveToFile(GDumpHtml);
   finally sl.Free; end;
+  Halt(0);
+end;
+
+{ --pdf: render the whole document to a PDF and exit, headless — a Tina4CanvasPdf
+  is the engine's canvas, laid out at the given page width (points) and sized to
+  the full content height. Must run BEFORE any GUI shell is created. }
+procedure RenderPdfAndExit(const TemplateDir, Template, JsonContext: string; WPt: Integer);
+var pdf: TTina4CanvasPdf; h: Single;
+begin
+  if GPdfOut = '' then Exit;
+  if WPt <= 0 then WPt := 800;
+  pdf := TTina4CanvasPdf.Create(WPt, 100);
+  TinaInit(pdf);
+  LoadUI(TemplateDir, Template, JsonContext);
+  h := TinaLayoutOnly(WPt, 1.0);
+  if h < 10 then h := 1100;
+  pdf.SetPageSize(WPt, h);
+  TinaFrame(WPt, Round(h), 1.0);
+  pdf.SaveToFile(GPdfOut);
   Halt(0);
 end;
 
@@ -300,6 +323,7 @@ var wc: WNDCLASSEXW; m: MSG; cls, cap: UnicodeString; ico: HICON;
 begin
   GW := W; GH := H;
   ParseArgs(snap, GW, GH, overlay, dk, dout, ix, iy);
+  RenderPdfAndExit(TemplateDir, Template, JsonContext, GW);   // --pdf: headless, no window
   if (snap <> '') or (dk <> '') or (GScript <> '') then
   begin WinHeadless(TemplateDir, Template, JsonContext, GW, GH, snap, overlay, dk, dout, ix, iy); Halt(0); end;
   cls := 'Tina4AppWindow';
@@ -406,6 +430,7 @@ begin
   scr := XDefaultScreen(dpy);
   gc := XCreateGC(dpy, XRootWindow(dpy, scr), 0, nil);
   aw := GWv; ah := GHv; ParseArgs(snap, aw, ah, overlay, dk, dout, ix, iy); GWv := aw; GHv := ah;
+  RenderPdfAndExit(TemplateDir, Template, JsonContext, GWv);   // --pdf: headless, no window
   if (snap <> '') or (dk <> '') or (GScript <> '') then
   begin
     GLdpy := dpy; GLw := GWv; GLh := GHv;
@@ -496,6 +521,7 @@ var snap, dk, dout: string; aw, ah: Integer; overlay: Boolean; ix, iy: Single;
 begin
   aw := W; ah := H; ParseArgs(snap, aw, ah, overlay, dk, dout, ix, iy);
   GMacW := aw; GMacH := ah;
+  RenderPdfAndExit(TemplateDir, Template, JsonContext, aw);   // --pdf: headless, no window
   GShell := TCocoaShell.Create;
   GDriver := TAppDriver.Create;
   GDriver.Shell := GShell;

@@ -57,6 +57,10 @@ function TinaCurrentHtml: string;
   Canvas.BeginFrame for this frame; WPx/HPx are the surface size in physical
   pixels and Density is points-per-pixel (1 on a non-scaled desktop). }
 procedure TinaFrame(WPx, HPx: Integer; Density: Single);
+{ Parse + lay out at width WPx (no paint) and return the document content height in
+  CSS px — used to size a page-oriented target (PDF) to the full content before a
+  single paint. Requires a canvas (TinaInit) so text can be measured. }
+function TinaLayoutOnly(WPx: Integer; Density: Single): Single;
 { A touch: Action 0=down, 1=up, 2=move; X/Y in physical pixels. Returns one of
   the TINA_* codes. }
 function TinaTouch(Action: Integer; X, Y: Single): Integer;
@@ -1370,6 +1374,19 @@ begin
   PaintSelectOverlay(cssW, cssH);
   PaintDateOverlay(cssW, cssH);
   if GDebugOverlay and (GRoot <> nil) then PaintDebugOverlay(GRoot, GScrollY);
+end;
+
+function TinaLayoutOnly(WPx: Integer; Density: Single): Single;
+var cssW: Single;
+begin
+  Result := 0;
+  if GCanvas = nil then Exit;
+  if Density > 0 then GDensity := Density;
+  cssW := WPx / GDensity;
+  if GHtml = '' then Exit;
+  if GDocDirty or (Abs(GLayoutW - cssW) > 0.5) then ParseDoc(cssW)
+  else if GLayoutDirty then LayoutDoc(cssW);
+  if GRoot <> nil then Result := GRoot.H;
 end;
 
 procedure TinaFrameRegion(WPx, HPx: Integer; Density: Single);

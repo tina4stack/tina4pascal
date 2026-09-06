@@ -647,6 +647,17 @@ dump_project() {
 }
 where_project() { echo "$PWD/build/${1:-$(default_host_target)}/$(jget name "$(basename "$PWD")")"; }
 
+# build + render the WHOLE document to a PDF (searchable text + vector) → path.
+# usage: tina4pascal pdf [out.pdf] [pageWidthPt]
+pdf_project() {
+  pfile="${1:-$(jget name "$(basename "$PWD")").pdf}"; pw="${2:-800}"
+  ptgt="$(default_host_target)"
+  build_project "$ptgt"
+  pname="$(jget name "$(basename "$PWD")")"
+  run_headless "$PWD/build/$ptgt/$pname" "$ptgt" --pdf "$pfile" --width "$pw" || return 1
+  if [ -f "$pfile" ]; then ok "pdf → $pfile"; echo "$pfile"; else bad "no pdf produced"; fi
+}
+
 # replay a UI script headlessly (click/type/scroll + snap between steps).
 # usage: script_project <scriptfile>
 script_project() {
@@ -1319,6 +1330,7 @@ ${B}macOS run${Z}
   macos [--run]          build the native macOS .app (same engine as mobile)
   run [page.html]        build + open the HTML viewer on a page
   snapshot <html> <png>  headless off-screen render to PNG
+  pdf [out.pdf] [wpt]    (in a project) render the whole document to a PDF
 
 ${B}deploy & run${Z}  (targets: android · ios · macos · win64 · linux)
   deploy <target>        build + install/open + launch on the target
@@ -1369,6 +1381,7 @@ case "$cmd" in
   macos)      cmd_macos "$@" ;;
   run)        if is_project; then run_project "$@"; else cmd_run "$@"; fi ;;
   render)     if is_project; then render_project "$@"; else die "render: run inside a project dir"; fi ;;
+  pdf)        if is_project; then pdf_project "$@"; else die "pdf: run inside a project dir"; fi ;;
   where)      if is_project; then where_project "$@"; else die "where: run inside a project dir"; fi ;;
   dom)        if is_project; then dump_project dom;         else die "dom: run inside a project dir"; fi ;;
   boxes)      if is_project; then dump_project boxes;       else die "boxes: run inside a project dir"; fi ;;
