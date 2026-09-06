@@ -1,7 +1,6 @@
 package com.tina4.pascal;
 
 import android.content.Context;
-import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.media.MediaPlayer;
 import android.net.Uri;
@@ -38,8 +37,6 @@ public class Tina4View extends View implements Runnable {
     private native int  nativeTouch(int action, float x, float y);
     private native int  nativeTick();
     private native int  nativeAnimActive();   // 1 if last paint has live animation
-    private native void nativePaintRegion(Canvas canvas, int w, int h, float density); // repaint only the animated region
-    private native int  nativeAnimRegion();   // 1 if a confined animated region is available
     private native void nativeSetAssetBase(String dir);   // base for relative <img src>
 
     /** Base dir a relative &lt;img src="assets/…"&gt; resolves against (filesDir). */
@@ -130,35 +127,11 @@ public class Tina4View extends View implements Runnable {
     // rate slows nothing down — it just draws fewer frames.
     private long mNextDelay = FRAME_MS;
 
-    // Retained backing-store. We keep a bitmap of the last FULL frame; an
-    // animation-only tick blits that cache (one drawBitmap) and repaints ONLY the
-    // animated region on top, instead of re-issuing the whole document's draw calls
-    // (each a JNI round-trip) every frame. A full repaint happens on any content
-    // change: invalidate() is overridden to force one, so every input path is
-    // covered automatically; the ticker uses invalidateAnim() for the cheap path.
-    // Off by default: a Canvas over a Bitmap is a SOFTWARE canvas, so full frames
-    // lose hardware acceleration — a net win only when animation-only frames (which
-    // repaint just the small region) dominate, and only measurable on real hardware
-    // where the whole-bitmap blit is a cheap GPU op (SwiftShader makes it a slow
-    // software copy). Enable on a real device to validate; the engine-side region
-    // tracking + cull it relies on are always compiled in. See
-    // docs/TOOLING-DISTRIBUTION.md / the render-perf note.
-    private static final boolean USE_BACKING_STORE = false;
-    private Bitmap mBacking;
-    private Canvas mBackingCanvas;
-    private boolean mCacheValid = false;
-    private boolean mNeedFull = true;
-
-    @Override
-    public void invalidate() { mNeedFull = true; super.invalidate(); }
-    private void invalidateAnim() { if (USE_BACKING_STORE) super.invalidate(); else invalidate(); }
-
     @Override
     public void run() {
         ticking = false;
         int t = nativeTick();                    // 0 idle · 1 anim-only · 2 fling (content moving)
-        if (t == 2) mNeedFull = true;
-        if (t != 0) { invalidateAnim(); ensureTicking(); }
+        if (t != 0) { invalidate(); ensureTicking(); }
     }
     // Post one throttled tick if none is pending. onDraw calls this whenever the
     // last paint marked animated content active, so animation runs on load without
@@ -170,47 +143,10 @@ public class Tina4View extends View implements Runnable {
     private void stopFling()  { removeCallbacks(this); ticking = false; }
 
     @Override
-    protected void onSizeChanged(int w, int h, int ow, int oh) {
-        super.onSizeChanged(w, h, ow, oh);
-        if (mBacking != null) { mBacking.recycle(); mBacking = null; }
-        mCacheValid = false; mNeedFull = true;
-    }
-
-    private void ensureBacking(int w, int h) {
-        if (w <= 0 || h <= 0) return;
-        if (mBacking == null || mBacking.getWidth() != w || mBacking.getHeight() != h) {
-            if (mBacking != null) mBacking.recycle();
-            mBacking = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-            mBackingCanvas = new Canvas(mBacking);
-            mCacheValid = false;
-        }
-    }
-
-    @Override
     protected void onDraw(Canvas canvas) {
         int w = getWidth(), h = getHeight();
         long t0 = SystemClock.uptimeMillis();
-        if (!USE_BACKING_STORE) {
-            nativePaint(canvas, w, h, density);                 // proven hardware-canvas path
-        } else {
-            ensureBacking(w, h);
-            if (mBacking == null) { nativePaint(canvas, w, h, density); }
-            else {
-                boolean region = !mNeedFull && mCacheValid && nativeAnimRegion() != 0;
-                // Paint into the backing bitmap (a software Canvas), never the
-                // framework's view canvas. save()/restoreToCount() resets the reused
-                // canvas's transform + clip + save-stack each frame.
-                int sc = mBackingCanvas.save();
-                if (region) {
-                    nativePaintRegion(mBackingCanvas, w, h, density);  // update only the animated region
-                } else {
-                    nativePaint(mBackingCanvas, w, h, density);        // full repaint into the cache
-                    mCacheValid = true; mNeedFull = false;
-                }
-                mBackingCanvas.restoreToCount(sc);
-                canvas.drawBitmap(mBacking, 0, 0, null);               // present the (updated) frame
-            }
-        }
+        nativePaint(canvas, w, h, density);      // hardware-canvas path
         // pace the next anim frame to the cost of this one, so a slow paint always
         // leaves the main thread time to service input/focus (never an ANR).
         long dt = SystemClock.uptimeMillis() - t0;
