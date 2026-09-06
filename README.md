@@ -67,25 +67,38 @@ tina4pascal build android   # ship an APK (arm64 + armv7 + x86_64), signed
 tina4pascal doctor          # see the whole toolchain
 ```
 
-## Tina4Pascal vs Chrome
+## Guess the browser
 
-The same `kitchen-sink.html`, left rendered by a **~1.4 MB native Free Pascal
-binary** (no browser, no WebView, its own HTML/CSS engine), right by Chrome:
+One of these is Chrome. The other is a **~1.4 MB native binary** with no browser,
+no WebView, no HTML/CSS engine but its own — the same `kitchen-sink.html`,
+rendered by pure Free Pascal. Which is which?
 
-![Tina4Pascal beside Chrome rendering the same page](docs/images/kitchen-sink-vs-chrome.png)
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/images/vs-tina4.png" alt="render A"><br><sub align="center"><b>A</b></sub></td>
+<td width="50%" valign="top"><img src="docs/images/vs-chrome.png" alt="render B"><br><sub><b>B</b></sub></td>
+</tr>
+</table>
 
-Gradients, the web-loaded photo, bold/italic/monospace type, linear + radial
-swatches, gradient/solid/outline buttons, the `<select>`, the checkbox, the
-`font-weight:800` heading and the whole card layout are pixel-close. The only
-differences are the platform form widgets Tina4 **draws itself** — the
-`<input type="date">` (`06 Sep 2026` with a calendar glyph vs Chrome's OS
-`2026/09/06` spinner) and the `<select>` chevron — so they follow **your CSS**,
-not the OS. Reproduce it with `tools/tina4pascal render` beside any browser.
+<details>
+<summary><b>Reveal</b></summary><br>
 
-Because Tina4 owns the date widget, opening it gives a full **native calendar** —
-engine-drawn, CSS-styled, identical on every platform (no OS date dialog):
+**A is Tina4Pascal** (native Free Pascal); **B is Chrome.** Gradients, the
+web-loaded photo, bold/italic/monospace type, linear + radial swatches,
+gradient/solid/outline buttons, the `<select>`, the checkbox, the
+`font-weight:800` heading and the whole card layout all match. The only tells
+are the platform form widgets: the `<input type="date">` (Tina4 formats it
+`06 Sep 2026` with a calendar glyph; Chrome shows the OS `2026/09/06` spinner)
+and the `<select>` chevron — Tina4 draws both itself, so they follow **your
+CSS**, not the OS. Reproduce it with `tools/tina4pascal render` beside any
+browser.
+
+And because Tina4 owns the widget, opening that date field gives you a full
+**native calendar** — engine-drawn, CSS-styled, identical on every platform (no
+OS date dialog):
 
 <p><img src="docs/images/calendar.png" width="420" alt="Tina4 native calendar picker"></p>
+</details>
 
 ## Beyond the browser
 
@@ -251,7 +264,7 @@ PPC_CONFIG_PATH=$HOME/fpc/etc $HOME/fpc/bin/fpc -Mdelphi -Twin64 -Px86_64 \
 The GDI+ shell renders shapes, ClearType text, clipping, `clip-path`, 2D
 transforms, the full compositing pipeline, **AA gradients (linear/radial),
 `<img>` decode/draw, per-pixel `rgba()` alpha and `background-size: cover`** —
-the [comparison above](#tina4pascal-vs-chrome) exercises them. Reftests: **130/130**
+the [comparison above](#guess-the-browser) exercises them. Reftests: **130/130**
 pass. What's left:
 
 1. **Advanced blend modes** — `color-dodge`/`burn`, `hue`/`saturation`/`color`/
