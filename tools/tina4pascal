@@ -336,7 +336,8 @@ proj_android_build() {
   title="$(jget title "$name")"
   bundle="$(jget bundleId "com.tina4.$name")"
   minsdk="$(jget_num androidMinSdk 21)"; tgtsdk="$(jget_num androidTargetSdk 34)"
-  say "${B}— android: $name ($bundle) —${Z}"
+  vcode="$(jget_num versionCode 1)"; vname="$(jget versionName 1.0)"
+  say "${B}— android: $name ($bundle) v$vname ($vcode) —${Z}"
   rm -rf "$host" "$aout"; mkdir -p "$aout/classes"
 
   # 2. stage the reference host (Java + JNI + res + manifest) and overlay project bits
@@ -378,10 +379,14 @@ proj_android_build() {
   if [ -d "$APPDIR/res" ]; then "$BT/aapt2" compile --dir "$APPDIR/res" -o "$aout/res.zip"; RES="$aout/res.zip"; fi
   # package=com.tina4.pascal keeps R/Java resolving; activity FQCN so it survives
   # the rename; label shows the project title.
-  sed -e 's#<manifest #<manifest package="com.tina4.pascal" #' \
+  # inject applicationId package + versionCode/Name (Gradle normally supplies the
+  # versions; an AAB is rejected without them).
+  sed -e "s#<manifest #<manifest package=\"com.tina4.pascal\" android:versionCode=\"$vcode\" android:versionName=\"$vname\" #" \
       -e 's#android:name="\.MainActivity"#android:name="com.tina4.pascal.MainActivity"#' \
       -e "s#android:label=\"[^\"]*\"#android:label=\"$title\"#" \
       "$APPDIR/AndroidManifest.xml" > "$aout/AndroidManifest.xml"
+  # `release android` sets TINA4_AAB → build a Play-ready signed .aab instead.
+  [ -n "${TINA4_AAB:-}" ] && { proj_android_aab; return; }
   "$BT/aapt2" link -o "$aout/base.apk" -I "$ANDROID_JAR" \
     --manifest "$aout/AndroidManifest.xml" \
     --rename-manifest-package "$bundle" --custom-package com.tina4.pascal \
@@ -415,6 +420,59 @@ proj_android_build() {
   say "  install:  ${D}adb install -r \"$apk\"${Z}"
   say "  launch:   ${D}adb shell am start -n $bundle/com.tina4.pascal.MainActivity${Z}"
 }
+# bundletool jar: env → ~/.tina4/bin → download (Play's AAB assembler is a jar).
+BUNDLETOOL_VER="1.17.2"
+resolve_bundletool() {
+  [ -n "${BUNDLETOOL:-}" ] && [ -f "$BUNDLETOOL" ] && { printf '%s' "$BUNDLETOOL"; return; }
+  jar="$TINA4_HOME/bin/bundletool.jar"
+  if [ ! -f "$jar" ]; then
+    command -v curl >/dev/null 2>&1 || { echo "curl needed to fetch bundletool" >&2; return 1; }
+    mkdir -p "$TINA4_HOME/bin"
+    say "${D}↓ bundletool $BUNDLETOOL_VER → ~/.tina4/bin${Z}" >&2
+    curl -fsSL "https://github.com/google/bundletool/releases/download/$BUNDLETOOL_VER/bundletool-all-$BUNDLETOOL_VER.jar" \
+      -o "$jar" >&2 || return 1
+  fi
+  printf '%s' "$jar"
+}
+
+# Assemble a Play-ready signed .aab from the already-staged dex + .so + proto
+# resources. Called by proj_android_build when TINA4_AAB is set (release android).
+proj_android_aab() {
+  : "${TINA4_KEYSTORE:?AAB release needs a release key — tina4pascal keygen, then export TINA4_KEYSTORE/TINA4_KEY_ALIAS/TINA4_KS_PASS}"
+  : "${TINA4_KEY_ALIAS:?set TINA4_KEY_ALIAS}"; : "${TINA4_KS_PASS:?set TINA4_KS_PASS}"
+  bt_jar="$(resolve_bundletool)" || die "could not obtain bundletool"
+  say "${D}aapt2 link --proto-format${Z}"
+  "$BT/aapt2" link --proto-format -o "$aout/proto.apk" -I "$ANDROID_JAR" \
+    --manifest "$aout/AndroidManifest.xml" \
+    --rename-manifest-package "$bundle" --custom-package com.tina4.pascal \
+    --min-sdk-version "$minsdk" --target-sdk-version "$tgtsdk" \
+    -A "$APPDIR/assets" $RES || die "aapt2 proto link failed"
+  # restructure the proto APK into the AAB base-module layout
+  b="$aout/bundle/base"; rm -rf "$aout/bundle"; mkdir -p "$b/manifest" "$b/dex"
+  ( cd "$b" && unzip -qo "$aout/proto.apk" ) || die "unzip proto apk failed"
+  mv "$b/AndroidManifest.xml" "$b/manifest/AndroidManifest.xml"
+  cp "$aout"/classes*.dex "$b/dex/" 2>/dev/null || die "no dex to bundle"
+  for abi in $(ls "$APPDIR/jniLibs" 2>/dev/null); do
+    [ -f "$APPDIR/jniLibs/$abi/libtina4.so" ] || continue
+    mkdir -p "$b/lib/$abi"; cp "$APPDIR/jniLibs/$abi/libtina4.so" "$b/lib/$abi/"
+  done
+  ( cd "$b" && zip -qr "$aout/base.zip" . ) || die "module zip failed"
+  aab="$work/$name.aab"; rm -f "$aab"
+  say "${D}bundletool build-bundle${Z}"
+  java -jar "$bt_jar" build-bundle --modules="$aout/base.zip" --output="$aab" --overwrite \
+    || die "bundletool build-bundle failed"
+  # sign the AAB with the upload key (jarsigner — AABs aren't apksigner-signed)
+  JS="$JAVA_HOME/bin/jarsigner"; [ -x "$JS" ] || JS="jarsigner"
+  "$JS" -keystore "$TINA4_KEYSTORE" -storepass "$TINA4_KS_PASS" \
+    -keypass "${TINA4_KEY_PASS:-$TINA4_KS_PASS}" -sigalg SHA256withRSA -digestalg SHA-256 \
+    "$aab" "$TINA4_KEY_ALIAS" >/dev/null 2>&1 || die "AAB signing (jarsigner) failed"
+  java -jar "$bt_jar" validate --bundle "$aab" >/dev/null 2>&1 \
+    && ok "AAB validated" || warn "bundletool validate reported issues (still produced)"
+  ok "AAB (release-signed) → build/android/$name.aab   applicationId $bundle"
+  say "  upload to Play Console (internal testing → production);"
+  say "  local test:  ${D}java -jar $bt_jar build-apks --bundle \"$aab\" --output app.apks --mode=universal${Z}"
+}
+
 proj_ios_build() {
   warn "scaffolded-project iOS packaging is landing next (docs/TOOLING-DISTRIBUTION.md)."
   say  "  For now use the reference app in ${D}$ROOT/ios${Z}."
@@ -574,6 +632,8 @@ cmd_init() {
   // only). The RELEASE key is a SECRET — keep it in ~/.tina4/keystores or point
   // TINA4_KEYSTORE at it, and NEVER commit it. See signing/README.md.
   "android": {
+    "versionCode": 1,        // bump for every Play upload (integer, must increase)
+    "versionName": "1.0",    // the human version shown on the store
     "signing": {
       "debug":   "signing/debug.keystore",
       "release": { "keystore": "\${TINA4_KEYSTORE}", "alias": "\${TINA4_KEY_ALIAS}" }
@@ -782,6 +842,15 @@ cmd_keygen() {
   say "  export TINA4_KEY_ALIAS=\"$alias\""
   say "  export TINA4_KS_PASS=…   # store password you just set"
   say "  export TINA4_KEY_PASS=…  # key password (omit if same as store)"
+}
+
+# release for a scaffolded project: android → Play-ready signed AAB.
+proj_release() {
+  case "${1:-android}" in
+    android) TINA4_AAB=1 build_project android ;;
+    ios)     proj_ios_build ;;
+    *) die "release <android|ios>" ;;
+  esac
 }
 
 # release — build a release-SIGNED APK (needs the TINA4_KEYSTORE env, see keygen)
@@ -1095,7 +1164,7 @@ case "$cmd" in
   compliance) cmd_compliance "$@" ;;
   apk)        cmd_apk "$@" ;;
   keygen)     cmd_keygen "$@" ;;
-  release)    cmd_release "$@" ;;
+  release)    if is_project; then proj_release "$@"; else cmd_release "$@"; fi ;;
   deploy)     case "${1:-}" in android|ios|macos|win64|windows|linux) cmd_run_target "$@" ;; *) cmd_deploy "$@" ;; esac ;;
   ios)        cmd_ios "$@" ;;
   launch)     cmd_launch "$@" ;;

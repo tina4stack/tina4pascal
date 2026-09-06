@@ -78,9 +78,14 @@ reference app's Java + JNI + `aapt2/d8/apksigner`):
   `<img src="assets/…">` resolves on-device ✅ — MainActivity extracts the APK
   assets to `filesDir/assets/` and the Android shell resolves relative image
   paths against that base (`nativeSetAssetBase`).
-- **release**: `tina4pascal release android` → a **signed AAB** (`bundletool`) —
-  Play requires an `.aab`, not an `.apk` — plus a signed universal APK for
-  sideload testing. Signs from `TINA4_KEYSTORE`/`TINA4_KEY_ALIAS`/`TINA4_KS_PASS`. ⬜
+- **release**: `tina4pascal release android` → a **signed, validated AAB**
+  (Play requires an `.aab`, not an `.apk`).  ✅ *(verified: AAB →
+  `bundletool build-apks`/`install-apks` → installs + runs on the emulator)*
+  - gradle-free via `bundletool` (auto-downloaded to `~/.tina4/bin`): `aapt2 link
+    --proto-format` → AAB base-module layout → `build-bundle` → `jarsigner` with
+    the upload key → `bundletool validate`.  ✅
+  - version from `tina4.json.android.versionCode`/`versionName` (Play needs them). ✅
+  - signs from `TINA4_KEYSTORE`/`TINA4_KEY_ALIAS`/`TINA4_KS_PASS`.  ✅
 - **upload**: `tina4pascal publish android` via the Play Developer API (service
   account JSON in `~/.tina4/`, never committed) → internal/closed/production track. ⬜
 
