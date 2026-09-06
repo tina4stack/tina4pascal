@@ -53,12 +53,12 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | flex, flex-grow, flex-basis | ✅ | grow distributes free main space |
 | flex-shrink | ✅ | weighted shrink pass on overflowing non-wrapping rows |
 | flex-direction | ✅ | row/column + row-reverse/column-reverse (items reversed along the main axis) |
-| flex-wrap | 🟡 | wrap works; wrap-reverse = plain wrap; grow disabled while wrapping |
+| flex-wrap | ✅ | wrap + wrap-reverse (lines stacked in reverse cross order); grow disabled while wrapping |
 | flex-flow | ❌ | use longhands |
 | justify-content | ✅ | start/center/end/space-between/around/evenly |
 | align-items | ✅ | center/flex-end/stretch (the default, fills the cross axis); no baseline |
 | align-self, order | ✅ | `align-self` overrides `align-items` per item (stretch/center/start/end); `order` reorders items (stable) before layout |
-| align-content | 🟡 | parsed; multi-line cross-distribution still uses the default packing |
+| align-content | ✅ | distributes wrapped lines on the cross axis (center/flex-end/space-between/space-around); stretch = default packing |
 | gap, row-gap, column-gap | ✅ | per-axis: `gap: <row> <col>`; flex uses column-gap on a row / row-gap on a column |
 | grid-column, grid-row | ✅ | explicit start line + span, or `N / M`; occupancy-aware auto-placement around them |
 | grid-template-rows | 🟡 | explicit **px** row-track heights honored; fr/%/auto rows still content-sized |
@@ -170,20 +170,21 @@ text-decoration:overline, position:sticky, cursor). Remaining longhands:
 text-decoration color/style; the sub-keyword resize cursors beyond
 col/row-resize.
 
-**Outstanding — bigger rocks:**
-1. **Flexbox remainder**: `flex-wrap: wrap-reverse`; multi-line `align-content`
-   distribution (reverse directions, `align-self`/`order`, per-axis gap done).
-2. **Grid**: `grid-template-rows` fr/%/auto + `grid-template-areas` (px rows,
-   line placement, column/row span + occupancy auto-placement done).
-3. **transition** — per-element change tracking + interpolation on state change
-    (`@keyframes` animations are done); `@supports` / `@import`.
-4. **transform** matrix()/3D + `perspective` (skew + `transform-origin` done);
-    **filter / backdrop-filter / clip-path / mask**; blend-modes.
+**Outstanding — bigger rocks** (each needs a dedicated subsystem the immediate-
+mode renderer doesn't yet have):
+1. **transition** — per-element temporal change tracking + interpolation on a
+    state flip (the `@keyframes` interpolation machinery is in place).
+2. **transform** matrix()/3D + `perspective` — a 3D projection pipeline (2D
+    translate/rotate/scale/skew + `transform-origin` done).
+3. **filter / backdrop-filter / clip-path / mask / blend-modes** — an offscreen
+    render target + image-filter/compositing pass per shell.
+4. **Grid**: `grid-template-rows` fr/%/auto + `grid-template-areas` (px rows,
+    line placement, column/row span, occupancy auto-placement done).
 5. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
     `direction`/`writing-mode` (bidi), `list-style-image`, `vertical-align`
     text-top/bottom/length.
 6. **user-select / resize** (need a selection model / drag-resize handle);
-    `env()`; `table-layout:fixed`; `empty-cells`.
+    `env()`; `table-layout:fixed`; `empty-cells`; `@supports` / `@import`.
 
 
 Each item ships with a reftest under `examples/compliance/` and flips its row

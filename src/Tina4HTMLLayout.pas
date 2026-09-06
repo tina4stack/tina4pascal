@@ -1208,9 +1208,12 @@ var
   crossFixed: array of Boolean;   // item has an explicit cross-axis size (skip stretch)
   sb: TStringBuilder;
   m: TTina4TextMetrics;
-  i, k, lineEnd, oi: Integer;
-  fw: string;
+  i, k, lineEnd, oi, nlines, li: Integer;
+  fw, ac: string;
   fcTag: THTMLTag;
+  lineStartA, lineEndA: array of Integer;
+  lineHA: array of Single;
+  crossAvail, freeCross, startY, lineGap: Single;
 begin
   st := TComputedStyle.ForTag(Tag, ParentStyle, FSheet);
   if LowerCase(st.Display) = 'none' then Exit(0);
@@ -1396,11 +1399,14 @@ begin
       else contentH := Max(contentH, eh);
     end;
 
-    // flex-wrap (row): greedy-pack items into lines, stack on the cross axis
+    // flex-wrap (row): pack items into lines (pass 1), then stack them on the
+    // cross axis honouring align-content + wrap-reverse (pass 2).
     fw := LowerCase(st.FlexWrap);
     if (not isCol) and ((fw = 'wrap') or (fw = 'wrap-reverse')) then
     begin
-      lineY := contentY; totalH := 0; i := 0;
+      // pass 1: line boundaries + heights
+      SetLength(lineStartA, 0); SetLength(lineEndA, 0); SetLength(lineHA, 0);
+      i := 0; totalH := 0;
       while i < items.Count do
       begin
         lineW := 0; lineEnd := i;
@@ -1414,27 +1420,58 @@ begin
         end;
         lineH := 0;
         for k := i to lineEnd - 1 do lineH := Max(lineH, items[k].H);
-        lineFree := contentW - lineW; if lineFree < 0 then lineFree := 0;
+        nlines := Length(lineHA);
+        SetLength(lineStartA, nlines + 1); SetLength(lineEndA, nlines + 1); SetLength(lineHA, nlines + 1);
+        lineStartA[nlines] := i; lineEndA[nlines] := lineEnd; lineHA[nlines] := lineH;
+        totalH := totalH + lineH;
+        i := lineEnd;
+      end;
+      nlines := Length(lineHA);
+      totalH := totalH + flexGap * Max(0, nlines - 1);
+      // available cross size (grow to fit content) + align-content distribution
+      crossAvail := contentH; if crossAvail < totalH then crossAvail := totalH;
+      freeCross := crossAvail - totalH;
+      ac := LowerCase(st.AlignContent); if ac = '' then ac := 'stretch';
+      startY := contentY; lineGap := flexGap;
+      if freeCross > 0 then
+      begin
+        if ac = 'center' then startY := startY + freeCross / 2
+        else if (ac = 'flex-end') or (ac = 'end') then startY := startY + freeCross
+        else if (ac = 'space-between') and (nlines > 1) then lineGap := flexGap + freeCross / (nlines - 1)
+        else if (ac = 'space-around') and (nlines > 0) then
+        begin startY := startY + freeCross / (nlines * 2); lineGap := flexGap + freeCross / nlines; end;
+      end;
+      // pass 2: place each line (wrap-reverse flips the cross stacking order)
+      lineY := startY;
+      for li := 0 to nlines - 1 do
+      begin
+        if fw = 'wrap-reverse' then
+        begin
+          // this line sits mirrored within [startY, startY+totalH]
+          crossOff := startY;
+          for k := 0 to nlines - 1 do
+            if k > li then crossOff := crossOff + lineHA[k] + lineGap;
+        end
+        else crossOff := lineY;
+        lineFree := contentW; for k := lineStartA[li] to lineEndA[li] - 1 do lineFree := lineFree - items[k].W;
+        lineFree := lineFree - flexGap * Max(0, (lineEndA[li] - lineStartA[li]) - 1);
+        if lineFree < 0 then lineFree := 0;
         lx := 0; lgap := 0;
         if jc = 'center' then lx := lineFree / 2
         else if (jc = 'flex-end') or (jc = 'end') then lx := lineFree
-        else if (jc = 'space-between') and (lineEnd - i > 1) then lgap := lineFree / (lineEnd - i - 1)
-        else if (jc = 'space-around') and (lineEnd - i > 0) then
-        begin lx := lineFree / ((lineEnd - i) * 2); lgap := lineFree / (lineEnd - i); end;
-        for k := i to lineEnd - 1 do
+        else if (jc = 'space-between') and (lineEndA[li] - lineStartA[li] > 1) then lgap := lineFree / (lineEndA[li] - lineStartA[li] - 1)
+        else if (jc = 'space-around') and (lineEndA[li] - lineStartA[li] > 0) then
+        begin lx := lineFree / ((lineEndA[li] - lineStartA[li]) * 2); lgap := lineFree / (lineEndA[li] - lineStartA[li]); end;
+        for k := lineStartA[li] to lineEndA[li] - 1 do
         begin
           cb := items[k];
-          if (ai = 'stretch') and not crossFixed[k] and (cb.H < lineH) then
-            cb.H := lineH;                          // stretch to the line's height
-          if ai = 'center' then crossOff := (lineH - cb.H) / 2
-          else if (ai = 'flex-end') or (ai = 'end') then crossOff := lineH - cb.H
-          else crossOff := 0;
-          ShiftBoxTree(cb, contentX + lx, lineY + crossOff);
+          if (ai = 'stretch') and not crossFixed[k] and (cb.H < lineHA[li]) then cb.H := lineHA[li];
+          if ai = 'center' then ShiftBoxTree(cb, contentX + lx, crossOff + (lineHA[li] - cb.H) / 2)
+          else if (ai = 'flex-end') or (ai = 'end') then ShiftBoxTree(cb, contentX + lx, crossOff + lineHA[li] - cb.H)
+          else ShiftBoxTree(cb, contentX + lx, crossOff);
           lx := lx + cb.W + lgap + flexGap;
         end;
-        lineY := lineY + lineH + flexGap;
-        totalH := totalH + lineH + flexGap;
-        i := lineEnd;
+        lineY := lineY + lineHA[li] + lineGap;
       end;
       if totalH > contentH then contentH := totalH;
       box.H := contentH + edgeT + edgeB;
