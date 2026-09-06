@@ -129,6 +129,16 @@ def inspect(project: str, x: float, y: float):
     return _run(["inspect", str(x), str(y)], cwd=project)
 
 
+@mcp_tool("tina4_script", description="Replay a UI script headlessly against a "
+          "project: one command per line — click X Y | move X Y | drag X Y | "
+          "scroll X Y DX DY | key <text> | enter | tab | backspace | esc | "
+          "snap <file> | wait. Deterministic UI automation; `snap` lines write "
+          "images you can read. `script` is the path to the script file.",
+          server=mcp)
+def script(project: str, script: str):
+    return _run(["script", script], cwd=project)
+
+
 @mcp_tool("tina4_test", description="Build + run all DOM/CSS unit suites.",
           server=mcp)
 def test():

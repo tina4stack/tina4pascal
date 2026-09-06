@@ -486,6 +486,18 @@ dump_project() {
 }
 where_project() { echo "$PWD/build/${1:-$(default_host_target)}/$(jget name "$(basename "$PWD")")"; }
 
+# replay a UI script headlessly (click/type/scroll + snap between steps).
+# usage: script_project <scriptfile>
+script_project() {
+  sfile="${1:-}"; [ -n "$sfile" ] || die "usage: tina4pascal script <scriptfile>"
+  [ -f "$sfile" ] || die "script not found: $sfile"
+  stgt="$(default_host_target)"
+  build_project "$stgt"
+  sname="$(jget name "$(basename "$PWD")")"
+  run_headless "$PWD/build/$stgt/$sname" "$stgt" --script "$sfile" --width 1024 --height 800 || return 1
+  ok "ran script $sfile (snaps written to the paths its 'snap' lines name)"
+}
+
 # native gdb debug of the desktop app: build with DWARF symbols, run one headless
 # frame under gdb, and print a Pascal backtrace (file:line) on any crash — else
 # the app renders and exits clean. usage: debug_native [--break <location>]
@@ -1088,6 +1100,7 @@ case "$cmd" in
   ios)        cmd_ios "$@" ;;
   launch)     cmd_launch "$@" ;;
   debug)      if is_project; then debug_native "$@"; else cmd_debug "$@"; fi ;;
+  script)     if is_project; then script_project "$@"; else die "script: run inside a project dir"; fi ;;
   screenshot) cmd_screenshot "$@" ;;
   tap)        cmd_tap "$@" ;;
   swipe)      cmd_swipe "$@" ;;

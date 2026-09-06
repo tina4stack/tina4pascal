@@ -31,6 +31,7 @@ release binary. Never `python app.py`.)
 | `tina4_dom` `{project}` | dump the running DOM tree as JSON (headless) |
 | `tina4_boxes` `{project}` | dump the layout-box tree (geometry + box model) as JSON |
 | `tina4_inspect` `{project, x, y}` | inspect the element at (x,y): tag, box, computed styles ("inspect element") |
+| `tina4_script` `{project, script}` | replay a UI script headlessly (click/type/scroll + `snap` between steps) — deterministic automation; snaps are images you can read |
 | `tina4_where` `{project, target?}` | print the built artifact's path |
 | `tina4_test` | run the DOM/CSS unit suites |
 | `tina4_compliance` `{glob?}` | run the W3C reftest suite |

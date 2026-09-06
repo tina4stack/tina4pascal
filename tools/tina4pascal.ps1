@@ -367,6 +367,18 @@ if ($cmd -eq 'doctor') {
       }
     }
   }
+} elseif ($cmd -eq 'script') {
+  $pr = Project-Root
+  if (-not $pr) { Write-Host "script: run inside a project dir" -ForegroundColor Red }
+  elseif (-not $target -or -not (Test-Path $target)) { Write-Host "usage: tina4pascal.ps1 script <scriptfile>" -ForegroundColor Red }
+  else {
+    $sf = (Resolve-Path $target).Path
+    $exe = Build-Project $pr 'win64'
+    if ($exe) {
+      & $exe --script $sf --width 1024 --height 800
+      Ok "ran script $sf (snaps written to the paths its 'snap' lines name)"
+    }
+  }
 } else {
-  Write-Host "unknown command '$cmd' (doctor | init | build | run | render | dom | boxes | inspect | debug | where)"
+  Write-Host "unknown command '$cmd' (doctor | init | build | run | render | dom | boxes | inspect | debug | script | where)"
 }

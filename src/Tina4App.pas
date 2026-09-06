@@ -68,6 +68,13 @@ var
   { Set by `--dump-html <file>`: render the template to HTML and exit (no window),
     so the mobile host build can bundle the exact same UI as a static asset. }
   GDumpHtml: string = '';
+  { Set by `--script <file>`: replay a UI script headlessly (click/type/scroll +
+    snap between steps) — deterministic repro / automated testing. }
+  GScript: string = '';
+
+type
+  TRenderProc = procedure;                     // (re)render the current frame headless
+  TSaveProc = procedure(const Path: string);   // save the current frame to an image
 
 { Command-line (headless dev/inspection modes; any combination):
     --snapshot <img>          render one frame to an image and exit
@@ -83,12 +90,13 @@ procedure ParseArgs(out Snap: string; var W, H: Integer; out Overlay: Boolean;
 var i: Integer;
 begin
   Snap := ''; Overlay := False; DumpKind := ''; DumpOut := ''; IX := 0; IY := 0;
-  GDumpHtml := ''; i := 1;
+  GDumpHtml := ''; GScript := ''; i := 1;
   while i <= ParamCount do
   begin
     if (ParamStr(i) = '--snapshot') and (i < ParamCount) then begin Inc(i); Snap := ParamStr(i); end
     else if ParamStr(i) = '--overlay' then Overlay := True
     else if (ParamStr(i) = '--dump-html') and (i < ParamCount) then begin Inc(i); GDumpHtml := ParamStr(i); end
+    else if (ParamStr(i) = '--script') and (i < ParamCount) then begin Inc(i); GScript := ParamStr(i); end
     else if (ParamStr(i) = '--width') and (i < ParamCount) then begin Inc(i); W := StrToIntDef(ParamStr(i), W); end
     else if (ParamStr(i) = '--height') and (i < ParamCount) then begin Inc(i); H := StrToIntDef(ParamStr(i), H); end
     else if (ParamStr(i) = '--dom') and (i < ParamCount) then begin Inc(i); DumpKind := 'dom'; DumpOut := ParamStr(i); end
@@ -132,6 +140,57 @@ begin
   try sl.Text := TinaCurrentHtml; sl.SaveToFile(GDumpHtml);
   finally sl.Free; end;
   Halt(0);
+end;
+
+{ Replay a UI script headlessly. One command per line (blank / # lines skipped):
+    click X Y | down X Y | up X Y | move X Y | drag X Y | hover X Y
+    scroll X Y DX DY | key <text...> | enter | tab | backspace | esc
+    snap <file> | wait
+  Render() re-renders the frame after each action; Save(file) writes an image.
+  This is deterministic UI automation - the same events, no human. }
+procedure RunScript(const Path: string; Render: TRenderProc; Save: TSaveProc);
+var sl: TStringList; i, k: Integer; line, cmd, rest: string;
+  function Arg(n: Integer): string;
+  var p: TStringList; r: string;
+  begin
+    p := TStringList.Create;
+    try p.Delimiter := ' '; p.StrictDelimiter := False; p.DelimitedText := line;
+      if n < p.Count then r := p[n] else r := '';
+    finally p.Free; end;
+    Arg := r;
+  end;
+  function F(n: Integer): Single; begin F := StrToFloatDef(Arg(n), 0); end;
+begin
+  if not FileExists(Path) then Exit;
+  sl := TStringList.Create;
+  try
+    sl.LoadFromFile(Path);
+    Render();                                   // initial frame
+    for i := 0 to sl.Count - 1 do
+    begin
+      line := Trim(sl[i]);
+      if (line = '') or (line[1] = '#') then Continue;
+      cmd := LowerCase(Arg(0));
+      if cmd = 'click' then begin TinaTouch(0, F(1), F(2)); TinaTouch(1, F(1), F(2)); Render(); end
+      else if cmd = 'down' then begin TinaTouch(0, F(1), F(2)); Render(); end
+      else if cmd = 'up' then begin TinaTouch(1, F(1), F(2)); Render(); end
+      else if (cmd = 'move') or (cmd = 'drag') then begin TinaTouch(2, F(1), F(2)); Render(); end
+      else if cmd = 'hover' then begin TinaHover(F(1), F(2)); Render(); end
+      else if cmd = 'scroll' then begin TinaScrollBy(F(1), F(2), F(3), F(4)); Render(); end
+      else if cmd = 'enter' then begin TinaKey(10); Render(); end
+      else if cmd = 'backspace' then begin TinaKey(8); Render(); end
+      else if cmd = 'tab' then begin TinaFocusNext; Render(); end
+      else if cmd = 'esc' then begin TinaBlurInput; Render(); end
+      else if cmd = 'key' then
+      begin
+        rest := Copy(line, 5, MaxInt);          // text after "key "
+        for k := 1 to Length(rest) do TinaKey(Ord(rest[k]));
+        Render();
+      end
+      else if cmd = 'snap' then Save(Arg(1))
+      else if cmd = 'wait' then {* headless: nothing to wait for *};
+    end;
+  finally sl.Free; end;
 end;
 
 {$IFDEF WINDOWS}
@@ -189,31 +248,50 @@ begin
   end;
 end;
 
-{ headless one-frame render (no window): optional PNG snapshot (+overlay) and/or
-  a JSON inspection dump. }
+{ current headless render target (a top-down 32-bit DIB) for --snapshot/--script }
+var
+  GhMem: HDC; GhBits: PByte; GhW, GhH: Integer;
+
+procedure WinRenderFrame;
+begin
+  GCanvas.BeginFrame(GhMem, GhBits, GhW, GhH);
+  TinaFrame(GhW, GhH, 1.0);
+  GdiFlush;
+end;
+procedure WinSaveFrame(const Path: string);
+begin
+  WinRenderFrame;                         // ensure the latest state is painted
+  WinSaveDibPng(GhBits, GhW, GhH, Path);
+end;
+
+{ headless render (no window): a --script replay, and/or a --snapshot (+overlay),
+  and/or a JSON inspection dump. }
 procedure WinHeadless(const TemplateDir, Template, JsonContext: string; sw, sh: Integer;
   const snap: string; overlay: Boolean; const dumpKind, dumpOut: string; ix, iy: Single);
-var mem: HDC; dib, oldb: HGDIOBJ; bmi: BITMAPINFO; bits: PByte; i: Integer; canvas: TWinCanvas;
+var dib, oldb: HGDIOBJ; bmi: BITMAPINFO; i: Integer;
 begin
-  mem := CreateCompatibleDC(0);
+  GhMem := CreateCompatibleDC(0); GhW := sw; GhH := sh;
   FillChar(bmi, SizeOf(bmi), 0);
   bmi.bmiHeader.biSize := SizeOf(BITMAPINFOHEADER);
   bmi.bmiHeader.biWidth := sw; bmi.bmiHeader.biHeight := -sh;
   bmi.bmiHeader.biPlanes := 1; bmi.bmiHeader.biBitCount := 32; bmi.bmiHeader.biCompression := BI_RGB;
-  bits := nil; dib := CreateDIBSection(0, bmi, DIB_RGB_COLORS, bits, 0, 0);
-  oldb := SelectObject(mem, dib);
-  SetBkMode(mem, TRANSPARENT); SetGraphicsMode(mem, GM_ADVANCED);
-  if bits <> nil then for i := 0 to sw * sh - 1 do begin bits[i*4]:=255; bits[i*4+1]:=255; bits[i*4+2]:=255; bits[i*4+3]:=255; end;
-  canvas := TWinCanvas.Create;
-  TinaInit(canvas);
+  GhBits := nil; dib := CreateDIBSection(0, bmi, DIB_RGB_COLORS, GhBits, 0, 0);
+  oldb := SelectObject(GhMem, dib);
+  SetBkMode(GhMem, TRANSPARENT); SetGraphicsMode(GhMem, GM_ADVANCED);
+  if GhBits <> nil then for i := 0 to sw * sh - 1 do begin GhBits[i*4]:=255; GhBits[i*4+1]:=255; GhBits[i*4+2]:=255; GhBits[i*4+3]:=255; end;
+  GCanvas := TWinCanvas.Create;
+  TinaInit(GCanvas);
   LoadUI(TemplateDir, Template, JsonContext);
   if overlay then TinaSetDebugOverlay(True);
-  canvas.BeginFrame(mem, bits, sw, sh);
-  TinaFrame(sw, sh, 1.0);
-  GdiFlush;
-  if snap <> '' then WinSaveDibPng(bits, sw, sh, snap);
-  EmitDump(dumpKind, dumpOut, ix, iy);
-  canvas.Free; SelectObject(mem, oldb); DeleteObject(dib); DeleteDC(mem);
+  if GScript <> '' then
+    RunScript(GScript, @WinRenderFrame, @WinSaveFrame)
+  else
+  begin
+    WinRenderFrame;
+    if snap <> '' then WinSaveDibPng(GhBits, sw, sh, snap);
+    EmitDump(dumpKind, dumpOut, ix, iy);
+  end;
+  GCanvas.Free; SelectObject(GhMem, oldb); DeleteObject(dib); DeleteDC(GhMem);
 end;
 
 procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: string; W, H: Integer);
@@ -222,7 +300,7 @@ var wc: WNDCLASSEXW; m: MSG; cls, cap: UnicodeString; ico: HICON;
 begin
   GW := W; GH := H;
   ParseArgs(snap, GW, GH, overlay, dk, dout, ix, iy);
-  if (snap <> '') or (dk <> '') then
+  if (snap <> '') or (dk <> '') or (GScript <> '') then
   begin WinHeadless(TemplateDir, Template, JsonContext, GW, GH, snap, overlay, dk, dout, ix, iy); Halt(0); end;
   cls := 'Tina4AppWindow';
   FillChar(wc, SizeOf(wc), 0);
@@ -285,6 +363,22 @@ function XSetWMProtocols(d: PXDisplay; w: TXID; protocols: Pointer; count: cint)
 
 function LI32(const ev; off: Integer): cint; begin Result := PInt32(PByte(@ev) + off)^; end;
 
+{ current headless render target (a Pixmap) for --snapshot/--script }
+var
+  GLdpy: PXDisplay; GLpixmap: TXID; GLcanvas: TX11Canvas; GLw, GLh: cint;
+
+procedure LinRenderFrame;
+begin
+  GLcanvas.BeginFrame(GLpixmap, GLw, GLh);
+  TinaFrame(GLw, GLh, 1.0);
+  XFlush(GLdpy);
+end;
+procedure LinSaveFrame(const Path: string);
+begin
+  LinRenderFrame;
+  LinSaveBmp(GLdpy, GLpixmap, GLw, GLh, Path);
+end;
+
 procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: string; W, H: Integer);
 var
   dpy: PXDisplay; scr: cint; win, pixmap: TXID; gc: TGC; canvas: TX11Canvas;
@@ -312,18 +406,22 @@ begin
   scr := XDefaultScreen(dpy);
   gc := XCreateGC(dpy, XRootWindow(dpy, scr), 0, nil);
   aw := GWv; ah := GHv; ParseArgs(snap, aw, ah, overlay, dk, dout, ix, iy); GWv := aw; GHv := ah;
-  if (snap <> '') or (dk <> '') then
+  if (snap <> '') or (dk <> '') or (GScript <> '') then
   begin
-    pixmap := XCreatePixmap(dpy, XRootWindow(dpy, scr), GWv, GHv, XDefaultDepth(dpy, scr));
-    canvas := TX11Canvas.Create(dpy, scr, gc);
-    TinaInit(canvas);
+    GLdpy := dpy; GLw := GWv; GLh := GHv;
+    GLpixmap := XCreatePixmap(dpy, XRootWindow(dpy, scr), GWv, GHv, XDefaultDepth(dpy, scr));
+    GLcanvas := TX11Canvas.Create(dpy, scr, gc);
+    TinaInit(GLcanvas);
     LoadUI(TemplateDir, Template, JsonContext);
     if overlay then TinaSetDebugOverlay(True);
-    canvas.BeginFrame(pixmap, GWv, GHv);
-    TinaFrame(GWv, GHv, 1.0);
-    XFlush(dpy);
-    if snap <> '' then LinSaveBmp(dpy, pixmap, GWv, GHv, snap);
-    EmitDump(dk, dout, ix, iy);
+    if GScript <> '' then
+      RunScript(GScript, @LinRenderFrame, @LinSaveFrame)
+    else
+    begin
+      LinRenderFrame;
+      if snap <> '' then LinSaveBmp(dpy, GLpixmap, GWv, GHv, snap);
+      EmitDump(dk, dout, ix, iy);
+    end;
     XCloseDisplay(dpy);
     Halt(0);
   end;
@@ -377,6 +475,12 @@ type
 var
   GShell: TCocoaShell;
   GDriver: TAppDriver;
+  GMacW: Integer = 1024; GMacH: Integer = 768;   // headless dims for --script
+
+{ Cocoa renders through the shell; a --script step builds/refreshes layout via a
+  frame and each `snap` captures it. }
+procedure MacRenderFrame; begin TinaFrame(GMacW, GMacH, 1.0); end;
+procedure MacSaveFrame(const Path: string); begin GShell.Snapshot(Path); end;
 
 procedure TAppDriver.Paint(Canvas: TTina4Canvas; W, H: Single);
 begin TinaFrame(Round(W), Round(H), 1.0); end;
@@ -391,10 +495,11 @@ procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: stri
 var snap, dk, dout: string; aw, ah: Integer; overlay: Boolean; ix, iy: Single;
 begin
   aw := W; ah := H; ParseArgs(snap, aw, ah, overlay, dk, dout, ix, iy);
+  GMacW := aw; GMacH := ah;
   GShell := TCocoaShell.Create;
   GDriver := TAppDriver.Create;
   GDriver.Shell := GShell;
-  if (snap <> '') or (dk <> '') then GShell.Headless := True;
+  if (snap <> '') or (dk <> '') or (GScript <> '') then GShell.Headless := True;
   TinaInit(GShell.GetMeasuringCanvas);
   LoadUI(TemplateDir, Template, JsonContext);
   DumpHtmlAndExitIfRequested;    // --dump-html: write HTML, exit (no window)
@@ -407,10 +512,10 @@ begin
   GShell.OnScroll := @GDriver.Scroll;
   GShell.OnTick := @GDriver.Tick;
   GShell.Initialize(aw, ah, Title);
-  if (snap <> '') or (dk <> '') then
+  if (snap <> '') or (dk <> '') or (GScript <> '') then
   begin
-    if snap <> '' then GShell.Snapshot(snap) else TinaFrame(aw, ah, 1.0);
-    EmitDump(dk, dout, ix, iy);
+    if GScript <> '' then RunScript(GScript, @MacRenderFrame, @MacSaveFrame)
+    else begin if snap <> '' then GShell.Snapshot(snap) else TinaFrame(aw, ah, 1.0); EmitDump(dk, dout, ix, iy); end;
     Halt(0);
   end;
   GShell.StartTicker(16);
