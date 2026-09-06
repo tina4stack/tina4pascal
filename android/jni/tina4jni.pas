@@ -20,6 +20,7 @@ uses
 var
   GCanvas: TAndroidCanvas = nil;
   GShell: TAndroidShell = nil;
+  GAssetBase: string = '';        // filesDir where MainActivity extracted APK assets
   {$IFDEF TINA_PROFILE}GProfT0: QWord;{$ENDIF}
 
 function JToStr(Env: PJNIEnv; S: jstring): string;
@@ -72,6 +73,7 @@ begin
   begin
     GCanvas := TAndroidCanvas.Create(Env);
     GShell := TAndroidShell.Create(GCanvas);
+    GCanvas.SetAssetBase(GAssetBase);   // relative <img src> → extracted APK assets
     TinaInit(GCanvas);
   end;
   HttpPump;                    // deliver any completed HTTP responses (main thread)
@@ -101,6 +103,12 @@ end;
 function Java_com_tina4_pascal_Tina4View_nativeAnimActive(Env: PJNIEnv; This: jobject): jint; cdecl;
 begin
   Result := TinaAnimActive;
+end;
+
+procedure Java_com_tina4_pascal_Tina4View_nativeSetAssetBase(Env: PJNIEnv; This: jobject; Dir: jstring); cdecl;
+begin
+  GAssetBase := JToStr(Env, Dir);
+  if GCanvas <> nil then GCanvas.SetAssetBase(GAssetBase);
 end;
 
 procedure Java_com_tina4_pascal_Tina4View_nativeBlur(Env: PJNIEnv; This: jobject); cdecl;
@@ -187,6 +195,7 @@ exports
   Java_com_tina4_pascal_Tina4View_nativeTouch,
   Java_com_tina4_pascal_Tina4View_nativeTick,
   Java_com_tina4_pascal_Tina4View_nativeAnimActive,
+  Java_com_tina4_pascal_Tina4View_nativeSetAssetBase,
   Java_com_tina4_pascal_Tina4View_nativeWantsKeyboard,
   Java_com_tina4_pascal_Tina4View_nativeBlur,
   Java_com_tina4_pascal_Tina4View_nativeBlinkCaret,

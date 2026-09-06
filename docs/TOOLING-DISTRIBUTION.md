@@ -74,10 +74,10 @@ reference app's Java + JNI + `aapt2/d8/apksigner`):
 - **min/target SDK** from `tina4.json`.  ✅
 - **debug build** signs with `signing/debug.keystore` (falls back to the repo key). ✅
 - **UI** = `--dump-html` of the entry template, bundled as the `showcase.html`
-  asset.  ✅  · project `assets/` are bundled into the APK ✅, but a relative
-  `<img src="assets/…">` doesn't resolve on-device yet — needs the Android shell
-  to load from APK assets (extract to filesDir on first run, or an `asset://`
-  scheme in the image loader).  ⬜ *(follow-up)*
+  asset.  ✅  · project `assets/` are bundled into the APK ✅ and a relative
+  `<img src="assets/…">` resolves on-device ✅ — MainActivity extracts the APK
+  assets to `filesDir/assets/` and the Android shell resolves relative image
+  paths against that base (`nativeSetAssetBase`).
 - **release**: `tina4pascal release android` → a **signed AAB** (`bundletool`) —
   Play requires an `.aab`, not an `.apk` — plus a signed universal APK for
   sideload testing. Signs from `TINA4_KEYSTORE`/`TINA4_KEY_ALIAS`/`TINA4_KS_PASS`. ⬜

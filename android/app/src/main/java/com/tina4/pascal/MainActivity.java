@@ -46,8 +46,30 @@ public class MainActivity extends Activity {
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         setContentView(root);
         ImageLoader.init(getCacheDir(), view);   // async remote <img> cache + repaint
+        extractAssets();                          // unpack APK assets → filesDir/assets/
+        view.setAssetBase(getFilesDir().getAbsolutePath());  // relative <img src> base
         // "@demo" = built-in interactive demo; an asset name renders that page.
         view.setHtml(loadAsset("showcase.html"));
+    }
+
+    /** Copy bundled APK assets (icons, images) to filesDir/assets/ so the engine
+     *  can load a relative {@code <img src="assets/…">} as a real file. HTML is
+     *  loaded directly via loadAsset, so skip *.html. */
+    private void extractAssets() {
+        try {
+            File base = new File(getFilesDir(), "assets");
+            base.mkdirs();
+            String[] names = getAssets().list("");
+            if (names == null) return;
+            for (String n : names) {
+                if (n.endsWith(".html")) continue;
+                try (InputStream in = getAssets().open(n);
+                     FileOutputStream out = new FileOutputStream(new File(base, n))) {
+                    byte[] buf = new byte[8192]; int r;
+                    while ((r = in.read(buf)) > 0) out.write(buf, 0, r);
+                } catch (Exception e) { /* skip an unreadable asset */ }
+            }
+        } catch (Exception e) { /* no assets to extract */ }
     }
 
     /** Called from the view when an <input type=file> is tapped. */

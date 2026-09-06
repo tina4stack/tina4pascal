@@ -61,6 +61,7 @@ type
     mImgCached: jmethodID;                  // ImageLoader.cached(url) → local path/""
     FImgSrcs: TStringList;                   // src → index into FImgs
     FImgs: array of record Bmp: jobject; W, H: Single; end;
+    FAssetBase: string;                      // dir a relative <img src> resolves against
     // raw $AARRGGBB blit (Tina4RasterCanvas → one drawBitmap): lazy-init + reused
     clsBitmapConfig: jclass;
     cfgARGB8888: jobject;                   // Bitmap.Config.ARGB_8888 (global ref)
@@ -81,6 +82,7 @@ type
   public
     constructor Create(Env: PJNIEnv);
     procedure BeginFrame(Env: PJNIEnv; Canvas: jobject);
+    procedure SetAssetBase(const Dir: string);   // where filesDir/assets was extracted
     procedure FillRect(X, Y, W, H: Single; Color: TTina4Color); override;
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); override;
     procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); override;
@@ -255,6 +257,11 @@ procedure TAndroidCanvas.BeginFrame(Env: PJNIEnv; Canvas: jobject);
 begin
   FEnv := Env;
   FCanvas := Canvas;
+end;
+
+procedure TAndroidCanvas.SetAssetBase(const Dir: string);
+begin
+  FAssetBase := Dir;
 end;
 
 { ---- paint config ------------------------------------------------------ }
@@ -597,8 +604,12 @@ begin
     if js <> nil then FEnv^.DeleteLocalRef(FEnv, js);
     if local = '' then Exit;                          // still downloading
   end
+  else if (Length(Src) > 0) and (Src[1] = '/') then
+    local := Src                                      // absolute file path
+  else if FAssetBase <> '' then
+    local := FAssetBase + '/' + Src                   // relative → extracted APK asset
   else
-    local := Src;                                     // local file path
+    local := Src;                                     // local file path (best effort)
   s := JStr(local);
   a[0].l := s;
   bmp := FEnv^.CallStaticObjectMethodA(FEnv, clsBmpFactory, mDecodeFile, @a[0]);

@@ -36,6 +36,10 @@ public class Tina4View extends View implements Runnable {
     private native int  nativeTouch(int action, float x, float y);
     private native int  nativeTick();
     private native int  nativeAnimActive();   // 1 if last paint has live animation
+    private native void nativeSetAssetBase(String dir);   // base for relative <img src>
+
+    /** Base dir a relative &lt;img src="assets/…"&gt; resolves against (filesDir). */
+    public void setAssetBase(String dir) { nativeSetAssetBase(dir); }
     private native int  nativeWantsKeyboard();
     private native void nativeBlur();
     private native int  nativeBlinkCaret();
