@@ -2670,6 +2670,7 @@ var
   capBottom: Boolean;
   colW: array of Single;                  // explicit per-column width from <col>/<colgroup>
   colIdx: Integer;
+  hsp, vsp: Single;                       // border-spacing (separate model), 0 if collapse
 
   // Collect <tr> in visual order: thead/tbody/loose rows first, <tfoot> rows
   // last regardless of where the tfoot sits in source (per CSS table model).
@@ -2795,13 +2796,17 @@ begin
     // a <col> width is authoritative for its column (at least as wide as content)
     for i := 0 to ncols - 1 do
       if colW[i] >= 0 then prefW[i] := Max(prefW[i], colW[i]);
+    // border-spacing (separate model only): gaps around and between cells
+    if Style.BorderCollapse then begin hsp := 0; vsp := 0; end
+    else begin hsp := Style.BorderSpacing; vsp := Style.BorderSpacing; end;
     total := 0;
     for i := 0 to ncols - 1 do total := total + prefW[i];
     if total <= 0 then total := 1;
-    // auto table sizes to content; an explicit width scales columns to fit
+    // auto table sizes to content; an explicit width scales columns to fit. The
+    // (ncols+1) spacing gaps sit outside the column widths.
     if explW >= 0 then tableW := explW
-    else tableW := Min(total, tblAvail);
-    scale := tableW / total;
+    else tableW := Min(total + (ncols + 1) * hsp, tblAvail);
+    scale := Max(0, tableW - (ncols + 1) * hsp) / total;
     for i := 0 to ncols - 1 do prefW[i] := prefW[i] * scale;
 
     tbox := TLayoutBox.Create;
@@ -2841,8 +2846,8 @@ begin
     SetLength(rowHeight, rows.Count);
     nspan := 0;
     // a top caption pushes the first row (and everything measured off rowY) down
-    if (capTag <> nil) and not capBottom then rowY := tbox.Y + capH
-    else rowY := tbox.Y;
+    if (capTag <> nil) and not capBottom then rowY := tbox.Y + capH + vsp
+    else rowY := tbox.Y + vsp;
     for ri := 0 to rows.Count - 1 do
     begin
       r := rows[ri];
@@ -2852,7 +2857,7 @@ begin
       rbox.Style := rs;
       tbox.Children.Add(rbox);
       rbox.X := tbox.X; rbox.Y := rowY; rbox.W := tableW;
-      cx := tbox.X;
+      cx := tbox.X + hsp;
       rowH := 0;
       ci := 0;
       for cell in r.Children do
@@ -2860,7 +2865,7 @@ begin
         if not (SameText(cell.TagName, 'td') or SameText(cell.TagName, 'th')) then Continue;
         // a rowspanning cell from an earlier row owns these columns — walk past them
         while (ci < ncols) and (blocked[ci] > 0) do
-        begin cx := cx + prefW[ci]; Inc(ci); end;
+        begin cx := cx + prefW[ci] + hsp; Inc(ci); end;
         if ci >= ncols then Break;
         cs := TComputedStyle.ForTag(cell, rs, FSheet);
         if hasBorder and (cs.BorderWidths.Top <= 0) then
@@ -2879,6 +2884,7 @@ begin
         if rowspan < 1 then rowspan := 1;
         spanW := 0;
         for i := ci to Min(ci + colspan - 1, ncols - 1) do spanW := spanW + prefW[i];
+        spanW := spanW + (Min(ci + colspan - 1, ncols - 1) - ci) * hsp;  // internal gaps
         cbox.X := cx; cbox.Y := rowY; cbox.W := spanW;
         LayoutChildren(cbox, cell, cs,
           cx + cs.BorderWidths.Left + cs.Padding.Left,
@@ -2908,7 +2914,7 @@ begin
           spanNatH[nspan] := cbox.H; spanVA[nspan] := LowerCase(cs.VerticalAlign);
           Inc(nspan);
         end;
-        cx := cx + spanW;
+        cx := cx + spanW + hsp;
         Inc(ci, colspan);
       end;
       // uniform row height + vertical-align — single-row cells only; rowspan
@@ -2930,7 +2936,7 @@ begin
       rbox.H := rowH;
       rowTop[ri] := rowY;
       rowHeight[ri] := rowH;
-      rowY := rowY + rowH;
+      rowY := rowY + rowH + vsp;
       for i := 0 to ncols - 1 do
         if blocked[i] > 0 then Dec(blocked[i]);
     end;

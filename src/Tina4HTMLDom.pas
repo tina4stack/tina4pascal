@@ -287,6 +287,8 @@ type
     AccentColor: TAlphaColor;   // accent-color for checkboxes/radios/range (0=auto)
     CaretColor: TAlphaColor;    // caret-color for the text caret (0=auto)
     PointerEventsNone: Boolean; // pointer-events:none — transparent to hit-testing
+    BorderCollapse: Boolean;    // border-collapse:collapse (default separate)
+    BorderSpacing: Single;      // border-spacing (separate model), px
     CSSCursor: string;
     TextTransform: string;
     Opacity: Single;
@@ -2112,7 +2114,7 @@ begin
   Result.BgGradientRadial := False;
   Result.GradStopCount := 0;
   Result.AppearanceNone := False;
-  Result.AccentColor := 0; Result.CaretColor := 0; Result.PointerEventsNone := False;
+  Result.AccentColor := 0; Result.CaretColor := 0; Result.PointerEventsNone := False; Result.BorderCollapse := False; Result.BorderSpacing := 0;
   Result.TransformActive := False;
   Result.TransformScaleX := 1;
   Result.TransformScaleY := 1;
@@ -2545,7 +2547,7 @@ begin
   Result.BgGradientRadial := False;
   Result.GradStopCount := 0;
   Result.AppearanceNone := False;
-  Result.AccentColor := 0; Result.CaretColor := 0; Result.PointerEventsNone := False;
+  Result.AccentColor := 0; Result.CaretColor := 0; Result.PointerEventsNone := False; Result.BorderCollapse := False; Result.BorderSpacing := 0;
   Result.TransformActive := False;
   Result.TransformScaleX := 1;
   Result.TransformScaleY := 1;
@@ -3322,6 +3324,10 @@ begin
     Style.CaretColor := ParseColor(Temp);
   if Decls.TryGetValue('pointer-events', Temp) and not ShouldSkip(Temp) then
     Style.PointerEventsNone := SameText(Trim(Temp), 'none');
+  if Decls.TryGetValue('border-collapse', Temp) and not ShouldSkip(Temp) then
+    Style.BorderCollapse := SameText(Trim(Temp), 'collapse');
+  if Decls.TryGetValue('border-spacing', Temp) and not ShouldSkip(Temp) then
+    Style.BorderSpacing := ParseLength(Trim(Temp).Split([' '])[0], Style.FontSize);
 
   if Decls.TryGetValue('object-fit', Temp) and not ShouldSkip(Temp) then
     Style.ObjectFit := Temp.Trim.ToLower;

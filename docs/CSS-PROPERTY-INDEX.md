@@ -119,7 +119,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 |---|---|---|
 | table layout + colspan | ✅ | auto column sizing; colspan both passes |
 | rowspan | ✅ | column-occupancy tracked across rows; spanned height + valign resolved |
-| border-collapse, border-spacing, table-layout | ❌ | not parsed; per-cell borders only |
+| border-collapse, border-spacing | ✅ | `border-spacing` (separate model) adds gaps around + between cells (reserved from column widths, applied to colspan/rowspan too); `border-collapse:collapse` forces zero spacing / shared borders |
+| table-layout | 📦 | parsed-ignored — sizing is always auto (content-based) |
 | caption-side | ✅ | top (default) + bottom |
 | empty-cells | ❌ | not parsed |
 | vertical-align (cells) | ✅ | top/middle/bottom |
@@ -166,16 +167,15 @@ col/row-resize.
 1. **Flexbox faithfulness**: reverse directions, wrap-reverse, `align-content` /
    `align-self` / `order`, per-axis `row-gap`/`column-gap`.
 2. **Grid**: explicit line placement, `grid-template-rows`/`areas`, multi-row span.
-3. **border-collapse / border-spacing / table-layout / empty-cells**.
-4. **transitions / animations** + `@keyframes` (needs the ticker + a timeline);
+3. **transitions / animations** + `@keyframes` (needs the ticker + a timeline);
     `@supports` / `@import`.
-5. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
+4. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
     backdrop-filter / clip-path / mask**; blend-modes.
-6. Typography long tail: `font`/`font-variant`/`font-stretch` shorthands,
+5. Typography long tail: `font`/`font-variant`/`font-stretch` shorthands,
     `word-spacing`, `direction`/`writing-mode` (bidi), `list-style` shorthand +
     position/image, `vertical-align` text-top/bottom/length.
-7. **user-select / resize** (need a selection model / drag-resize handle);
-    `env()`.
+6. **user-select / resize** (need a selection model / drag-resize handle);
+    `env()`; `table-layout:fixed`; `empty-cells`.
 
 
 Each item ships with a reftest under `examples/compliance/` and flips its row
