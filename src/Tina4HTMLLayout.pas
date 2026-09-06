@@ -1270,7 +1270,8 @@ begin
   else if wChars > 0 then
     Result.W := wChars + padH
   else if (kind = ckButton) or (kind = ckDate) or St.AppearanceNone then
-    Result.W := FCanvas.MeasureText(txt, St.FontSize, FontStylesOf(St)).Width + padH + 8
+    // shrink-to-fit = text + padding + border (CSS), no extra fudge
+    Result.W := FCanvas.MeasureText(txt, St.FontSize, FontStylesOf(St)).Width + padH
   else
     Result.W := Min(240 + padH, AvailW);
 

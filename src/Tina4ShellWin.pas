@@ -430,7 +430,15 @@ begin
   if (first = '') or (first = 'sans-serif') or (first = 'system-ui') then Result := 'Segoe UI'
   else if first = 'serif' then Result := 'Times New Roman'
   else if (first = 'monospace') or (first = 'mono') then Result := 'Consolas'
-  else Result := UTF8Decode(Trim(Family).Split([','])[0].Trim);
+  else
+  begin
+    // first named family, quotes stripped, ORIGINAL case preserved (GDI face
+    // names and our weight-family remap both need the clean, unquoted name).
+    f := Trim(Family).Split([','])[0].Trim;
+    f := StringReplace(f, '"', '', [rfReplaceAll]);
+    f := StringReplace(f, '''', '', [rfReplaceAll]);
+    Result := UTF8Decode(f);
+  end;
 end;
 
 function TWinCanvas.MakeFont(SizePx: Single; Styles: TTina4FontStyles): HFONT;
@@ -438,14 +446,25 @@ var lf: LOGFONTW; face: WideString; i, n: Integer;
 begin
   FillChar(lf, SizeOf(lf), 0);
   lf.lfHeight := -Round(SizePx);            // negative => em height in device px
-  if (tfsBold in Styles) or (FontWeight >= 600) then lf.lfWeight := FW_BOLD
-  else lf.lfWeight := FW_NORMAL;
+  // pass the CSS weight straight through (GDI lfWeight is 1..1000, and picks the
+  // nearest available face) so 800/900 render heavier than 700, not flattened.
+  if FontWeight >= 100 then lf.lfWeight := FontWeight else lf.lfWeight := FW_NORMAL;
+  if (tfsBold in Styles) and (lf.lfWeight < FW_BOLD) then lf.lfWeight := FW_BOLD;
   if tfsItalic in Styles then lf.lfItalic := 1;
   if tfsUnderline in Styles then lf.lfUnderline := 1;
   if tfsStrike in Styles then lf.lfStrikeOut := 1;
   lf.lfQuality := CLEARTYPE_QUALITY;
   lf.lfCharSet := DEFAULT_CHARSET;
   face := FaceFor(FontFamily);
+  // GDI registers Segoe UI's heavy/light weights as SEPARATE families, so
+  // CreateFont(face='Segoe UI', weight=900) can't find them and caps at Bold.
+  // Map to the sub-family so 800/900 (and light) render like DirectWrite/Chrome
+  // — this is the CSS font-matching result (target 800 → nearest heavier = 900).
+  if SameText(face, 'Segoe UI') then
+  begin
+    if lf.lfWeight >= 800 then face := 'Segoe UI Black'
+    else if lf.lfWeight <= 350 then face := 'Segoe UI Light';
+  end;
   n := Length(face); if n > 31 then n := 31;
   for i := 1 to n do lf.lfFaceName[i - 1] := WideChar(face[i]);
   lf.lfFaceName[n] := #0;
