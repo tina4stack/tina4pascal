@@ -1543,13 +1543,15 @@ var
   itemTags: TList<THTMLTag>;
   mL, mR, mT, mB, availInner, ew, eh: Single;
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
-  rowGap, colGap, frUnit, fixedSum, frSum, cellW, colXk, rowYr: Single;
+  rowGap, colGap, frUnit, fixedSum, frSum, cellW, cellH, colXk, rowYr: Single;
   trackW, trackFr, colX, rowH: array of Single;
   trackFixed: array of Boolean;
   ncols, nrows, i, curRow, curCol, span, k, spanRows: Integer;
+  colStart, rowStart, rowSpan, autoRow, autoCol: Integer;
   toks: TStringArray;
   tk: string;
-  iRow, iCol, iSpan: array of Integer;
+  iRow, iCol, iSpan, iRowSpan: array of Integer;
+  occ: array of array of Boolean;   // cell occupancy for auto-placement
 
   procedure ParseColumns(const Spec: string);
   var s: string; t: string; v: Single;
@@ -1598,6 +1600,62 @@ var
     begin
       nStr := Trim(Copy(Val, pS + 4, MaxInt));
       Result := Max(1, StrToIntDef(Trim(nStr), 1));
+    end;
+  end;
+
+  { grid-column / grid-row: parse an explicit start line (1-based, -1 = auto) and
+    a span. Handles "N", "N / M", "N / span S", "span S". }
+  procedure GridPlacement(const Val: string; out StartLine, Span: Integer);
+  var v, a, b: string; sp: Integer;
+  begin
+    StartLine := -1; Span := 1;
+    v := Trim(LowerCase(Val));
+    if v = '' then Exit;
+    sp := Pos('/', v);
+    if sp > 0 then
+    begin
+      a := Trim(Copy(v, 1, sp - 1)); b := Trim(Copy(v, sp + 1, MaxInt));
+      if a.StartsWith('span') then Span := Max(1, StrToIntDef(Trim(Copy(a, 5, MaxInt)), 1))
+      else StartLine := StrToIntDef(a, -1);
+      if b.StartsWith('span') then Span := Max(1, StrToIntDef(Trim(Copy(b, 5, MaxInt)), 1))
+      else if (StartLine >= 1) and (StrToIntDef(b, -999) <> -999) then
+        Span := Max(1, StrToIntDef(b, StartLine + 1) - StartLine);
+    end
+    else if v.StartsWith('span') then Span := Max(1, StrToIntDef(Trim(Copy(v, 5, MaxInt)), 1))
+    else StartLine := StrToIntDef(v, -1);
+  end;
+
+  procedure EnsureRows(r: Integer);
+  var old: Integer;
+  begin
+    old := Length(occ);
+    if r >= old then
+    begin
+      SetLength(occ, r + 1);
+      while old <= r do begin SetLength(occ[old], ncols); Inc(old); end;
+    end;
+  end;
+
+  function CellsFree(r, c, sp, rs: Integer): Boolean;
+  var rr, cc: Integer;
+  begin
+    Result := (c >= 0) and (c + sp <= ncols);
+    if not Result then Exit;
+    for rr := r to r + rs - 1 do
+    begin
+      if rr >= Length(occ) then Continue;   // unallocated rows are free
+      for cc := c to c + sp - 1 do
+        if occ[rr][cc] then Exit(False);
+    end;
+  end;
+
+  procedure MarkCells(r, c, sp, rs: Integer);
+  var rr, cc: Integer;
+  begin
+    for rr := r to r + rs - 1 do
+    begin
+      EnsureRows(rr);
+      for cc := c to Min(c + sp - 1, ncols - 1) do occ[rr][cc] := True;
     end;
   end;
 
@@ -1667,18 +1725,47 @@ begin
     end;
 
     SetLength(iRow, itemTags.Count); SetLength(iCol, itemTags.Count);
-    SetLength(iSpan, itemTags.Count);
+    SetLength(iSpan, itemTags.Count); SetLength(iRowSpan, itemTags.Count);
     SetLength(rowH, 0);
-    curRow := 0; curCol := 0; nrows := 0;
+    autoRow := 0; autoCol := 0; nrows := 0; SetLength(occ, 0);
 
     for i := 0 to itemTags.Count - 1 do
     begin
       cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
-      span := Min(SpanOf(cs.GridColumn), ncols);
-      if curCol + span > ncols then begin curCol := 0; Inc(curRow); end;
+      GridPlacement(cs.GridColumn, colStart, span);
+      GridPlacement(cs.GridRow, rowStart, rowSpan);
+      span := Max(1, Min(span, ncols)); rowSpan := Max(1, rowSpan);
+      // resolve the item's cell, skipping cells already taken (auto-placement)
+      if (colStart >= 1) and (rowStart >= 1) then
+      begin curCol := Min(colStart - 1, ncols - 1); curRow := rowStart - 1; end
+      else if colStart >= 1 then
+      begin
+        curCol := Min(colStart - 1, ncols - span); if curCol < 0 then curCol := 0;
+        curRow := 0; while not CellsFree(curRow, curCol, span, rowSpan) do Inc(curRow);
+      end
+      else if rowStart >= 1 then
+      begin
+        curRow := rowStart - 1; curCol := 0;
+        while (curCol + span <= ncols) and not CellsFree(curRow, curCol, span, rowSpan) do Inc(curCol);
+        if curCol + span > ncols then curCol := 0;
+      end
+      else
+      begin
+        // fully auto: scan forward from the cursor for the first free run
+        curRow := autoRow; curCol := autoCol;
+        while True do
+        begin
+          if curCol + span > ncols then begin curCol := 0; Inc(curRow); Continue; end;
+          if CellsFree(curRow, curCol, span, rowSpan) then Break;
+          Inc(curCol);
+        end;
+        autoRow := curRow; autoCol := curCol + span;
+        if autoCol >= ncols then begin autoCol := 0; Inc(autoRow); end;
+      end;
+      MarkCells(curRow, curCol, span, rowSpan);
       // cell width across the spanned columns (+ the gaps they swallow)
       cellW := colGap * (span - 1);
-      for k := curCol to curCol + span - 1 do cellW := cellW + trackW[k];
+      for k := curCol to Min(curCol + span - 1, ncols - 1) do cellW := cellW + trackW[k];
 
       cs.ExplicitWidth := cellW; cs.BoxSizing := 'border-box';
       cb := MakeReplacedBox(itemTags[i], cs, cellW);
@@ -1688,13 +1775,17 @@ begin
         cb := MakeInlineContainer(itemTags[i], cs, cellW);
       box.Children.Add(cb);
 
-      iRow[i] := curRow; iCol[i] := curCol; iSpan[i] := span;
-      if curRow + 1 > nrows then
-      begin nrows := curRow + 1; SetLength(rowH, nrows); rowH[nrows - 1] := 0; end;
-      if cb.H > rowH[curRow] then rowH[curRow] := cb.H;
-
-      curCol := curCol + span;
-      if curCol >= ncols then begin curCol := 0; Inc(curRow); end;
+      iRow[i] := curRow; iCol[i] := curCol; iSpan[i] := span; iRowSpan[i] := rowSpan;
+      if curRow + rowSpan > nrows then
+      begin
+        k := nrows; nrows := curRow + rowSpan; SetLength(rowH, nrows);
+        while k < nrows do begin rowH[k] := 0; Inc(k); end;
+      end;
+      // single-row items size their row; a row-spanning item's height is spread
+      if (rowSpan <= 1) and (cb.H > rowH[curRow]) then rowH[curRow] := cb.H
+      else if rowSpan > 1 then
+        for k := curRow to curRow + rowSpan - 1 do
+          if cb.H / rowSpan > rowH[k] then rowH[k] := cb.H / rowSpan;
     end;
 
     // place items: cell origin + stretch to the row height
@@ -1713,7 +1804,10 @@ begin
       cb := box.Children[i];
       rowYr := contentY;
       for k := 0 to iRow[i] - 1 do rowYr := rowYr + rowH[k] + rowGap;
-      if cb.H < rowH[iRow[i]] then cb.H := rowH[iRow[i]];   // stretch to the cell
+      // stretch to the cell: one row, or the sum of spanned rows (+ inner gaps)
+      cellH := rowGap * (iRowSpan[i] - 1);
+      for k := iRow[i] to Min(iRow[i] + iRowSpan[i] - 1, nrows - 1) do cellH := cellH + rowH[k];
+      if cb.H < cellH then cb.H := cellH;
       ShiftBoxTree(cb, colX[iCol[i]] - cb.X, rowYr - cb.Y);
     end;
 

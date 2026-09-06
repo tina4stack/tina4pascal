@@ -32,7 +32,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | visibility | ✅ | hidden hides self+subtree, keeps space (was mislabelled 📦) |
 | display block/inline/inline-block/none/list-item/table | ✅ | |
 | display flex / inline-flex | ✅ | LayoutFlex (was mislabelled "no flex") |
-| display grid | ✅ | grid-template-columns (px/%/fr/auto/repeat), row/column gaps, row-major auto-placement, grid-column/row: span N; auto rows |
+| display grid | ✅ | grid-template-columns (px/%/fr/auto/repeat), row/column gaps, row-major auto-placement **that skips occupied cells**, explicit line placement (`grid-column/row: N`, `N / M`, `N / span S`), column + **row span**. `grid-template-rows`/`areas` still TODO (rows auto-size) |
 | aspect-ratio | ✅ | `<w>/<h>` or a bare number; with a known width and auto height the block's height is derived (width ÷ ratio). Width-from-height is the rarer case (not re-laid-out) |
 
 ## Positioning
@@ -60,7 +60,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | align-self, order | ✅ | `align-self` overrides `align-items` per item (stretch/center/start/end); `order` reorders items (stable) before layout |
 | align-content | 🟡 | parsed; multi-line cross-distribution still uses the default packing |
 | gap, row-gap, column-gap | ✅ | per-axis: `gap: <row> <col>`; flex uses column-gap on a row / row-gap on a column |
-| grid-template-columns, gap, grid-column span | ✅ | see display grid. TODO: explicit line placement, grid-template-rows/areas, multi-row span |
+| grid-column, grid-row | ✅ | explicit start line + span, or `N / M`; occupancy-aware auto-placement around them |
+| grid-template-rows, grid-template-areas | ❌ | rows always content-auto-sized; named areas not parsed |
 
 ## Typography
 
@@ -171,7 +172,8 @@ col/row-resize.
 **Outstanding — bigger rocks:**
 1. **Flexbox remainder**: `flex-wrap: wrap-reverse`; multi-line `align-content`
    distribution (reverse directions, `align-self`/`order`, per-axis gap done).
-2. **Grid**: explicit line placement, `grid-template-rows`/`areas`, multi-row span.
+2. **Grid**: `grid-template-rows` (explicit row tracks) + `grid-template-areas`
+   (line placement, column/row span + occupancy auto-placement done).
 3. **transition** — per-element change tracking + interpolation on state change
     (`@keyframes` animations are done); `@supports` / `@import`.
 4. **transform** matrix()/3D + `perspective` (skew + `transform-origin` done);
