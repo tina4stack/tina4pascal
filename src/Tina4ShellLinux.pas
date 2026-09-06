@@ -26,6 +26,9 @@ uses
   ctypes, SysUtils, Classes, Tina4RenderBackend, Tina4Compositor;
 
 type
+  TX11Image = record Data: PByte; W, H: Integer; end;   // decoded straight RGBA8
+
+type
   PXDisplay = Pointer;
   TXID = culong;
   TDrawable = TXID;
@@ -52,6 +55,8 @@ type
     FCur: TClipState;
     FStack: array of TClipState;
     FLayers: array of TX11Layer;
+    FImages: array of TX11Image;
+    FImageSrc: TStringList;
     function FontFor(SizePx: Single; Styles: TTina4FontStyles): Pointer;
     procedure SetFg(Color: TTina4Color);
     procedure ApplyClip;
@@ -63,6 +68,9 @@ type
     constructor Create(ADpy: PXDisplay; AScreen: cint; AGC: TGC);
     destructor Destroy; override;
     procedure BeginFrame(ADraw: TDrawable; AW, AH: cint);
+    function LoadImage(const Src: string): Integer; override;
+    function ImageSize(Handle: Integer; out W, H: Single): Boolean; override;
+    procedure DrawImage(Handle: Integer; X, Y, W, H: Single); override;
     procedure FillRect(X, Y, W, H: Single; Color: TTina4Color); override;
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); override;
     procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); override;
@@ -90,6 +98,9 @@ function LinSaveBmp(ADpy: PXDisplay; ADraw: TDrawable; W, H: cint;
 implementation
 
 {$linklib X11}
+
+uses
+  base64, md5, FPImage, FPReadPNG, FPReadJPEG, FPReadBMP;
 
 type
   PXFontStruct = ^TXFontStruct;
@@ -231,6 +242,7 @@ begin
   inherited Create;
   FDpy := ADpy; FScreen := AScreen; FGC := AGC;
   FFonts := TStringList.Create; FFonts.Sorted := True; FFonts.Duplicates := dupIgnore;
+  FImageSrc := TStringList.Create; FImageSrc.Sorted := True; FImageSrc.Duplicates := dupIgnore;
   FCur.HasClip := False; FOrgX := 0; FOrgY := 0;
 end;
 
@@ -240,6 +252,9 @@ begin
   for i := 0 to FFonts.Count - 1 do
     if FFonts.Objects[i] <> nil then XFreeFont(FDpy, PXFontStruct(FFonts.Objects[i]));
   FFonts.Free;
+  for i := 0 to High(FImages) do
+    if FImages[i].Data <> nil then FreeMem(FImages[i].Data);
+  FImageSrc.Free;
   inherited Destroy;
 end;
 
@@ -258,6 +273,110 @@ end;
 procedure TX11Canvas.SetFg(Color: TTina4Color);
 begin
   XSetForeground(FDpy, FGC, culong(Color and $FFFFFF));
+end;
+
+{ Resolve a CSS image Src (data: URI or local file) to a temp file FPImage can
+  read. http(s) is not fetched here yet (needs the TLS stack) — a follow-up. }
+function ResolveImageFile(const Src: string): string;
+var low, dir, cache, ext: string; comma: Integer; bytes: AnsiString; fs: TFileStream;
+begin
+  Result := ''; low := LowerCase(Src);
+  dir := IncludeTrailingPathDelimiter(GetTempDir) + 'tina4render' + PathDelim;
+  ForceDirectories(dir);
+  if Pos('data:', low) = 1 then
+  begin
+    comma := Pos(',', Src); if comma = 0 then Exit;
+    if Pos(';base64', low) = 0 then Exit;
+    ext := '.png';
+    if (Pos('image/jpeg', low) > 0) or (Pos('image/jpg', low) > 0) then ext := '.jpg'
+    else if Pos('image/bmp', low) > 0 then ext := '.bmp';
+    cache := dir + MD5Print(MD5String(Src)) + ext;
+    if not FileExists(cache) then
+    begin
+      bytes := DecodeStringBase64(Copy(Src, comma + 1, MaxInt));
+      fs := TFileStream.Create(cache, fmCreate);
+      try if Length(bytes) > 0 then fs.WriteBuffer(bytes[1], Length(bytes)); finally fs.Free; end;
+    end;
+    Result := cache;
+  end
+  else
+  begin
+    ext := Src;
+    if Pos('file://', low) = 1 then ext := Copy(Src, 8, MaxInt);
+    if FileExists(ext) then Result := ext;
+  end;
+end;
+
+function TX11Canvas.LoadImage(const Src: string): Integer;
+var idx, n, x, y, o: Integer; file_: string; fp: TFPMemoryImage; c: TFPColor; d: PByte;
+begin
+  if FImageSrc.Find(Src, idx) then Exit(Integer(PtrInt(FImageSrc.Objects[idx])));
+  Result := -1;
+  file_ := ResolveImageFile(Src);
+  if file_ <> '' then
+  begin
+    fp := TFPMemoryImage.Create(0, 0);
+    try
+      try fp.LoadFromFile(file_); except fp.Free; fp := nil; end;
+      if fp <> nil then
+      begin
+        n := Length(FImages); SetLength(FImages, n + 1);
+        FImages[n].W := fp.Width; FImages[n].H := fp.Height;
+        GetMem(d, fp.Width * fp.Height * 4);
+        for y := 0 to fp.Height - 1 do
+          for x := 0 to fp.Width - 1 do
+          begin
+            c := fp.Colors[x, y]; o := (y * fp.Width + x) * 4;
+            d[o]   := c.Red shr 8; d[o+1] := c.Green shr 8;
+            d[o+2] := c.Blue shr 8; d[o+3] := c.Alpha shr 8;
+          end;
+        FImages[n].Data := d;
+        Result := n;
+      end;
+    finally
+      if fp <> nil then fp.Free;
+    end;
+  end;
+  FImageSrc.AddObject(Src, TObject(PtrInt(Result)));
+end;
+
+function TX11Canvas.ImageSize(Handle: Integer; out W, H: Single): Boolean;
+begin
+  W := 0; H := 0;
+  Result := (Handle >= 0) and (Handle <= High(FImages)) and (FImages[Handle].Data <> nil);
+  if Result then begin W := FImages[Handle].W; H := FImages[Handle].H; end;
+end;
+
+procedure TX11Canvas.DrawImage(Handle: Integer; X, Y, W, H: Single);
+var
+  img: TX11Image; dimg: PXImage; dx0, dy0, dw, dh, vx0, vy0, vx1, vy1: cint;
+  i, j, sx, sy, so: cint; sa: Single; dpx: LongWord; d: PByte;
+begin
+  if (Handle < 0) or (Handle > High(FImages)) or (FImages[Handle].Data = nil) then Exit;
+  if (W <= 0) or (H <= 0) then Exit;
+  img := FImages[Handle];
+  dx0 := DX(X); dy0 := DY(Y); dw := Round(W); dh := Round(H);
+  vx0 := dx0; if vx0 < 0 then vx0 := 0;
+  vy0 := dy0; if vy0 < 0 then vy0 := 0;
+  vx1 := dx0 + dw; if vx1 > FW then vx1 := FW;
+  vy1 := dy0 + dh; if vy1 > FH then vy1 := FH;
+  if (vx1 <= vx0) or (vy1 <= vy0) then Exit;
+  dimg := XGetImage(FDpy, FDraw, vx0, vy0, vx1 - vx0, vy1 - vy0, AllPlanes, ZPixmap);
+  if dimg = nil then Exit;
+  d := img.Data;
+  for j := 0 to (vy1 - vy0) - 1 do
+    for i := 0 to (vx1 - vx0) - 1 do
+    begin
+      sx := ((vx0 + i - dx0) * img.W) div dw; sy := ((vy0 + j - dy0) * img.H) div dh;
+      if (sx < 0) or (sx >= img.W) or (sy < 0) or (sy >= img.H) then Continue;
+      so := (sy * img.W + sx) * 4;
+      sa := d[so+3] / 255;
+      if sa <= 0 then Continue;
+      dpx := GetPx(dimg, i, j);
+      SetPx(dimg, i, j, BlendRGB(dpx, (d[so]/255)*sa, (d[so+1]/255)*sa, (d[so+2]/255)*sa, sa, ''));
+    end;
+  XPutImage(FDpy, FDraw, FGC, dimg, 0, 0, vx0, vy0, vx1 - vx0, vy1 - vy0);
+  DestroyImage(dimg);
 end;
 
 procedure TX11Canvas.ApplyClip;
