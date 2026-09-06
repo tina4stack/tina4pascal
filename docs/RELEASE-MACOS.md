@@ -96,3 +96,18 @@ gpg --import tina4pascal-release-public.asc
 gpg --verify tina4-htmlviewer-macos-arm64.tar.gz.asc tina4-htmlviewer-macos-arm64.tar.gz
 shasum -a 256 -c tina4-htmlviewer-macos-arm64.tar.gz.sha256
 ```
+
+## Gatekeeper (un-notarized downloads)
+
+The binary is GPG-signed, not Apple-notarized, so a browser download carries a
+quarantine flag and macOS warns it "cannot be checked for malware." After
+verifying the signature above, clear the flag and run it:
+
+```bash
+tar xzf tina4-htmlviewer-macos-arm64.tar.gz
+xattr -dr com.apple.quarantine tina4-htmlviewer-macos-arm64
+./tina4-htmlviewer-macos-arm64 page.html
+```
+
+To remove the warning entirely for end users, ship a **notarized `.app`** — see
+the optional codesign + notarize section above (needs an Apple Developer ID).

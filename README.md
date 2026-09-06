@@ -308,9 +308,11 @@ tools/compare.sh bootstrap_test  # stack our render over Chrome for a page
 
 ## Releases
 
-Signed downloads (Windows Authenticode + Linux GPG) are on the
+Signed downloads (Windows Authenticode + Linux/macOS GPG) are on the
 [GitHub Releases](https://github.com/tina4stack/tina4pascal/releases) page; each
-asset ships a `.sha256`.
+asset ships a `.sha256`. The macOS build is GPG-signed rather than Apple-notarized,
+so a browser download may be quarantined — verify it, then
+`xattr -dr com.apple.quarantine <binary>` to clear the Gatekeeper flag.
 
 ### v1.0.1
 
