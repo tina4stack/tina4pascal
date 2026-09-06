@@ -58,6 +58,7 @@ type
     procedure Translate(DX, DY: Single); override;
     procedure Rotate(Degrees: Single); override;
     procedure Scale(SX, SY: Single); override;
+    procedure Skew(AngleXDeg, AngleYDeg: Single); override;
   end;
 
   { NSTimer target bridging into the shell's OnTick }
@@ -682,6 +683,19 @@ var t: NSAffineTransform;
 begin
   t := NSAffineTransform.transform;
   t.scaleXBy_yBy(SX, SY);
+  t.concat;
+end;
+
+procedure TCocoaCanvas.Skew(AngleXDeg, AngleYDeg: Single);
+var t: NSAffineTransform; s: NSAffineTransformStruct; ax, ay: Double;
+begin
+  // CSS skew: x' = x + tan(ax)·y, y' = y + tan(ay)·x
+  ax := AngleXDeg * Pi / 180; ay := AngleYDeg * Pi / 180;
+  s.m11 := 1; s.m12 := Sin(ay) / Cos(ay);
+  s.m21 := Sin(ax) / Cos(ax); s.m22 := 1;
+  s.tX := 0; s.tY := 0;
+  t := NSAffineTransform.transform;
+  t.setTransformStruct(s);
   t.concat;
 end;
 

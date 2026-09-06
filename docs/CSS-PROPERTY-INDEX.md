@@ -107,9 +107,10 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | Property | Status | Note |
 |---|---|---|
 | opacity | ✅ | subtree alpha via ScaleAlpha (per-channel, not group compositing) |
-| transform: translate/rotate/scale | ✅ | real NSAffineTransform about box centre |
-| transform: skew/matrix/3d | ❌ | silently skipped |
-| transform-origin, perspective | ❌ | rotate/scale always pivot centre |
+| transform: translate/rotate/scale/skew | ✅ | 2D transforms via NSAffineTransform (skew adds a shear on the shell canvas — `Skew` contract method) |
+| transform: matrix/3d | ❌ | matrix() + 3D (rotateX/Y/Z, perspective) not applied |
+| transform-origin | ✅ | keyword/px/% pivot for rotate/scale/skew (default 50% 50%) |
+| perspective | ❌ | needs a 3D pipeline |
 | filter, backdrop-filter, clip-path, mask | ❌ | |
 | mix-blend-mode, background-blend-mode | ❌ | |
 | animation, @keyframes | ✅ | `@keyframes` parsed; `animation` shorthand + longhands (name/duration/delay/timing/iteration/direction). Per-frame interpolation at paint off the ticker: transform (translate/rotate/scale), opacity, background-color, color; timing linear/ease/ease-in/-out; iteration + alternate/reverse |
@@ -173,8 +174,8 @@ col/row-resize.
 2. **Grid**: explicit line placement, `grid-template-rows`/`areas`, multi-row span.
 3. **transition** — per-element change tracking + interpolation on state change
     (`@keyframes` animations are done); `@supports` / `@import`.
-4. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
-    backdrop-filter / clip-path / mask**; blend-modes.
+4. **transform** matrix()/3D + `perspective` (skew + `transform-origin` done);
+    **filter / backdrop-filter / clip-path / mask**; blend-modes.
 5. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
     `direction`/`writing-mode` (bidi), `list-style-image`, `vertical-align`
     text-top/bottom/length.

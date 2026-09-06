@@ -380,6 +380,10 @@ type
     TransformRotate: Single;       // degrees clockwise
     TransformScaleX: Single;
     TransformScaleY: Single;
+    TransformSkewX: Single;        // deg
+    TransformSkewY: Single;        // deg
+    TransformOriginX: Single;      // px, or a %-marker (<-1.5); default -50 = 50%
+    TransformOriginY: Single;
     // CSS animation (@keyframes-driven). Resolved per frame at paint time.
     AnimName: string;
     AnimDuration: Single;          // seconds (0 = no animation)
@@ -2217,6 +2221,7 @@ begin
   Result.AccentColor := 0; Result.CaretColor := 0; Result.PointerEventsNone := False; Result.BorderCollapse := False; Result.BorderSpacing := 0;
   Result.TransformActive := False;
   Result.TransformScaleX := 1;
+  Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 end;
@@ -2655,6 +2660,7 @@ begin
   Result.AccentColor := 0; Result.CaretColor := 0; Result.PointerEventsNone := False; Result.BorderCollapse := False; Result.BorderSpacing := 0;
   Result.TransformActive := False;
   Result.TransformScaleX := 1;
+  Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 
@@ -3086,6 +3092,17 @@ begin
   Style.GradStopColors[Style.GradStopCount] := TComputedStyle.ParseColor(colStr);
   Style.GradStopPos[Style.GradStopCount] := pos;
   Inc(Style.GradStopCount);
+end;
+
+{ transform-origin token → px (>=0) or a %-marker (<-1.5: -50 = 50%). Keywords
+  left/top=0, center=50%, right/bottom=100%. }
+function OriginToken(const S: string; IsX: Boolean): Single;
+begin
+  if (S = 'left') or (S = 'top') then Result := 0
+  else if S = 'center' then Result := -50
+  else if (S = 'right') or (S = 'bottom') then Result := -100
+  else if S.EndsWith('%') then Result := -StrToFloatDef(Copy(S, 1, Length(S) - 1), 50)
+  else Result := TComputedStyle.ParseLength(S, 16);
 end;
 
 { Parse an `aspect-ratio` value: "16 / 9", a bare number "1.5", or "auto" (0). }
@@ -4016,9 +4033,36 @@ begin
         begin
           if Length(TfArgs) >= 1 then
             Style.TransformScaleY := Style.TransformScaleY * StrToFloatDef(TfArgs[0].Trim, 1);
+        end
+        else if (FnName = 'skew') or (FnName = 'skewx') then
+        begin
+          AStr := TfArgs[0].Trim;
+          if AStr.EndsWith('deg') then AStr := AStr.Substring(0, AStr.Length - 3);
+          Style.TransformSkewX := Style.TransformSkewX + StrToFloatDef(AStr, 0);
+          if (FnName = 'skew') and (Length(TfArgs) >= 2) then
+          begin
+            AStr := TfArgs[1].Trim;
+            if AStr.EndsWith('deg') then AStr := AStr.Substring(0, AStr.Length - 3);
+            Style.TransformSkewY := Style.TransformSkewY + StrToFloatDef(AStr, 0);
+          end;
+        end
+        else if FnName = 'skewy' then
+        begin
+          AStr := TfArgs[0].Trim;
+          if AStr.EndsWith('deg') then AStr := AStr.Substring(0, AStr.Length - 3);
+          Style.TransformSkewY := Style.TransformSkewY + StrToFloatDef(AStr, 0);
         end;
       end;
     end;
+  end;
+
+  // transform-origin: <x> [<y>]  — keyword/px/% (default 50% 50%)
+  if Decls.TryGetValue('transform-origin', Temp) and not ShouldSkip(Temp) then
+  begin
+    OvParts := Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    if Length(OvParts) >= 1 then Style.TransformOriginX := OriginToken(OvParts[0], True);
+    if Length(OvParts) >= 2 then Style.TransformOriginY := OriginToken(OvParts[1], False)
+    else Style.TransformOriginY := -50;
   end;
 end;
 

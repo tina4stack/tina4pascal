@@ -3490,15 +3490,22 @@ begin
   y := Box.Y - OffsetY;
   // transform: rotate/scale — wrap the subtree paint in a canvas transform
   // about the box centre (default transform-origin)
-  hasRS := (st.TransformRotate <> 0) or (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1);
+  hasRS := (st.TransformRotate <> 0) or (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1)
+    or (st.TransformSkewX <> 0) or (st.TransformSkewY <> 0);
   if hasRS then
   begin
-    rcx := Box.X + Box.W / 2; rcy := y + Box.H / 2;
+    // pivot at transform-origin (px or %-marker; default 50% 50% = centre)
+    if st.TransformOriginX < -1.5 then rcx := Box.X + Box.W * (-st.TransformOriginX) / 100
+    else rcx := Box.X + st.TransformOriginX;
+    if st.TransformOriginY < -1.5 then rcy := y + Box.H * (-st.TransformOriginY) / 100
+    else rcy := y + st.TransformOriginY;
     Canvas.SaveState;
     Canvas.Translate(rcx, rcy);
     if st.TransformRotate <> 0 then Canvas.Rotate(st.TransformRotate); // +deg = CSS clockwise (flipped canvas)
     if (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1) then
       Canvas.Scale(st.TransformScaleX, st.TransformScaleY);
+    if (st.TransformSkewX <> 0) or (st.TransformSkewY <> 0) then
+      Canvas.Skew(st.TransformSkewX, st.TransformSkewY);
     Canvas.Translate(-rcx, -rcy);
   end;
   // CSS opacity multiplies down the subtree; visibility:hidden hides self+subtree
