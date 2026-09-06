@@ -506,12 +506,32 @@ proj_ios_stage() {
   cp "$ROOT/ios/app/libtina4ios.a" "$ihost/app/libtina4ios.a"
   [ -f "$PWD/assets/icon.png" ] && cp "$PWD/assets/icon.png" \
     "$ihost/app/Assets.xcassets/AppIcon.appiconset/icon_1024.png" 2>/dev/null || true
+  # bundle the project's assets/ as a FOLDER so a relative <img src="assets/…">
+  # resolves against the app bundle's resourcePath (iOS asset base).
+  if [ -d "$PWD/assets" ]; then rm -rf "$ihost/app/assets"; cp -R "$PWD/assets" "$ihost/app/assets"; fi
   # project spec: project's bundle id + version, and team (env wins; else keep the
   # spec's — Xcode signs with it or you set it in Xcode/CI).
   sed -e "s#PRODUCT_BUNDLE_IDENTIFIER: .*#PRODUCT_BUNDLE_IDENTIFIER: $ibundle#" \
       -e "s#MARKETING_VERSION: .*#MARKETING_VERSION: \"$ivname\"#" \
       "$ROOT/ios/project.yml" > "$ihost/project.yml"
   [ -n "$iteam" ] && sed -i.bak "s#DEVELOPMENT_TEAM: .*#DEVELOPMENT_TEAM: \"$iteam\"#" "$ihost/project.yml" && rm -f "$ihost/project.yml.bak"
+  # add a folder-reference source for app/assets (preserves the assets/ subdir in
+  # the bundle) and exclude it from the recursive app source. python keeps the
+  # YAML edit robust.
+  if [ -d "$ihost/app/assets" ]; then
+    pybin="$(command -v python3 || command -v python || true)"
+    [ -n "$pybin" ] && "$pybin" - "$ihost/project.yml" <<'PYEOF'
+import sys, re
+f = sys.argv[1]; s = open(f).read()
+s = re.sub(r'(excludes:\s*\[)([^\]]*)\]',
+           lambda m: m.group(1) + m.group(2).rstrip() +
+                     (', ' if m.group(2).strip() else '') + '"assets" ]',
+           s, count=1)
+s = s.replace('    sources:\n      - path: app',
+              '    sources:\n      - path: app/assets\n        type: folder\n      - path: app', 1)
+open(f, 'w').write(s)
+PYEOF
+  fi
   ( cd "$ihost" && xcodegen >/dev/null ) || die "xcodegen failed"
 }
 

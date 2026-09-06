@@ -39,6 +39,7 @@ type
     FSpace: CGColorSpaceRef;        // cached device RGB colour space
     FImgs: array of record Img: CGImageRef; W, H: Single; end;
     FImgSrcs: array of string;
+    FAssetBase: string;             // dir a relative <img src> resolves against
     FLayers: array of record        // offscreen filter/blend/3D layer stack
       Ctx, Saved: CGContextRef; ox, oy, w, h, sc: Single;
     end;
@@ -51,6 +52,7 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure BeginFrame(Ctx: CGContextRef);
+    procedure SetAssetBase(const Dir: string);   // bundle resource dir for relative <img>
     procedure FillRect(X, Y, W, H: Single; Color: TTina4Color); override;
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); override;
     procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); override;
@@ -137,6 +139,11 @@ end;
 procedure TIOSCanvas.BeginFrame(Ctx: CGContextRef);
 begin
   FCtx := Ctx;
+end;
+
+procedure TIOSCanvas.SetAssetBase(const Dir: string);
+begin
+  FAssetBase := Dir;
 end;
 
 function TIOSCanvas.MakeColor(Color: TTina4Color): CGColorRef;
@@ -514,6 +521,10 @@ begin
       Exit;
     end;
   end
+  else if (Length(Src) > 0) and (Src[1] = '/') then
+    localPath := Src                         // absolute file path
+  else if FAssetBase <> '' then
+    localPath := FAssetBase + '/' + Src      // relative → bundled app resource
   else
     localPath := Src;                        // local file / data path
 

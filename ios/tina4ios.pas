@@ -20,15 +20,23 @@ uses
 
 var
   GCanvas: TIOSCanvas = nil;
+  GAssetBase: string = '';   // app-bundle resource dir for relative <img src>
 
 procedure EnsureCanvas;
 begin
   if GCanvas = nil then
   begin
     GCanvas := TIOSCanvas.Create;
+    GCanvas.SetAssetBase(GAssetBase);
     TinaInit(GCanvas);
     InstallIOSHttp;          // native NSURLSession HTTP backend
   end;
+end;
+
+procedure tina4_set_asset_base(Dir: PAnsiChar); cdecl;
+begin
+  GAssetBase := string(Dir);
+  if GCanvas <> nil then GCanvas.SetAssetBase(GAssetBase);
 end;
 
 procedure tina4_set_html(Html: PAnsiChar); cdecl;
@@ -164,7 +172,7 @@ begin
 end;
 
 exports
-  tina4_set_html, tina4_frame, tina4_touch, tina4_tick, tina4_http_pending,
+  tina4_set_html, tina4_set_asset_base, tina4_frame, tina4_touch, tina4_tick, tina4_http_pending,
   tina4_wants_keyboard, tina4_blur, tina4_blink_caret, tina4_key,
   tina4_focus_kind, tina4_focus_next, tina4_set_file, tina4_set_photo,
   tina4_embed_count, tina4_embed_rect, tina4_embed_src,

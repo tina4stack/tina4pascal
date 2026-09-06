@@ -11,6 +11,8 @@ enum { TINA_NONE = 0, TINA_SHOW_KBD = 1, TINA_HIDE_KBD = 2, TINA_FLING = 3,
        TINA_PICK_FILE = 4, TINA_CAPTURE = 5 };
 
 void tina4_set_html(const char *html);
+void tina4_set_asset_base(const char *dir);        // base for relative <img src="assets/…">
+
 void tina4_frame(void *cgcontext, int w, int h, float density);
 int  tina4_touch(int action, float x, float y);   // action 0=down 1=up 2=move
 int  tina4_tick(void);

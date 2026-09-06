@@ -99,6 +99,10 @@ id / version, bundling `--dump-html` as the UI.
 - `tina4pascal build ios` → **compiles + links + bundles** the device app unsigned
   (`CODE_SIGNING_ALLOWED=NO`; the FPC engine is device-arm64, no simulator slice).
   ✅ *(verified: a scaffolded project builds a `com.tina4.<name>` .app)*
+- **assets** — the project's `assets/` folder is bundled into the app and a
+  relative `<img src="assets/…">` resolves against the bundle `resourcePath`
+  (`tina4_set_asset_base`, the iOS analogue of Android's asset base).  ✅
+  *(verified: the built .app contains `assets/icon.png`)*
 - `tina4pascal release ios` → `xcodebuild archive` → `-exportArchive` (app-store)
   → signed **IPA**. Wired ✅ — needs an Apple **Team ID** (`TINA4_IOS_TEAM` /
   `tina4.json ios.team`) + a distribution cert & provisioning profile.  ⬜ *(runs

@@ -40,6 +40,9 @@
 }
 
 - (void)loadHTML:(NSString *)html {
+    // resolve a relative <img src="assets/…"> against the app bundle (where the
+    // project's assets are bundled) — the iOS analogue of Android's asset base.
+    tina4_set_asset_base([[NSBundle mainBundle] resourcePath].UTF8String);
     tina4_set_html(html.UTF8String);
     [self setNeedsDisplay];
 }
