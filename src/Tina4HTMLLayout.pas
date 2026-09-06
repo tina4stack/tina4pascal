@@ -344,9 +344,13 @@ end;
 
 function TLayoutEngine.LineHeightOf(const St: TComputedStyle): Single;
 begin
-  if St.LineHeight > 4 then       // absolute px
-    Result := St.LineHeight
-  else if St.LineHeight > 0 then  // multiplier
+  // LineHeight is stored by the CSS parser as a unitless multiple of the
+  // element's font-size (px/rem/% are all normalised to that at parse time), so
+  // it is ALWAYS multiplied back out here. The old ">4 means absolute px"
+  // heuristic mis-read a legitimate large multiple — e.g. line-height:80px at a
+  // 16px font is stored as 5.0 — as a 5px line, which collapsed a tall box's
+  // line and top-aligned text that should have been vertically centred.
+  if St.LineHeight > 0 then
     Result := St.FontSize * St.LineHeight
   else
     Result := St.FontSize * 1.4;

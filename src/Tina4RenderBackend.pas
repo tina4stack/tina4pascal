@@ -369,17 +369,139 @@ begin
             (Cardinal(g div n) shl 8) or Cardinal(b div n);
 end;
 
+{ Resolve the CSS stop offsets into a monotonic 0..1 location array — the same
+  rule the Cocoa/iOS shells use: an explicit Positions[i] >= 0 wins, otherwise
+  the stop is spread evenly, and each location is clamped up to its predecessor
+  so the list never runs backwards. }
+procedure BuildStopLocs(const Colors: array of TTina4Color;
+  const Positions: array of Single; out Locs: array of Single);
+var i, n: Integer;
+begin
+  n := Length(Colors);
+  for i := 0 to n - 1 do
+  begin
+    if (i < Length(Positions)) and (Positions[i] >= 0) then Locs[i] := Positions[i]
+    else if n > 1 then Locs[i] := i / (n - 1)
+    else Locs[i] := 0;
+    if (i > 0) and (Locs[i] < Locs[i - 1]) then Locs[i] := Locs[i - 1];
+  end;
+end;
+
+{ Straight (non-premultiplied) RGBA lerp of the stop list at parameter t (0..1).
+  A fully transparent stop (alpha 0, e.g. the CSS `transparent` keyword, which is
+  rgba(0,0,0,0)) would otherwise drag the colour toward black across the fade;
+  since the portable path paints opaque (see note on FillLinearGradient), we
+  borrow the opposite stop's RGB for a zero-alpha endpoint so `pink→transparent`
+  fades pink→pink rather than pink→black. }
+function SampleStops(t: Single; const Colors: array of TTina4Color;
+  const Locs: array of Single): TTina4Color;
+var i, n: Integer; f: Single; c0, c1: TTina4Color;
+    r0, g0, b0, r1, g1, b1, a0, a1: Integer; r, g, b: Integer;
+begin
+  n := Length(Colors);
+  if n = 0 then Exit($00000000);
+  if n = 1 then Exit(Colors[0]);
+  if t <= Locs[0] then Exit(Colors[0]);
+  if t >= Locs[n - 1] then Exit(Colors[n - 1]);
+  i := 0;
+  while (i < n - 1) and (t > Locs[i + 1]) do Inc(i);
+  c0 := Colors[i]; c1 := Colors[i + 1];
+  if Locs[i + 1] > Locs[i] then f := (t - Locs[i]) / (Locs[i + 1] - Locs[i]) else f := 0;
+  a0 := (c0 shr 24) and $FF; r0 := (c0 shr 16) and $FF; g0 := (c0 shr 8) and $FF; b0 := c0 and $FF;
+  a1 := (c1 shr 24) and $FF; r1 := (c1 shr 16) and $FF; g1 := (c1 shr 8) and $FF; b1 := c1 and $FF;
+  if (a0 = 0) and (a1 <> 0) then begin r0 := r1; g0 := g1; b0 := b1; end
+  else if (a1 = 0) and (a0 <> 0) then begin r1 := r0; g1 := g0; b1 := b0; end;
+  r := r0 + Round((r1 - r0) * f);
+  g := g0 + Round((g1 - g0) * f);
+  b := b0 + Round((b1 - b0) * f);
+  Result := $FF000000 or (Cardinal(r) shl 16) or (Cardinal(g) shl 8) or Cardinal(b);
+end;
+
+{ Portable software gradient: rasterises the box scanline by scanline, coalescing
+  equal-colour runs into single FillRect spans, so every backend that can fill a
+  rect (GDI, headless, Android) gets real linear/radial gradients through the
+  contract — Cocoa/iOS still override with the native GPU path. Rounded corners
+  are honoured by insetting each scanline to the corner arc. Kind: 0=linear (CSS
+  angle 0=up, 90=right), 1=radial (centred, farthest-corner). Opaque in this path
+  (GDI has no per-pixel alpha in v1); semi-transparent stops don't blend the
+  backdrop. }
+procedure SoftGradientFill(C: TTina4Canvas; Kind: Integer;
+  X, Y, W, H, Radius, AngleDeg: Single;
+  const Colors: array of TTina4Color; const Positions: array of Single);
+var
+  locs: array of Single;
+  n, y0, y1, py, px, x0, x1, runStart: Integer;
+  r, cx, cy, dxu, dyu, gradLen, rad, a, yc, dEdge, dTop, dBot, inset, xl, xr, t, proj: Single;
+  col, runCol: TTina4Color;
+begin
+  n := Length(Colors);
+  if (n = 0) or (W <= 0) or (H <= 0) then Exit;
+  SetLength(locs, n);
+  BuildStopLocs(Colors, Positions, locs);
+
+  r := Radius;
+  if r > W / 2 then r := W / 2;
+  if r > H / 2 then r := H / 2;
+  if r < 0 then r := 0;
+
+  cx := X + W / 2; cy := Y + H / 2;
+  a := AngleDeg * Pi / 180;
+  dxu := Sin(a); dyu := -Cos(a);
+  gradLen := Abs(W * Sin(a)) + Abs(H * Cos(a));
+  if gradLen <= 0 then gradLen := 1;
+  rad := Sqrt((W / 2) * (W / 2) + (H / 2) * (H / 2));
+  if rad <= 0 then rad := 1;
+
+  y0 := Round(Y); y1 := Round(Y + H) - 1;
+  for py := y0 to y1 do
+  begin
+    yc := py + 0.5;
+    // rounded-corner inset for this scanline
+    inset := 0;
+    if r > 0 then
+    begin
+      dTop := yc - Y; dBot := (Y + H) - yc;
+      if dTop < dBot then dEdge := dTop else dEdge := dBot;
+      if dEdge < r then inset := r - Sqrt(Abs(r * r - (r - dEdge) * (r - dEdge)));
+    end;
+    xl := X + inset; xr := X + W - inset;
+    x0 := Round(xl); x1 := Round(xr) - 1;
+    if x1 < x0 then Continue;
+
+    runStart := x0;
+    runCol := 0;
+    for px := x0 to x1 do
+    begin
+      if Kind = 0 then
+      begin
+        proj := (px + 0.5 - cx) * dxu + (yc - cy) * dyu;
+        t := (proj + gradLen / 2) / gradLen;
+      end
+      else
+        t := Sqrt((px + 0.5 - cx) * (px + 0.5 - cx) + (yc - cy) * (yc - cy)) / rad;
+      if t < 0 then t := 0 else if t > 1 then t := 1;
+      col := SampleStops(t, Colors, locs);
+      if px = x0 then begin runStart := px; runCol := col; end
+      else if col <> runCol then
+      begin
+        C.FillRect(runStart, py, px - runStart, 1, runCol);
+        runStart := px; runCol := col;
+      end;
+    end;
+    C.FillRect(runStart, py, x1 + 1 - runStart, 1, runCol);
+  end;
+end;
+
 procedure TTina4Canvas.FillLinearGradient(X, Y, W, H, Radius, AngleDeg: Single;
   const Colors: array of TTina4Color; const Positions: array of Single);
 begin
-  // base fallback: flat average-colour fill (shells override for real gradients)
-  FillRoundRect(X, Y, W, H, Radius, AvgStops(Colors));
+  SoftGradientFill(Self, 0, X, Y, W, H, Radius, AngleDeg, Colors, Positions);
 end;
 
 procedure TTina4Canvas.FillRadialGradient(X, Y, W, H, Radius: Single;
   const Colors: array of TTina4Color; const Positions: array of Single);
 begin
-  FillRoundRect(X, Y, W, H, Radius, AvgStops(Colors));
+  SoftGradientFill(Self, 1, X, Y, W, H, Radius, 0, Colors, Positions);
 end;
 
 procedure TTina4Canvas.FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color);
