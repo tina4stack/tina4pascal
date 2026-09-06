@@ -22,7 +22,7 @@ unit Tina4SSE;
 interface
 
 uses
-  SysUtils, Classes, SyncObjs, ssockets;
+  SysUtils, Classes, SyncObjs, ssockets, sslsockets, opensslsockets;
 
 type
   { fired once per SSE event; EventName defaults to 'message' }
@@ -62,6 +62,7 @@ type
   private
     FUrl, FHost, FPath: string;
     FPort: Word;
+    FSecure: Boolean;            // https:// → wrap the socket in TLS
     FThread: TSSEThread;
     FLock: TCriticalSection;
     FQueue: array of TSSEQueued;
@@ -194,7 +195,11 @@ begin
       sock := nil;
       try
         try
-          sock := TInetSocket.Create(FOwner.FHost, FOwner.FPort);
+          if FOwner.FSecure then
+            sock := TInetSocket.Create(FOwner.FHost, FOwner.FPort,
+                      TSSLSocketHandler.GetDefaultHandlerClass.Create)   // TLS (needs OpenSSL)
+          else
+            sock := TInetSocket.Create(FOwner.FHost, FOwner.FPort);
         except
           sock := nil;
         end;
@@ -248,6 +253,7 @@ constructor TTina4SSE.Create(const Url: string);
 begin
   FUrl := Url;
   ParseHttpUrl(Url, FHost, FPort, FPath);
+  FSecure := LowerCase(Copy(Trim(Url), 1, 6)) = 'https:';
   FLock := TCriticalSection.Create;
 end;
 

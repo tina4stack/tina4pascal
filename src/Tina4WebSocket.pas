@@ -21,7 +21,7 @@ unit Tina4WebSocket;
 
 interface
 
-uses SysUtils, Classes, SyncObjs, ssockets, base64, sha1;
+uses SysUtils, Classes, SyncObjs, ssockets, sslsockets, opensslsockets, base64, sha1;
 
 const
   WS_TEXT = $1; WS_BINARY = $2; WS_CLOSE = $8; WS_PING = $9; WS_PONG = $A;
@@ -59,6 +59,7 @@ type
   private
     FUrl, FHost, FPath: string;
     FPort: Word;
+    FSecure: Boolean;            // wss:// → wrap the socket in TLS
     FThread: TWSThread;
     FSock: TInetSocket;
     FLock, FSendLock: TCriticalSection;
@@ -234,7 +235,11 @@ begin
   dec.OnControl := FOwner.OnCtrl;
   try
     try
-      FOwner.FSock := TInetSocket.Create(FOwner.FHost, FOwner.FPort);
+      if FOwner.FSecure then
+        FOwner.FSock := TInetSocket.Create(FOwner.FHost, FOwner.FPort,
+                          TSSLSocketHandler.GetDefaultHandlerClass.Create)   // TLS (needs OpenSSL)
+      else
+        FOwner.FSock := TInetSocket.Create(FOwner.FHost, FOwner.FPort);
     except
       FOwner.FSock := nil;
     end;
@@ -287,6 +292,7 @@ constructor TTina4WebSocketClient.Create(const Url: string);
 begin
   FUrl := Url;
   ParseWsUrl(Url, FHost, FPort, FPath);
+  FSecure := LowerCase(Copy(Trim(Url), 1, 4)) = 'wss:';
   FLock := TCriticalSection.Create;
   FSendLock := TCriticalSection.Create;
 end;
