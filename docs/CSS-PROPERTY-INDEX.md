@@ -44,7 +44,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | position sticky | ✅ | pins at `top` once scrolled past its natural spot; `top:auto` never sticks (page-scroll case; verified interactively) |
 | top, right, bottom, left, inset | ✅ | consumed by relative/absolute |
 | z-index | ✅ | stable paint-order sort among siblings (ties keep tree order) |
-| float, clear | 📦 | parsed, no float/clear layout |
+| float, clear | ✅ | `float:left/right` pins the box to the container edge; the container's in-flow inline content wraps beside it (float bands narrow each line), and `clear:left/right/both` drops a later block below the floats. Container encloses its floats (clearfix). Caveat: wrapping applies to the container's own text — text inside a *nested* block after a float doesn't yet see the parent's floats; auto-width floated blocks shrink-to-fit without re-layout |
 
 ## Flexbox & Grid
 
@@ -161,21 +161,24 @@ text-decoration color/style; the sub-keyword resize cursors beyond
 col/row-resize.
 
 **Outstanding — bigger rocks:**
-1. **float / clear** — parsed (📦), no float layout.
-2. **aspect-ratio** — not parsed.
-3. **Flexbox faithfulness**: reverse directions, wrap-reverse, `align-content` /
+1. **aspect-ratio** — not parsed.
+2. **Flexbox faithfulness**: reverse directions, wrap-reverse, `align-content` /
    `align-self` / `order`, per-axis `row-gap`/`column-gap`.
-4. **Grid**: explicit line placement, `grid-template-rows`/`areas`, multi-row span.
-5. **calc()** `*` `/` and %/vw/vh terms; **clamp() / min() / max() / env()** (all 0 today).
-6. **border-collapse / border-spacing / table-layout / empty-cells**.
-7. **transitions / animations** + `@keyframes` (needs the ticker + a timeline);
+3. **Grid**: explicit line placement, `grid-template-rows`/`areas`, multi-row span.
+4. **calc()** `*` `/` and %/vw/vh terms; **clamp() / min() / max() / env()** (all 0 today).
+5. **border-collapse / border-spacing / table-layout / empty-cells**.
+6. **transitions / animations** + `@keyframes` (needs the ticker + a timeline);
     `@supports` / `@import`.
-8. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
+7. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
     backdrop-filter / clip-path / mask**; blend-modes.
-9. Typography long tail: `font`/`font-variant`/`font-stretch` shorthands,
+8. Typography long tail: `font`/`font-variant`/`font-stretch` shorthands,
     `word-spacing`, `direction`/`writing-mode` (bidi), `list-style` shorthand +
     position/image, `vertical-align` text-top/bottom/length.
-10. **accent-color / caret-color**; **pointer-events / user-select / resize**.
+9. **accent-color / caret-color**; **pointer-events / user-select / resize**.
+
+**Float follow-ups (v1 caveats):** propagate a container's float bands into
+nested block children's inline flow (so text inside a `<p>` after a float wraps
+too); re-layout auto-width floated blocks at their shrink-to-fit width.
 
 Each item ships with a reftest under `examples/compliance/` and flips its row
 here and in `CONFORMANCE.md`.

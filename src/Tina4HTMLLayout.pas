@@ -1670,12 +1670,17 @@ type
   CX,CY = content origin (absolute), CW = content width. }
 procedure TLayoutEngine.LayoutChildren(Box: TLayoutBox; Tag: THTMLTag;
   const ParentStyle: TComputedStyle; CX, CY, CW: Single; out UsedH: Single);
+type
+  // A floated box's occupied region in this container's content coords.
+  TFloatBand = record Side: Integer; X0, X1, Y0, Y1: Single; end;  // Side 0=left 1=right
 var
   y: Single;
   items: TList<TInlineItem>;
   pendingSpace: Boolean;   // trailing whitespace carried across inline nodes
   noWrapFlow: Boolean;     // white-space:nowrap → keep inline items on one line
   firstInlineLine: Boolean; // text-indent applies to the first formatted line only
+  Floats: array of TFloatBand;   // left/right floats seen so far in this container
+  MaxFloatY: Single;             // lowest float bottom, so the container can enclose them
 
   function HasBlockChild(T: THTMLTag; const St: TComputedStyle): Boolean;
   var
@@ -1691,6 +1696,60 @@ var
       d := LowerCase(ccs.Display);
       if (d = 'block') or (d = 'table') or (d = 'list-item') then Exit(True);
     end;
+  end;
+
+  { The available x-span for content across a vertical range, after left floats
+    push the left edge right and right floats pull the right edge left. }
+  procedure LineBounds(YTop, YBot: Single; out LX0, LX1: Single);
+  var k: Integer;
+  begin
+    LX0 := CX; LX1 := CX + CW;
+    for k := 0 to High(Floats) do
+      if (Floats[k].Y1 > YTop) and (Floats[k].Y0 < YBot) then   // vertically overlaps
+      begin
+        if (Floats[k].Side = 0) and (Floats[k].X1 > LX0) then LX0 := Floats[k].X1;
+        if (Floats[k].Side = 1) and (Floats[k].X0 < LX1) then LX1 := Floats[k].X0;
+      end;
+    if LX1 < LX0 then LX1 := LX0;
+  end;
+
+  { `clear`: the y at/below FromY where no float of the cleared side remains. }
+  function ClearBelowFloats(const Mode: string; FromY: Single): Single;
+  var k: Integer;
+  begin
+    Result := FromY;
+    for k := 0 to High(Floats) do
+      if (Mode = 'both') or ((Mode = 'left') and (Floats[k].Side = 0))
+         or ((Mode = 'right') and (Floats[k].Side = 1)) then
+        if Floats[k].Y1 > Result then Result := Floats[k].Y1;
+  end;
+
+  { Position an already-laid-out float box at the left/right edge (accounting for
+    its margins), dropping it below earlier floats when it doesn't fit, and record
+    its band. FB is a border box already added to Box.Children. }
+  procedure PlaceFloat(FB: TLayoutBox; Side: Integer; MT, MR, MB, ML: Single);
+  var atY, lx0, lx1, fx, fw, fh, nextDrop: Single; band: TFloatBand; n, k, guard: Integer;
+  begin
+    fw := FB.W + ML + MR;                 // margin box
+    fh := FB.H + MT + MB;
+    atY := y;                             // float starts at the current flow y
+    guard := 0;
+    repeat
+      LineBounds(atY, atY + fh, lx0, lx1);
+      if (lx1 - lx0 + 0.5 >= fw) or (guard > 500) then Break;
+      // no room here — drop to the nearest float bottom below atY and retry
+      nextDrop := atY;
+      for k := 0 to High(Floats) do
+        if (Floats[k].Y1 > atY) and ((nextDrop = atY) or (Floats[k].Y1 < nextDrop)) then
+          nextDrop := Floats[k].Y1;
+      if nextDrop <= atY then Break;
+      atY := nextDrop; Inc(guard);
+    until False;
+    if Side = 0 then fx := lx0 else fx := lx1 - fw;
+    ShiftBoxTree(FB, (fx + ML) - FB.X, (atY + MT) - FB.Y);   // content box inside its margin box
+    band.Side := Side; band.X0 := fx; band.X1 := fx + fw; band.Y0 := atY; band.Y1 := atY + fh;
+    n := Length(Floats); SetLength(Floats, n + 1); Floats[n] := band;
+    if band.Y1 > MaxFloatY then MaxFloatY := band.Y1;
   end;
 
   procedure AddQuoteWord(const Q: string; const St: TComputedStyle; SpaceBefore: Boolean);
@@ -2110,7 +2169,7 @@ var
     lineTop, lineH: Single; justify: Boolean = False);
   var
     idx, k: Integer;
-    lineW, xShift, x, maxAscent, gapExtra: Single;
+    lineW, xShift, x, maxAscent, gapExtra, flx0, flx1, availW: Single;
     gaps: Integer;
     it: TInlineItem;
     run: TTextRun;
@@ -2127,9 +2186,13 @@ var
         lineW := lineW + FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width;
       lineW := lineW + it.W;
     end;
+    // float-aware line box: narrow the available span by any floats overlapping
+    // this line's vertical range (left floats push x0 right, right floats x1 left)
+    LineBounds(lineTop, lineTop + lineH, flx0, flx1);
+    availW := flx1 - flx0;
     case ParentStyle.TextAlign of
-      TTextAlign.Center:   xShift := Max(0, (CW - lineW) / 2);
-      TTextAlign.Trailing: xShift := Max(0, CW - lineW);
+      TTextAlign.Center:   xShift := Max(0, (availW - lineW) / 2);
+      TTextAlign.Trailing: xShift := Max(0, availW - lineW);
     else
       xShift := 0;
     end;
@@ -2142,7 +2205,7 @@ var
       gaps := 0;
       for k := 1 to lineItems.Count - 1 do
         if items[lineItems[k]].SpaceBefore then Inc(gaps);
-      if (gaps > 0) and (CW > lineW) then gapExtra := (CW - lineW) / gaps;
+      if (gaps > 0) and (availW > lineW) then gapExtra := (availW - lineW) / gaps;
     end;
     // shared baseline: the line's baseline sits maxAscent below its top;
     // every baseline-aligned item (text of any size, inline-block) hangs
@@ -2154,7 +2217,7 @@ var
       if (it.Box <> nil) and SameText(it.Box.Style.VerticalAlign, 'top') then Continue;
       if it.Ascent > maxAscent then maxAscent := it.Ascent;
     end;
-    x := CX + xShift;
+    x := flx0 + xShift;
     // text-indent: shift the first formatted line of the block
     if firstInlineLine and (ParentStyle.TextIndent <> 0) and
        (ParentStyle.TextAlign = TTextAlign.Leading) then
@@ -2201,7 +2264,7 @@ var
   var
     i, carrySpacer, spIdx: Integer;
     it: TInlineItem;
-    curW, lineH, spaceW, lineW: Single;
+    curW, lineH, spaceW, lineW, flw0, flw1: Single;
     lineItems: TList<Integer>;
   begin
     if items.Count = 0 then Exit;
@@ -2221,12 +2284,15 @@ var
         spaceW := 0;
         if it.SpaceBefore and (lineItems.Count > 0) then
           spaceW := FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width;
+        // float-aware usable width: floats overlapping this line's y-range narrow
+        // it (so text wraps beside a floated box).
+        LineBounds(y, y + Max(lineH, it.H), flw0, flw1);
+        lineW := flw1 - flw0;
         // text-indent narrows the FIRST line's usable width by the indent, so
         // the shifted first line wraps early instead of overflowing the margin.
-        lineW := CW;
         if firstInlineLine and (ParentStyle.TextIndent <> 0) and
            (ParentStyle.TextAlign = TTextAlign.Leading) then
-          lineW := CW - ParentStyle.TextIndent;
+          lineW := lineW - ParentStyle.TextIndent;
         if (not noWrapFlow) and (lineItems.Count > 0) and (curW + spaceW + it.W > lineW) then
         begin
           // A trailing margin-left spacer (synthetic: no box, no text, zero
@@ -2270,15 +2336,16 @@ var
   c: THTMLTag;
   cs: TComputedStyle;
   disp: string;
-  prevMB, mTc, absX, absY, absCH: Single;
+  prevMB, mTc, absX, absY, absCH, fMT, fMR, fMB, fML: Single;
   hadInline: Boolean;
-  absBox: TLayoutBox;
+  absBox, fltBox: TLayoutBox;
 begin
   y := CY;
   prevMB := 0;
   hadInline := False;
   pendingSpace := False;
   firstInlineLine := True;
+  SetLength(Floats, 0); MaxFloatY := CY;   // per-container float tracking
   noWrapFlow := SameText(ParentStyle.WhiteSpace, 'nowrap') or
                 SameText(ParentStyle.WhiteSpace, 'pre');
   items := TList<TInlineItem>.Create;
@@ -2338,6 +2405,40 @@ begin
         ShiftBoxTree(absBox, absX - absBox.X, absY - absBox.Y);
         Continue;  // no flow advance
       end;
+      // float: left/right — taken out of normal vertical flow and pinned to the
+      // container edge at the current y; following in-flow content wraps beside
+      // it (FlushLine/FlowInlineItems consult the float bands). Takes no flow
+      // height; the container encloses it via MaxFloatY.
+      if not SameText(cs.CSSFloat, 'none') then
+      begin
+        if SameText(c.TagName, 'img') or SameText(c.TagName, 'svg')
+           or SameText(c.TagName, 'qrcode') then
+        begin
+          fltBox := MakeReplacedBox(c, cs, CW);
+          if fltBox <> nil then Box.Children.Add(fltBox);
+        end
+        else
+        begin
+          LayoutBlock(Box, c, ParentStyle, CX, y, CW);
+          fltBox := Box.Children[Box.Children.Count - 1];
+          // auto width → shrink-to-fit (a floated block hugs its content)
+          if (ResolveSize(cs.ExplicitWidth, CW) < 0) and (fltBox.NaturalW > 0) then
+          begin
+            absCH := fltBox.NaturalW + cs.Padding.Horz + cs.BorderWidths.Horz;
+            if absCH < fltBox.W then fltBox.W := absCH;
+          end;
+        end;
+        if fltBox <> nil then
+        begin
+          fMT := cs.Margin.Top;    if fMT < 0 then fMT := 0;
+          fMR := cs.Margin.Right;  if fMR < 0 then fMR := 0;
+          fMB := cs.Margin.Bottom; if fMB < 0 then fMB := 0;
+          fML := cs.Margin.Left;   if fML < 0 then fML := 0;
+          if SameText(cs.CSSFloat, 'right') then PlaceFloat(fltBox, 1, fMT, fMR, fMB, fML)
+          else PlaceFloat(fltBox, 0, fMT, fMR, fMB, fML);
+        end;
+        Continue;  // out of normal flow — no y advance
+      end;
       // form control keeps its computed display: inline/inline-block flow inline,
       // block (e.g. Bootstrap .form-control) stacks full-width.
       // img/svg/qrcode are replaced elements: always inline-atomic, never
@@ -2355,6 +2456,12 @@ begin
         FlowInlineItems; // finish pending inline line(s)
         pendingSpace := False;
         if hadInline then begin prevMB := 0; hadInline := False; end;
+        // clear: drop this block below the floats of the cleared side(s) first
+        if not SameText(cs.CSSClear, 'none') then
+        begin
+          y := ClearBelowFloats(cs.CSSClear, y);
+          prevMB := 0;   // clearance cancels margin collapse across it
+        end;
         // collapse adjacent vertical margins: gap = max(prevBottom, thisTop)
         mTc := cs.Margin.Top; if mTc = -1 then mTc := 0;
         if (prevMB > 0) and (mTc > 0) then
@@ -2376,6 +2483,8 @@ begin
   finally
     items.Free;
   end;
+  // the container encloses its floats (clearfix-style) so a tall float isn't clipped
+  if MaxFloatY > y then y := MaxFloatY;
   UsedH := y - CY;
 end;
 
