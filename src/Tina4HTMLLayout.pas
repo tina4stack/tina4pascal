@@ -61,12 +61,18 @@ type
     destructor Destroy; override;
   end;
 
+  // A floated box's occupied region in absolute document coords. Shared on the
+  // engine so a container's floats also narrow inline lines inside its nested
+  // block descendants (same block formatting context).
+  TFloatBand = record Side: Integer; X0, X1, Y0, Y1: Single; end;  // Side 0=left 1=right
+
   TLayoutEngine = class
   private
     FCanvas: TTina4Canvas;
     FSheet: TCSSStyleSheet;
     FBaseStyle: TComputedStyle;
     FViewportW: Single;            // for <picture>/srcset media + sizes eval
+    FFloats: array of TFloatBand;  // active float context (absolute coords)
     function FontStylesOf(const St: TComputedStyle): TTina4FontStyles;
     function LineHeightOf(const St: TComputedStyle): Single;
     procedure LayoutChildren(Box: TLayoutBox; Tag: THTMLTag;
@@ -1670,17 +1676,14 @@ type
   CX,CY = content origin (absolute), CW = content width. }
 procedure TLayoutEngine.LayoutChildren(Box: TLayoutBox; Tag: THTMLTag;
   const ParentStyle: TComputedStyle; CX, CY, CW: Single; out UsedH: Single);
-type
-  // A floated box's occupied region in this container's content coords.
-  TFloatBand = record Side: Integer; X0, X1, Y0, Y1: Single; end;  // Side 0=left 1=right
 var
   y: Single;
   items: TList<TInlineItem>;
   pendingSpace: Boolean;   // trailing whitespace carried across inline nodes
   noWrapFlow: Boolean;     // white-space:nowrap → keep inline items on one line
   firstInlineLine: Boolean; // text-indent applies to the first formatted line only
-  Floats: array of TFloatBand;   // left/right floats seen so far in this container
-  MaxFloatY: Single;             // lowest float bottom, so the container can enclose them
+  FloatBase: Integer;      // index in FFloats where this container's floats begin
+  MaxFloatY: Single;       // lowest float bottom, so the container can enclose them
 
   function HasBlockChild(T: THTMLTag; const St: TComputedStyle): Boolean;
   var
@@ -1699,29 +1702,34 @@ var
   end;
 
   { The available x-span for content across a vertical range, after left floats
-    push the left edge right and right floats pull the right edge left. }
+    push the left edge right and right floats pull the right edge left. Consults
+    the whole active float context (this container's floats AND its ancestors',
+    all in absolute coords), clamped to this container's content box. }
   procedure LineBounds(YTop, YBot: Single; out LX0, LX1: Single);
   var k: Integer;
   begin
     LX0 := CX; LX1 := CX + CW;
-    for k := 0 to High(Floats) do
-      if (Floats[k].Y1 > YTop) and (Floats[k].Y0 < YBot) then   // vertically overlaps
+    for k := 0 to High(FFloats) do
+      if (FFloats[k].Y1 > YTop) and (FFloats[k].Y0 < YBot) then   // vertically overlaps
       begin
-        if (Floats[k].Side = 0) and (Floats[k].X1 > LX0) then LX0 := Floats[k].X1;
-        if (Floats[k].Side = 1) and (Floats[k].X0 < LX1) then LX1 := Floats[k].X0;
+        if (FFloats[k].Side = 0) and (FFloats[k].X1 > LX0) and (FFloats[k].X0 < LX1) then
+          LX0 := FFloats[k].X1;
+        if (FFloats[k].Side = 1) and (FFloats[k].X0 < LX1) and (FFloats[k].X1 > LX0) then
+          LX1 := FFloats[k].X0;
       end;
     if LX1 < LX0 then LX1 := LX0;
   end;
 
-  { `clear`: the y at/below FromY where no float of the cleared side remains. }
+  { `clear`: the y at/below FromY where no float of the cleared side remains
+    (this container's own floats only — clearance is per formatting context). }
   function ClearBelowFloats(const Mode: string; FromY: Single): Single;
   var k: Integer;
   begin
     Result := FromY;
-    for k := 0 to High(Floats) do
-      if (Mode = 'both') or ((Mode = 'left') and (Floats[k].Side = 0))
-         or ((Mode = 'right') and (Floats[k].Side = 1)) then
-        if Floats[k].Y1 > Result then Result := Floats[k].Y1;
+    for k := FloatBase to High(FFloats) do
+      if (Mode = 'both') or ((Mode = 'left') and (FFloats[k].Side = 0))
+         or ((Mode = 'right') and (FFloats[k].Side = 1)) then
+        if FFloats[k].Y1 > Result then Result := FFloats[k].Y1;
   end;
 
   { Position an already-laid-out float box at the left/right edge (accounting for
@@ -1739,16 +1747,16 @@ var
       if (lx1 - lx0 + 0.5 >= fw) or (guard > 500) then Break;
       // no room here — drop to the nearest float bottom below atY and retry
       nextDrop := atY;
-      for k := 0 to High(Floats) do
-        if (Floats[k].Y1 > atY) and ((nextDrop = atY) or (Floats[k].Y1 < nextDrop)) then
-          nextDrop := Floats[k].Y1;
+      for k := 0 to High(FFloats) do
+        if (FFloats[k].Y1 > atY) and ((nextDrop = atY) or (FFloats[k].Y1 < nextDrop)) then
+          nextDrop := FFloats[k].Y1;
       if nextDrop <= atY then Break;
       atY := nextDrop; Inc(guard);
     until False;
     if Side = 0 then fx := lx0 else fx := lx1 - fw;
     ShiftBoxTree(FB, (fx + ML) - FB.X, (atY + MT) - FB.Y);   // content box inside its margin box
     band.Side := Side; band.X0 := fx; band.X1 := fx + fw; band.Y0 := atY; band.Y1 := atY + fh;
-    n := Length(Floats); SetLength(Floats, n + 1); Floats[n] := band;
+    n := Length(FFloats); SetLength(FFloats, n + 1); FFloats[n] := band;
     if band.Y1 > MaxFloatY then MaxFloatY := band.Y1;
   end;
 
@@ -2339,13 +2347,14 @@ var
   prevMB, mTc, absX, absY, absCH, fMT, fMR, fMB, fML: Single;
   hadInline: Boolean;
   absBox, fltBox: TLayoutBox;
+  savedFloats: array of TFloatBand;
 begin
   y := CY;
   prevMB := 0;
   hadInline := False;
   pendingSpace := False;
   firstInlineLine := True;
-  SetLength(Floats, 0); MaxFloatY := CY;   // per-container float tracking
+  FloatBase := Length(FFloats); MaxFloatY := CY;   // this container's floats append here
   noWrapFlow := SameText(ParentStyle.WhiteSpace, 'nowrap') or
                 SameText(ParentStyle.WhiteSpace, 'pre');
   items := TList<TInlineItem>.Create;
@@ -2411,32 +2420,41 @@ begin
       // height; the container encloses it via MaxFloatY.
       if not SameText(cs.CSSFloat, 'none') then
       begin
+        fMT := cs.Margin.Top;    if fMT < 0 then fMT := 0;
+        fMR := cs.Margin.Right;  if fMR < 0 then fMR := 0;
+        fMB := cs.Margin.Bottom; if fMB < 0 then fMB := 0;
+        fML := cs.Margin.Left;   if fML < 0 then fML := 0;
+        // a float establishes its own BFC: its content must not wrap around the
+        // ancestor/sibling floats, so lay it out with an empty float context and
+        // restore the context afterwards to position it.
+        savedFloats := Copy(FFloats, 0, Length(FFloats));
+        SetLength(FFloats, 0);
         if SameText(c.TagName, 'img') or SameText(c.TagName, 'svg')
            or SameText(c.TagName, 'qrcode') then
         begin
           fltBox := MakeReplacedBox(c, cs, CW);
           if fltBox <> nil then Box.Children.Add(fltBox);
         end
+        else if ResolveSize(cs.ExplicitWidth, CW) < 0 then
+        begin
+          // auto width → shrink-to-fit: measure max-content, then re-lay-out at it
+          LayoutBlock(Box, c, ParentStyle, CX, y, 100000);
+          fltBox := Box.Children[Box.Children.Count - 1];
+          absCH := Min(fltBox.NaturalW + cs.Padding.Horz + cs.BorderWidths.Horz
+                       + fML + fMR, CW);
+          Box.Children.Delete(Box.Children.Count - 1);   // discard the wide pass (frees it)
+          LayoutBlock(Box, c, ParentStyle, CX, y, absCH);
+          fltBox := Box.Children[Box.Children.Count - 1];
+        end
         else
         begin
           LayoutBlock(Box, c, ParentStyle, CX, y, CW);
           fltBox := Box.Children[Box.Children.Count - 1];
-          // auto width → shrink-to-fit (a floated block hugs its content)
-          if (ResolveSize(cs.ExplicitWidth, CW) < 0) and (fltBox.NaturalW > 0) then
-          begin
-            absCH := fltBox.NaturalW + cs.Padding.Horz + cs.BorderWidths.Horz;
-            if absCH < fltBox.W then fltBox.W := absCH;
-          end;
         end;
+        FFloats := savedFloats;   // restore the context for positioning
         if fltBox <> nil then
-        begin
-          fMT := cs.Margin.Top;    if fMT < 0 then fMT := 0;
-          fMR := cs.Margin.Right;  if fMR < 0 then fMR := 0;
-          fMB := cs.Margin.Bottom; if fMB < 0 then fMB := 0;
-          fML := cs.Margin.Left;   if fML < 0 then fML := 0;
           if SameText(cs.CSSFloat, 'right') then PlaceFloat(fltBox, 1, fMT, fMR, fMB, fML)
           else PlaceFloat(fltBox, 0, fMT, fMR, fMB, fML);
-        end;
         Continue;  // out of normal flow — no y advance
       end;
       // form control keeps its computed display: inline/inline-block flow inline,
@@ -2483,8 +2501,10 @@ begin
   finally
     items.Free;
   end;
-  // the container encloses its floats (clearfix-style) so a tall float isn't clipped
+  // the container encloses its own floats (clearfix-style) so a tall float isn't
+  // clipped, then drops them from the active context (they don't escape this BFC)
   if MaxFloatY > y then y := MaxFloatY;
+  SetLength(FFloats, FloatBase);
   UsedH := y - CY;
 end;
 
@@ -2972,6 +2992,7 @@ begin
   base.LineHeight := 1.5;    // bootstrap body line-height
   FBaseStyle := base;
   FViewportW := ViewportW;
+  SetLength(FFloats, 0);   // fresh float context per layout
   body := FindBody(Root);
   if body = nil then body := Root;
   Result := TLayoutBox.Create;
