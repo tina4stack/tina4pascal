@@ -131,8 +131,10 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | :hover / :active / :focus / :checked | ✅ | matcher + runtime state, end-to-end |
 | appearance: none | ✅ | radios/checkboxes render as styled boxes |
 | cursor | ✅ | desktop shells set the native OS pointer (pointer/text/move/grab/resize/crosshair/not-allowed/none…); inherits down the DOM. Touch shells ignore it |
-| pointer-events, user-select, resize | ❌ | |
-| accent-color, caret-color | ❌ | hard-coded to theme accent |
+| pointer-events | ✅ | `none` makes the box + subtree transparent to hit-testing (clicks pass through) |
+| user-select, resize | 📦 | parsed-ignored — no text-selection model / drag-resize handle yet |
+| accent-color | ✅ | tints checkboxes, radios, range fill/thumb, and progress fill (falls back to the theme indigo) |
+| caret-color | ✅ | colours the text-input/textarea caret |
 
 ## Custom properties & functions
 
@@ -172,7 +174,7 @@ col/row-resize.
 6. Typography long tail: `font`/`font-variant`/`font-stretch` shorthands,
     `word-spacing`, `direction`/`writing-mode` (bidi), `list-style` shorthand +
     position/image, `vertical-align` text-top/bottom/length.
-7. **accent-color / caret-color**; **pointer-events / user-select / resize**;
+7. **user-select / resize** (need a selection model / drag-resize handle);
     `env()`.
 
 

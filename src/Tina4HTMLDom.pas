@@ -284,6 +284,9 @@ type
     WhiteSpace: string;
     BoxSizing: string;
     AppearanceNone: Boolean;    // appearance:none — strip native control chrome
+    AccentColor: TAlphaColor;   // accent-color for checkboxes/radios/range (0=auto)
+    CaretColor: TAlphaColor;    // caret-color for the text caret (0=auto)
+    PointerEventsNone: Boolean; // pointer-events:none — transparent to hit-testing
     CSSCursor: string;
     TextTransform: string;
     Opacity: Single;
@@ -2109,6 +2112,7 @@ begin
   Result.BgGradientRadial := False;
   Result.GradStopCount := 0;
   Result.AppearanceNone := False;
+  Result.AccentColor := 0; Result.CaretColor := 0; Result.PointerEventsNone := False;
   Result.TransformActive := False;
   Result.TransformScaleX := 1;
   Result.TransformScaleY := 1;
@@ -2541,6 +2545,7 @@ begin
   Result.BgGradientRadial := False;
   Result.GradStopCount := 0;
   Result.AppearanceNone := False;
+  Result.AccentColor := 0; Result.CaretColor := 0; Result.PointerEventsNone := False;
   Result.TransformActive := False;
   Result.TransformScaleX := 1;
   Result.TransformScaleY := 1;
@@ -3311,6 +3316,12 @@ begin
     Style.AppearanceNone := SameText(Temp.Trim, 'none');
   if Decls.TryGetValue('cursor', Temp) and not ShouldSkip(Temp) then
     Style.CSSCursor := Temp.ToLower;
+  if Decls.TryGetValue('accent-color', Temp) and not ShouldSkip(Temp) then
+    Style.AccentColor := ParseColor(Temp);
+  if Decls.TryGetValue('caret-color', Temp) and not ShouldSkip(Temp) then
+    Style.CaretColor := ParseColor(Temp);
+  if Decls.TryGetValue('pointer-events', Temp) and not ShouldSkip(Temp) then
+    Style.PointerEventsNone := SameText(Trim(Temp), 'none');
 
   if Decls.TryGetValue('object-fit', Temp) and not ShouldSkip(Temp) then
     Style.ObjectFit := Temp.Trim.ToLower;

@@ -3165,6 +3165,13 @@ begin
   end;
 end;
 
+{ The control accent colour: CSS `accent-color` if set, else the theme indigo. }
+function AccentOf(Box: TLayoutBox): TTina4Color;
+begin
+  if Box.Style.AccentColor <> 0 then Result := Box.Style.AccentColor
+  else Result := TC_ACCENT;
+end;
+
 { <progress>/<meter>: a rounded track with a filled portion from value/max. }
 procedure PaintBarControl(Canvas: TTina4Canvas; Box: TLayoutBox; y: Single);
 var val, mx, frac, r: Single; fill: TTina4Color;
@@ -3176,7 +3183,7 @@ begin
   if frac < 0 then frac := 0; if frac > 1 then frac := 1;
   r := Box.H / 2;
   Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, r, TC_BORDER);          // track
-  if Box.ControlKind = ckMeter then fill := $FF33AA55 else fill := TC_ACCENT;
+  if Box.ControlKind = ckMeter then fill := $FF33AA55 else fill := AccentOf(Box);
   if frac > 0 then
     Canvas.FillRoundRect(Box.X, y, Max(Box.H, Box.W * frac), Box.H, r, fill);
 end;
@@ -3193,10 +3200,10 @@ begin
   if frac < 0 then frac := 0; if frac > 1 then frac := 1;
   ty := y + Box.H / 2 - 2;
   Canvas.FillRoundRect(Box.X, ty, Box.W, 4, 2, TC_BORDER);            // track
-  if frac > 0 then Canvas.FillRoundRect(Box.X, ty, Box.W * frac, 4, 2, TC_ACCENT);
+  if frac > 0 then Canvas.FillRoundRect(Box.X, ty, Box.W * frac, 4, 2, AccentOf(Box));
   cx := Box.X + Box.W * frac; cy := y + Box.H / 2;
   Canvas.FillRoundRect(cx - 8, cy - 8, 16, 16, 8, $FFFFFFFF);          // thumb
-  Canvas.StrokeRoundRect(cx - 8, cy - 8, 16, 16, 8, 1.5, TC_ACCENT);
+  Canvas.StrokeRoundRect(cx - 8, cy - 8, 16, 16, 8, 1.5, AccentOf(Box));
 end;
 
 { Draw one border edge as a rectangle of the given style. `horiz` = the edge
@@ -3443,12 +3450,12 @@ begin
       Canvas.FillRoundRect(Box.X, gy, 18, 18, 9, $FFFFFFFF);
       Canvas.StrokeRoundRect(Box.X, gy, 18, 18, 9, 1.5, TC_BORDER);
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
-        Canvas.FillRoundRect(Box.X + 5, gy + 5, 8, 8, 4, TC_ACCENT);
+        Canvas.FillRoundRect(Box.X + 5, gy + 5, 8, 8, 4, AccentOf(Box));
     end
     else
     begin
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
-        Canvas.FillRoundRect(Box.X, gy, 18, 18, 4, TC_ACCENT)
+        Canvas.FillRoundRect(Box.X, gy, 18, 18, 4, AccentOf(Box))
       else
         Canvas.FillRoundRect(Box.X, gy, 18, 18, 4, $FFFFFFFF);
       Canvas.StrokeRoundRect(Box.X, gy, 18, 18, 4, 1.5, TC_BORDER);
@@ -3763,7 +3770,10 @@ begin
       end
       else
         cy := y + (Box.H - st.FontSize) / 2;
-      Canvas.FillRect(cx, cy, 1.5, st.FontSize + 2, $FF1F2937);
+      if st.CaretColor <> 0 then
+        Canvas.FillRect(cx, cy, 1.5, st.FontSize + 2, st.CaretColor)   // caret-color
+      else
+        Canvas.FillRect(cx, cy, 1.5, st.FontSize + 2, $FF1F2937);
     end;
     if Box.ControlKind = ckSelect then
       Canvas.DrawText(Box.X + Box.W - 18, y + st.BorderWidths.Top + st.Padding.Top,
@@ -3795,6 +3805,9 @@ var
   childY: Single;
 begin
   Result := nil;
+  // pointer-events:none — the box and its subtree are transparent to hit-testing
+  // (clicks pass through to whatever is behind).
+  if (Box.Tag <> nil) and Box.Style.PointerEventsNone then Exit;
   inside := (X >= Box.X) and (X <= Box.X + Box.W) and
             (Y >= Box.Y) and (Y <= Box.Y + Box.H);
   // a clipped scroller swallows anything outside its rect
