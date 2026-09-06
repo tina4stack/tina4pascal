@@ -234,19 +234,20 @@ PPC_CONFIG_PATH=$HOME/fpc/etc $HOME/fpc/bin/fpc -Mdelphi -Twin64 -Px86_64 \
 The GDI+ shell renders shapes, ClearType text, clipping, 2D transforms, the full
 compositing pipeline, **AA gradients (linear/radial), `<img>` decode/draw, and
 per-pixel `rgba()` alpha** — the [comparison above](#spot-the-browser) exercises
-all of them. Remaining polish:
+all of them. Reftests: **128/130** pass. What's left:
 
-1. **Rounded-corner alpha inside a filtered box** — a `filter`/`blur` on a
-   `border-radius` box shows square corners (GDI doesn't hand us coverage);
-   recover it by rasterising the clip shape into the layer's alpha channel.
-2. **Advanced blend modes** — color-dodge/burn, hue/saturation/color/luminosity
-   currently fall back to source-over; add them to `BlendPixel`.
-3. **HiDPI** — the shell runs at density 1; read the per-monitor DPI and
+1. **`background-size: cover`** (`bgimage-cover` reftest) — cover sizing/anchoring
+   of a background image isn't pixel-exact yet.
+2. **`clip-path` accuracy** (`css-clippath` reftest) — basic shapes tessellate
+   and clip, but don't yet pixel-match the reference.
+3. **Advanced blend modes** — `color-dodge`/`burn`, `hue`/`saturation`/`color`/
+   `luminosity` fall back to source-over in `BlendPixel` (multiply, screen,
+   darken, lighten, overlay, difference are in).
+4. **HiDPI** — the shell runs at density 1; read the per-monitor DPI and
    supersample the layers.
 
-Reftests: **125/130** pass (the 5 fails are exactly the items above plus
-`clip-path`). See `src/Tina4ShellWin.pas` (canvas) and
-`examples/htmlviewer/htmlviewer_win.pas` (the Win32 host + message loop).
+See `src/Tina4ShellWin.pas` (canvas) and `examples/htmlviewer/htmlviewer_win.pas`
+(the Win32 host + message loop).
 
 ## The full stack
 
