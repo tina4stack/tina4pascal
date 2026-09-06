@@ -3157,6 +3157,9 @@ var
   spanW: Single;
   rowspan, ri, lastRow, nspan: Integer;
   blocked: array of Integer;              // per-column: rows still covered by a rowspan above
+  colAuto: array of Boolean;              // table-layout:fixed — column has no specified width
+  ecc: THTMLTag;                          // empty-cells scan
+  emptyCell: Boolean;
   rowTop, rowHeight: array of Single;     // geometry of each laid-out row
   spanBox: array of TLayoutBox;           // deferred rowspan cells (height set after all rows)
   spanStart, spanRows: array of Integer;
@@ -3302,12 +3305,59 @@ begin
     total := 0;
     for i := 0 to ncols - 1 do total := total + prefW[i];
     if total <= 0 then total := 1;
-    // auto table sizes to content; an explicit width scales columns to fit. The
-    // (ncols+1) spacing gaps sit outside the column widths.
-    if explW >= 0 then tableW := explW
-    else tableW := Min(total + (ncols + 1) * hsp, tblAvail);
-    scale := Max(0, tableW - (ncols + 1) * hsp) / total;
-    for i := 0 to ncols - 1 do prefW[i] := prefW[i] * scale;
+
+    if SameText(Style.TableLayout, 'fixed') then
+    begin
+      // table-layout:fixed — column widths come ONLY from the first row's
+      // specified widths and <col> widths; later rows never widen a column, and
+      // content is ignored. Auto columns split the leftover table width equally.
+      if explW >= 0 then tableW := explW
+      else tableW := Min(total + (ncols + 1) * hsp, tblAvail); // auto width: content total
+      SetLength(colAuto, ncols);
+      for i := 0 to ncols - 1 do begin prefW[i] := 0; colAuto[i] := True; end;
+      ci := 0;
+      for cell in rows[0].Children do
+      begin
+        if not (SameText(cell.TagName, 'td') or SameText(cell.TagName, 'th')) then Continue;
+        if ci >= ncols then Break;
+        cs := TComputedStyle.ForTag(cell, Style, FSheet);
+        cw := ResolveSize(cs.ExplicitWidth, tblAvail);
+        if cell.HasAttribute('width') then
+          cw := TComputedStyle.ParseLength(cell.GetAttribute('width'), cs.FontSize);
+        colspan := Max(1, StrToIntDef(cell.GetAttribute('colspan', '1'), 1));
+        if cw >= 0 then
+        begin
+          cw := cw + cs.Padding.Horz + cs.BorderWidths.Horz;   // content-box + edges
+          for i := ci to Min(ci + colspan - 1, ncols - 1) do
+          begin prefW[i] := cw / colspan; colAuto[i] := False; end;
+        end;
+        Inc(ci, colspan);
+      end;
+      for i := 0 to ncols - 1 do
+        if colW[i] >= 0 then begin prefW[i] := colW[i]; colAuto[i] := False; end;
+      total := 0; nspan := 0;   // reuse nspan as the auto-column count
+      for i := 0 to ncols - 1 do
+        if colAuto[i] then Inc(nspan) else total := total + prefW[i];
+      if nspan > 0 then
+      begin
+        for i := 0 to ncols - 1 do
+          if colAuto[i] then prefW[i] := Max(0, (tableW - (ncols + 1) * hsp - total) / nspan);
+      end
+      else if total > 0 then
+      begin // no auto columns — scale specified widths to fill the table width
+        scale := Max(0, tableW - (ncols + 1) * hsp) / total;
+        for i := 0 to ncols - 1 do prefW[i] := prefW[i] * scale;
+      end;
+    end
+    else
+    begin
+      // auto layout: table sizes to content; an explicit width scales columns to
+      // fit. The (ncols+1) spacing gaps sit outside the column widths.
+      if explW >= 0 then tableW := explW
+      else tableW := Min(total + (ncols + 1) * hsp, tblAvail);
+      scale := Max(0, tableW - (ncols + 1) * hsp) / total;
+      for i := 0 to ncols - 1 do prefW[i] := prefW[i] * scale;
+    end;
 
     tbox := TLayoutBox.Create;
     tbox.Tag := Tag;
@@ -3372,6 +3422,27 @@ begin
         begin
           cs.SetBorderWidth(1);
           cs.SetBorderColor(Style.BorderColor);
+        end;
+        // empty-cells:hide (separate-borders model only) — a cell with neither
+        // text nor an element child paints no border or background.
+        if SameText(cs.EmptyCells, 'hide') and not Style.BorderCollapse then
+        begin
+          emptyCell := True;
+          for ecc in cell.Children do
+            if ecc.TagName <> '#text' then begin emptyCell := False; Break; end;
+          if emptyCell then
+          begin
+            sb := TStringBuilder.Create;
+            try
+              CollectInlineText(cell, sb);
+              if Trim(CollapseWS(sb.ToString)) <> '' then emptyCell := False;
+            finally sb.Free; end;
+          end;
+          if emptyCell then
+          begin
+            cs.BackgroundColor := TAlphaColors.Null;   // transparent
+            cs.SetBorderWidth(0);
+          end;
         end;
         cbox := TLayoutBox.Create;
         cbox.Tag := cell;

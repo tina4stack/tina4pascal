@@ -128,9 +128,9 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | table layout + colspan | ✅ | auto column sizing; colspan both passes |
 | rowspan | ✅ | column-occupancy tracked across rows; spanned height + valign resolved |
 | border-collapse, border-spacing | ✅ | `border-spacing` (separate model) adds gaps around + between cells (reserved from column widths, applied to colspan/rowspan too); `border-collapse:collapse` forces zero spacing / shared borders |
-| table-layout | 📦 | parsed-ignored — sizing is always auto (content-based) |
+| table-layout | ✅ | `auto` (content-based) + `fixed` — fixed sizes columns from the first row's specified/`<col>` widths, splits the leftover equally among auto columns, and later rows never widen a column (content overflows) |
 | caption-side | ✅ | top (default) + bottom |
-| empty-cells | ❌ | not parsed |
+| empty-cells | ✅ | `show` (default) + `hide` — in the separate-borders model a cell with no text or element child paints no border/background |
 | vertical-align (cells) | ✅ | top/middle/bottom |
 
 ## UI & interaction
@@ -185,7 +185,7 @@ mode renderer doesn't yet have):
     `direction`/`writing-mode` (bidi), `list-style-image`, `vertical-align`
     text-top/bottom/length.
 4. **user-select / resize** (need a selection model / drag-resize handle);
-    `table-layout:fixed`; `empty-cells`; `@import`.
+    `@import`.
 
 
 Each item ships with a reftest under `examples/compliance/` and flips its row

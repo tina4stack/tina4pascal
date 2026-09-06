@@ -281,6 +281,8 @@ type
     LineHeight: Single;
     VerticalAlign: string;
     CaptionSide: string;        // '' | 'top' | 'bottom' (table <caption> placement)
+    TableLayout: string;        // '' | 'auto' | 'fixed' (not inherited)
+    EmptyCells: string;         // 'show' | 'hide' (inherited)
     Margin: TEdgeValues;
     Padding: TEdgeValues;
     BorderColors: array[0..3] of TAlphaColor;  // Top, Right, Bottom, Left
@@ -2232,6 +2234,7 @@ begin
   Result.LineHeight := 1.4;
   Result.VerticalAlign := 'baseline';
   Result.CaptionSide := 'top';
+  Result.TableLayout := ''; Result.EmptyCells := 'show';
   Result.Margin.Clear;
   Result.Padding.Clear;
   Result.SetBorderColor(TAlphaColors.Black);
@@ -2685,6 +2688,8 @@ begin
   Result.WordBreak := ParentStyle.WordBreak;
   Result.OverflowWrap := ParentStyle.OverflowWrap;
   Result.CaptionSide := ParentStyle.CaptionSide;  // inherited
+  Result.TableLayout := '';                        // not inherited
+  Result.EmptyCells := ParentStyle.EmptyCells;     // inherited
   Result.VerticalAlign := 'baseline';
 
   // Non-inherited defaults
@@ -3369,6 +3374,10 @@ begin
   end;
   if Decls.TryGetValue('caption-side', Temp) and not ShouldSkip(Temp) then
     Style.CaptionSide := Temp.Trim.ToLower;
+  if Decls.TryGetValue('table-layout', Temp) and not ShouldSkip(Temp) then
+    Style.TableLayout := Temp.Trim.ToLower;
+  if Decls.TryGetValue('empty-cells', Temp) and not ShouldSkip(Temp) then
+    Style.EmptyCells := Temp.Trim.ToLower;
   if Decls.TryGetValue('margin', Temp) and not ShouldSkip(Temp) then
     ParseEdgeShorthand(Temp, Style.Margin, Style.FontSize);
   if Decls.TryGetValue('margin-top', Temp) and not ShouldSkip(Temp) then
