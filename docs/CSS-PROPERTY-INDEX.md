@@ -62,7 +62,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | gap, row-gap, column-gap | ✅ | per-axis: `gap: <row> <col>`; flex uses column-gap on a row / row-gap on a column |
 | grid-column, grid-row | ✅ | explicit start line + span, or `N / M`; occupancy-aware auto-placement around them |
 | grid-template-rows | 🟡 | explicit **px** row-track heights honored; fr/%/auto rows still content-sized |
-| grid-template-areas | ❌ | named areas not parsed |
+| grid-template-areas, grid-area | ✅ | `"a a b" "a a c"` named-area template; an item's `grid-area: name` is placed at that area's bounding cell rect (row/col start + span). Single or double quotes |
 
 ## Typography
 
@@ -176,8 +176,8 @@ mode renderer doesn't yet have):
     translate/rotate/scale/skew + `transform-origin` done).
 2. **filter / backdrop-filter / clip-path / mask / blend-modes** — an offscreen
     render target + image-filter/compositing pass per shell.
-3. **Grid**: `grid-template-rows` fr/%/auto + `grid-template-areas` (px rows,
-    line placement, column/row span, occupancy auto-placement done).
+3. **Grid**: `grid-template-rows` fr/%/auto (px rows, template-areas, line
+    placement, column/row span, occupancy auto-placement done).
 4. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
     `direction`/`writing-mode` (bidi), `list-style-image`, `vertical-align`
     text-top/bottom/length.

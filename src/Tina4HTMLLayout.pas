@@ -1655,6 +1655,8 @@ var
   tk: string;
   iRow, iCol, iSpan, iRowSpan: array of Integer;
   occ: array of array of Boolean;   // cell occupancy for auto-placement
+  areaGrid: array of TStringArray;  // grid-template-areas name per cell
+  areaR0, areaC0, areaRS, areaCS: Integer;
 
   procedure ParseColumns(const Spec: string);
   var s: string; t: string; v: Single;
@@ -1728,6 +1730,43 @@ var
     else StartLine := StrToIntDef(v, -1);
   end;
 
+  { Parse grid-template-areas ("a a b" "a a c") into a name-per-cell grid. }
+  procedure ParseAreas(const Spec: string);
+  var quoted: TStringArray; row: string; rr: Integer;
+  begin
+    SetLength(areaGrid, 0);
+    if Trim(Spec) = '' then Exit;
+    quoted := StringReplace(Spec, '''', '"', [rfReplaceAll]).Split(['"']);
+    // odd-indexed segments are the quoted row strings
+    rr := 1;
+    while rr <= High(quoted) do
+    begin
+      row := Trim(quoted[rr]);
+      if row <> '' then
+      begin
+        SetLength(areaGrid, Length(areaGrid) + 1);
+        areaGrid[High(areaGrid)] := row.Split([' '], TStringSplitOptions.ExcludeEmpty);
+      end;
+      Inc(rr, 2);
+    end;
+  end;
+
+  { Bounding cell rect of a named area (out row/col start + spans). False if unknown. }
+  function AreaRect(const Name: string; out R0, C0, RS, CS: Integer): Boolean;
+  var rr, cc, r1, c1: Integer;
+  begin
+    Result := False; R0 := 999; C0 := 999; r1 := -1; c1 := -1;
+    for rr := 0 to High(areaGrid) do
+      for cc := 0 to High(areaGrid[rr]) do
+        if areaGrid[rr][cc] = Name then
+        begin
+          Result := True;
+          if rr < R0 then R0 := rr; if rr > r1 then r1 := rr;
+          if cc < C0 then C0 := cc; if cc > c1 then c1 := cc;
+        end;
+    if Result then begin RS := r1 - R0 + 1; CS := c1 - C0 + 1; end;
+  end;
+
   procedure EnsureRows(r: Integer);
   var old: Integer;
   begin
@@ -1794,6 +1833,7 @@ begin
   rowGap := st.RowGap; if rowGap < 0 then rowGap := 0;
 
   ParseColumns(st.GridTemplateColumns);
+  ParseAreas(st.GridTemplateAreas);
   if ncols = 0 then
   begin
     ncols := 1; SetLength(trackFixed, 1); SetLength(trackW, 1); SetLength(trackFr, 1);
@@ -1835,8 +1875,17 @@ begin
     for i := 0 to itemTags.Count - 1 do
     begin
       cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
-      GridPlacement(cs.GridColumn, colStart, span);
-      GridPlacement(cs.GridRow, rowStart, rowSpan);
+      // grid-area naming a template area places the item at that area's rect
+      if (cs.GridArea <> '') and (Length(areaGrid) > 0)
+         and AreaRect(cs.GridArea, areaR0, areaC0, areaRS, areaCS) then
+      begin
+        colStart := areaC0 + 1; span := areaCS; rowStart := areaR0 + 1; rowSpan := areaRS;
+      end
+      else
+      begin
+        GridPlacement(cs.GridColumn, colStart, span);
+        GridPlacement(cs.GridRow, rowStart, rowSpan);
+      end;
       span := Max(1, Min(span, ncols)); rowSpan := Max(1, rowSpan);
       // resolve the item's cell, skipping cells already taken (auto-placement)
       if (colStart >= 1) and (rowStart >= 1) then

@@ -352,6 +352,8 @@ type
     GridTemplateRows: string;
     GridColumn: string;           // item placement: 'span N' (start/end lines TBD)
     GridRow: string;
+    GridTemplateAreas: string;    // raw "…" "…" rows on the container
+    GridArea: string;             // item's named area (or line shorthand)
     RowGap: Single;               // grid row / column gaps (independent)
     ColGap: Single;
     // text-shadow: offsetX offsetY [blur] color
@@ -2213,7 +2215,7 @@ begin
   Result.FlexGap := 0;
   Result.AlignSelf := ''; Result.CSSOrder := 0;
   Result.GridTemplateColumns := ''; Result.GridTemplateRows := '';
-  Result.GridColumn := ''; Result.GridRow := '';
+  Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
@@ -2652,7 +2654,7 @@ begin
   Result.FlexGap := 0;
   Result.AlignSelf := ''; Result.CSSOrder := 0;
   Result.GridTemplateColumns := ''; Result.GridTemplateRows := '';
-  Result.GridColumn := ''; Result.GridRow := '';
+  Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
@@ -3859,6 +3861,10 @@ begin
     Style.GridColumn := Temp.Trim.ToLower;
   if Decls.TryGetValue('grid-row', Temp) and not ShouldSkip(Temp) then
     Style.GridRow := Temp.Trim.ToLower;
+  if Decls.TryGetValue('grid-template-areas', Temp) and not ShouldSkip(Temp) then
+    Style.GridTemplateAreas := Temp.Trim;   // keep case (area names are case-sensitive)
+  if Decls.TryGetValue('grid-area', Temp) and not ShouldSkip(Temp) then
+    Style.GridArea := Temp.Trim;
 
   // Flexbox item properties — `flex` is a shorthand for grow/shrink/basis.
   if Decls.TryGetValue('flex', Temp) and not ShouldSkip(Temp) then
