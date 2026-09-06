@@ -1788,6 +1788,17 @@ begin
           if cb.H / rowSpan > rowH[k] then rowH[k] := cb.H / rowSpan;
     end;
 
+    // grid-template-rows: explicit px row-track heights override the auto size
+    if Trim(st.GridTemplateRows) <> '' then
+    begin
+      toks := Trim(st.GridTemplateRows).ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+      for k := 0 to Min(High(toks), nrows - 1) do
+      begin
+        tk := Trim(toks[k]);
+        if tk.EndsWith('px') then rowH[k] := StrToFloatDef(Copy(tk, 1, Length(tk) - 2), rowH[k]);
+      end;
+    end;
+
     // place items: cell origin + stretch to the row height
     contentH := 0;
     for k := 0 to nrows - 1 do contentH := contentH + rowH[k];

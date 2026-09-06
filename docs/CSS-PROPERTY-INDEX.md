@@ -61,7 +61,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | align-content | 🟡 | parsed; multi-line cross-distribution still uses the default packing |
 | gap, row-gap, column-gap | ✅ | per-axis: `gap: <row> <col>`; flex uses column-gap on a row / row-gap on a column |
 | grid-column, grid-row | ✅ | explicit start line + span, or `N / M`; occupancy-aware auto-placement around them |
-| grid-template-rows, grid-template-areas | ❌ | rows always content-auto-sized; named areas not parsed |
+| grid-template-rows | 🟡 | explicit **px** row-track heights honored; fr/%/auto rows still content-sized |
+| grid-template-areas | ❌ | named areas not parsed |
 
 ## Typography
 
@@ -172,8 +173,8 @@ col/row-resize.
 **Outstanding — bigger rocks:**
 1. **Flexbox remainder**: `flex-wrap: wrap-reverse`; multi-line `align-content`
    distribution (reverse directions, `align-self`/`order`, per-axis gap done).
-2. **Grid**: `grid-template-rows` (explicit row tracks) + `grid-template-areas`
-   (line placement, column/row span + occupancy auto-placement done).
+2. **Grid**: `grid-template-rows` fr/%/auto + `grid-template-areas` (px rows,
+   line placement, column/row span + occupancy auto-placement done).
 3. **transition** — per-element change tracking + interpolation on state change
     (`@keyframes` animations are done); `@supports` / `@import`.
 4. **transform** matrix()/3D + `perspective` (skew + `transform-origin` done);
