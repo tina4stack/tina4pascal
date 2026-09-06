@@ -15,7 +15,7 @@ program htmlviewer_win;
 
 uses
   Windows, SysUtils, Classes,
-  Tina4RenderBackend, Tina4ShellWin, Tina4Interact;
+  Tina4RenderBackend, Tina4ShellWin, Tina4Interact, Tina4Builtins, Tina4Live;
 
 const
   NIM_ADD = 0; NIM_MODIFY = 1; NIM_DELETE = 2;
@@ -168,6 +168,8 @@ begin
     WM_TIMER:
       begin
         if TinaTick = 1 then Repaint;
+        LiveDrain;   // SSE/WS: apply queued messages to the DOM
+        if BuiltinsDirty then begin BuiltinsDirty := False; TinaInvalidateLayout; Repaint; end;
       end;
     WM_DESTROY:
       begin
@@ -305,6 +307,7 @@ begin
 
   GCanvas := TWinCanvas.Create;
   TinaInit(GCanvas);
+  RegisterLiveActions;                     // sse.connect / ws.connect / live.close
   TrayAdd;                                 // tray icon backs the balloon toasts
   Tina4SetNotifyHandler(@NotifyWin);       // notify.show(...) → Windows toast
   LoadInitial;

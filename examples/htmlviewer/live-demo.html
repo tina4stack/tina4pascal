@@ -1,0 +1,21 @@
+<body style="margin:0;background:#fbfaf7;font-family:system-ui,sans-serif;padding:28px">
+<h1 style="color:#2b41e6;margin:0 0 4px">Live data</h1>
+<p style="color:#5b5c78;margin:0 0 20px">SSE + WebSocket streamed straight into the DOM — no JS, no glue.</p>
+
+<div style="display:flex;gap:16px;flex-wrap:wrap">
+  <div style="background:#fff;border-radius:16px;padding:18px 22px;box-shadow:0 14px 40px rgba(43,65,230,.10);min-width:220px">
+    <div style="font:700 13px/1 'Space Mono',monospace;letter-spacing:.08em;color:#9698b4;text-transform:uppercase">SSE ticker</div>
+    <div id="ticker" style="font:800 34px/1.2 system-ui;color:#15162e;margin-top:8px">—</div>
+    <button onclick="sse.connect('http://127.0.0.1:8099/stream', 'ticker')"
+      style="margin-top:14px;background:#2b41e6;color:#fff;border:0;border-radius:11px;padding:10px 16px;font-size:14px">Subscribe</button>
+  </div>
+
+  <div style="background:#fff;border-radius:16px;padding:18px 22px;box-shadow:0 14px 40px rgba(43,65,230,.10);min-width:220px">
+    <div style="font:700 13px/1 'Space Mono',monospace;letter-spacing:.08em;color:#9698b4;text-transform:uppercase">WebSocket</div>
+    <div id="chat" style="font:800 26px/1.3 system-ui;color:#15162e;margin-top:8px">—</div>
+    <button onclick="ws.connect('ws://127.0.0.1:9098/', 'chat')"
+      style="margin-top:14px;background:#ff5aa0;color:#fff;border:0;border-radius:11px;padding:10px 16px;font-size:14px">Connect</button>
+  </div>
+</div>
+<p style="color:#9698b4;font-size:13px;margin-top:22px">Point these at any Tina4 backend's SSE/WebSocket route.</p>
+</body>

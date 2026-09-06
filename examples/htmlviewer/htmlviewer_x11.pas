@@ -13,8 +13,9 @@ program htmlviewer_x11;
 {$mode objfpc}{$H+}{$PACKRECORDS C}
 
 uses
-  ctypes, SysUtils, Classes,
-  Tina4RenderBackend, Tina4ShellLinux, Tina4Interact;
+  cthreads,   // SSE/WS worker threads (Tina4Live) need a thread driver
+  ctypes, BaseUnix, SysUtils, Classes,
+  Tina4RenderBackend, Tina4ShellLinux, Tina4Interact, Tina4Builtins, Tina4Live;
 
 const
   ExposureMask       = 1 shl 15;
@@ -49,6 +50,8 @@ function XCreateGC(d: PXDisplay; drw: TXID; mask: culong; values: Pointer): TGC;
 function XCopyArea(d: PXDisplay; src, dst: TXID; gc: TGC; sx, sy: cint; w, h: cuint; dx, dy: cint): cint; cdecl; external 'X11';
 function XFlush(d: PXDisplay): cint; cdecl; external 'X11';
 function XNextEvent(d: PXDisplay; ev: Pointer): cint; cdecl; external 'X11';
+function XPending(d: PXDisplay): cint; cdecl; external 'X11';
+function XConnectionNumber(d: PXDisplay): cint; cdecl; external 'X11';
 function XInternAtom(d: PXDisplay; name: PChar; only_if: cint): TXID; cdecl; external 'X11';
 function XSetWMProtocols(d: PXDisplay; w: TXID; protocols: Pointer; count: cint): cint; cdecl; external 'X11';
 
@@ -119,6 +122,7 @@ var
   ev: array[0..191] of Byte;
   page, snapOut: string;
   i, etype: Integer;
+  xfd: cint; running: Boolean; rfds: TFDSet; tv: TTimeVal;
 begin
   page := ''; snapOut := '';
   if (ParamCount >= 1) and (ParamStr(1) <> '') and (Copy(ParamStr(1),1,2) <> '--') then page := ParamStr(1);
@@ -148,32 +152,50 @@ begin
 
   canvas := TX11Canvas.Create(dpy, scr, gc);
   TinaInit(canvas);
+  RegisterLiveActions;    // sse.connect / ws.connect / live.close
   LoadPage(page);
 
-  while True do
+  // event loop with a ~30ms wait so live data (SSE/WS) is pumped when idle:
+  // select() on the X connection, then drain X events, then LiveDrain.
+  xfd := XConnectionNumber(dpy);
+  running := True;
+  while running do
   begin
-    XNextEvent(dpy, @ev);
-    etype := I32(ev, 0);
-    case etype of
-      Expose_:
-        if I32(ev, OFF_EXPOSE_COUNT) = 0 then Render;
-      ConfigureNotify_:
-        begin
-          if (I32(ev, OFF_CFG_W) > 0) and (I32(ev, OFF_CFG_H) > 0) then
-          begin GW := I32(ev, OFF_CFG_W); GH := I32(ev, OFF_CFG_H); end;
-        end;
-      ButtonPress_:
-        begin mouseDown := True; TinaTouch(0, I32(ev, OFF_X), I32(ev, OFF_Y)); Render; end;
-      ButtonRelease_:
-        begin mouseDown := False; TinaTouch(1, I32(ev, OFF_X), I32(ev, OFF_Y)); Render; end;
-      MotionNotify_:
-        begin
-          if mouseDown then begin TinaTouch(2, I32(ev, OFF_X), I32(ev, OFF_Y)); Render; end
-          else TinaHover(I32(ev, OFF_X), I32(ev, OFF_Y));
-        end;
-      ClientMessage_:
-        if TXID(PPtrUInt(PByte(@ev) + OFF_CM_DATA0)^) = wmDelete then Break;
+    if XPending(dpy) = 0 then
+    begin
+      fpFD_ZERO(rfds);
+      fpFD_SET(xfd, rfds);
+      tv.tv_sec := 0; tv.tv_usec := 30000;
+      fpSelect(xfd + 1, @rfds, nil, nil, @tv);
     end;
+    while running and (XPending(dpy) > 0) do
+    begin
+      XNextEvent(dpy, @ev);
+      etype := I32(ev, 0);
+      case etype of
+        Expose_:
+          if I32(ev, OFF_EXPOSE_COUNT) = 0 then Render;
+        ConfigureNotify_:
+          begin
+            if (I32(ev, OFF_CFG_W) > 0) and (I32(ev, OFF_CFG_H) > 0) then
+            begin GW := I32(ev, OFF_CFG_W); GH := I32(ev, OFF_CFG_H); end;
+          end;
+        ButtonPress_:
+          begin mouseDown := True; TinaTouch(0, I32(ev, OFF_X), I32(ev, OFF_Y)); Render; end;
+        ButtonRelease_:
+          begin mouseDown := False; TinaTouch(1, I32(ev, OFF_X), I32(ev, OFF_Y)); Render; end;
+        MotionNotify_:
+          begin
+            if mouseDown then begin TinaTouch(2, I32(ev, OFF_X), I32(ev, OFF_Y)); Render; end
+            else TinaHover(I32(ev, OFF_X), I32(ev, OFF_Y));
+          end;
+        ClientMessage_:
+          if TXID(PPtrUInt(PByte(@ev) + OFF_CM_DATA0)^) = wmDelete then running := False;
+      end;
+    end;
+    // live data: apply queued SSE/WS messages, relayout + repaint if changed
+    LiveDrain;
+    if BuiltinsDirty then begin BuiltinsDirty := False; TinaInvalidateLayout; Render; end;
   end;
 
   XCloseDisplay(dpy);

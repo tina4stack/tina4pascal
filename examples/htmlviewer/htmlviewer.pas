@@ -9,9 +9,10 @@ program htmlviewer;
 {$mode delphi}{$H+}
 
 uses
+  {$IFDEF UNIX}cthreads,{$ENDIF}   // SSE/WS worker threads (Tina4Live) need a thread driver
   SysUtils, StrUtils, Classes, Math, Generics.Collections,
   Tina4HTMLDom, Tina4RenderBackend, Tina4ShellCocoa, Tina4HTMLLayout, Tina4Canvas2D,
-  Tina4Lottie, Tina4Events, Tina4Builtins;
+  Tina4Lottie, Tina4Events, Tina4Builtins, Tina4Live;
 
 var
   GLottie: TTina4Lottie = nil;
@@ -507,6 +508,9 @@ procedure TViewer.MomentumTick;
 const
   DECAY = 0.92;
 begin
+  // live data (SSE/WS): fire queued messages onto their DOM elements, relayout
+  LiveDrain;
+  if BuiltinsDirty then begin BuiltinsDirty := False; Rebuild; Shell.Invalidate; end;
   // CSS animation / <lottie>: advance the shared clock + repaint while active
   if AnimActive then begin AnimAdvance(1 / 60); Shell.Invalidate; end;
   if MomentumBox = nil then Exit;
@@ -997,6 +1001,7 @@ begin
   Viewer.Parser.Parse(HTML);
   // built-in dialog.*/output.* actions dispatch against this DOM
   RegisterBuiltinActions;
+  RegisterLiveActions;    // sse.connect / ws.connect / live.close
   BuiltinsRoot := Viewer.Parser.Root;
   RecalcOutputs(BuiltinsRoot);            // seed <output> values before first paint
   Viewer.Sheet := TCSSStyleSheet.Create;
