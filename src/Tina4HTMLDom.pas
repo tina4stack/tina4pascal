@@ -389,6 +389,11 @@ type
     TransformSkewY: Single;        // deg
     TransformMatrixSet: Boolean;   // CSS matrix(a,b,c,d,e,f) present
     TransformMat: array[0..5] of Single; // a,b,c,d,e,f
+    Transform3DSet: Boolean;       // chain contains a 3D function (rotateX/Y, translateZ, perspective(), …)
+    TransformM3D: array[0..15] of Single; // row-major 4x4, point as column vector p' = M·p
+    Perspective: Single;           // `perspective` property (viewing distance px), 0 = none
+    PerspectiveOriginX: Single;    // px or %-marker (<-1.5 = %); default -50 = 50%
+    PerspectiveOriginY: Single;
     ClipPath: string;              // CSS clip-path (inset/circle/ellipse/polygon), '' = none
     Filter: string;                // CSS filter chain (blur/grayscale/…), '' = none
     BackdropFilter: string;        // CSS backdrop-filter chain, '' = none
@@ -2315,6 +2320,8 @@ begin
   Result.TransformScaleX := 1;
   Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
   Result.TransformMatrixSet := False;
+  Result.Transform3DSet := False;
+  Result.Perspective := 0; Result.PerspectiveOriginX := -50; Result.PerspectiveOriginY := -50;
   Result.ClipPath := '';
   Result.Filter := ''; Result.BackdropFilter := ''; Result.MaskImage := ''; Result.MixBlendMode := '';
   Result.TransformScaleY := 1;
@@ -2766,6 +2773,8 @@ begin
   Result.TransformScaleX := 1;
   Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
   Result.TransformMatrixSet := False;
+  Result.Transform3DSet := False;
+  Result.Perspective := 0; Result.PerspectiveOriginX := -50; Result.PerspectiveOriginY := -50;
   Result.ClipPath := '';
   Result.Filter := ''; Result.BackdropFilter := ''; Result.MaskImage := ''; Result.MixBlendMode := '';
   Result.TransformScaleY := 1;
@@ -3231,6 +3240,162 @@ begin
     aw := StrToFloatDef(t, 0);
     if aw > 0 then Result := aw;
   end;
+end;
+
+{ 4x4 row-major matrix helpers for 3D transforms. A point is a column vector
+  (x,y,z,1); the transformed point is M·p, so M[r*4+c] multiplies p[c]. }
+procedure Mat4Identity(out M: array of Single);
+var i: Integer;
+begin
+  for i := 0 to 15 do M[i] := 0;
+  M[0] := 1; M[5] := 1; M[10] := 1; M[15] := 1;
+end;
+
+procedure Mat4Mul(const A, B: array of Single; out MR: array of Single);
+var rr, cc, kk: Integer; s: Single; T: array[0..15] of Single;
+begin
+  for rr := 0 to 3 do
+    for cc := 0 to 3 do
+    begin
+      s := 0;
+      for kk := 0 to 3 do s := s + A[rr*4+kk] * B[kk*4+cc];
+      T[rr*4+cc] := s;
+    end;
+  for rr := 0 to 15 do MR[rr] := T[rr];
+end;
+
+{ Parse a CSS transform chain into a 4x4 matrix. Returns True when the chain
+  contains a 3D function (rotateX/Y, translateZ, perspective(), matrix3d, …) —
+  the caller then drives the perspective-warp path. `Vw` is the viewport width
+  for %-relative translate. }
+function Build3DTransform(const Chain: string; out M: array of Single): Boolean;
+var
+  s, fn, argstr: string;
+  i, p, q, depth: Integer;
+  args: TStringArray;
+  cur, tmp: array[0..15] of Single;
+
+  function Num(const V: string; Def: Single): Single;
+  var t: string;
+  begin
+    t := Trim(V);
+    t := StringReplace(t, 'px', '', [rfReplaceAll, rfIgnoreCase]);
+    if t.EndsWith('deg') then t := Copy(t, 1, Length(t) - 3);
+    Result := StrToFloatDef(t, Def);
+  end;
+  function Ang(const V: string): Single;   // radians from a CSS angle
+  var t: string;
+  begin
+    t := Trim(LowerCase(V));
+    if t.EndsWith('rad') then Result := StrToFloatDef(Copy(t,1,Length(t)-3), 0)
+    else if t.EndsWith('turn') then Result := StrToFloatDef(Copy(t,1,Length(t)-4), 0) * 2 * Pi
+    else begin if t.EndsWith('deg') then t := Copy(t,1,Length(t)-3); Result := StrToFloatDef(t, 0) * Pi / 180; end;
+  end;
+  procedure Apply(const N: array of Single);
+  var k: Integer;
+  begin Mat4Mul(cur, N, tmp); for k := 0 to 15 do cur[k] := tmp[k]; end;
+
+begin
+  Result := False;
+  Mat4Identity(cur);
+  s := LowerCase(Chain);
+  p := 1;
+  while p <= Length(s) do
+  begin
+    while (p <= Length(s)) and not (s[p] in ['a'..'z']) do Inc(p);
+    if p > Length(s) then Break;
+    q := p;
+    while (q <= Length(s)) and (s[q] in ['a'..'z','0'..'9']) do Inc(q);
+    fn := Copy(s, p, q - p);
+    if (q > Length(s)) or (s[q] <> '(') then begin p := q + 1; Continue; end;
+    Inc(q); depth := 1; argstr := '';
+    while (q <= Length(s)) and (depth > 0) do
+    begin
+      if s[q] = '(' then Inc(depth)
+      else if s[q] = ')' then begin Dec(depth); if depth = 0 then Break; end;
+      argstr := argstr + s[q]; Inc(q);
+    end;
+    p := q + 1;
+    args := argstr.Split([',']);
+    Mat4Identity(tmp);
+    if fn = 'perspective' then
+    begin
+      Result := True; Mat4Identity(tmp);
+      if Num(args[0], 0) <> 0 then tmp[14] := -1 / Num(args[0], 1);
+      Apply(tmp);
+    end
+    else if fn = 'rotatex' then
+    begin
+      Result := True; Mat4Identity(tmp);
+      tmp[5] := Cos(Ang(args[0])); tmp[6] := -Sin(Ang(args[0]));
+      tmp[9] := Sin(Ang(args[0])); tmp[10] := Cos(Ang(args[0]));
+      Apply(tmp);
+    end
+    else if fn = 'rotatey' then
+    begin
+      Result := True; Mat4Identity(tmp);
+      tmp[0] := Cos(Ang(args[0])); tmp[2] := Sin(Ang(args[0]));
+      tmp[8] := -Sin(Ang(args[0])); tmp[10] := Cos(Ang(args[0]));
+      Apply(tmp);
+    end
+    else if (fn = 'rotatez') or (fn = 'rotate') then
+    begin
+      Mat4Identity(tmp);
+      tmp[0] := Cos(Ang(args[0])); tmp[1] := -Sin(Ang(args[0]));
+      tmp[4] := Sin(Ang(args[0])); tmp[5] := Cos(Ang(args[0]));
+      Apply(tmp);
+    end
+    else if fn = 'translatez' then
+    begin Result := True; Mat4Identity(tmp); tmp[11] := Num(args[0], 0); Apply(tmp); end
+    else if fn = 'translate3d' then
+    begin
+      Result := True; Mat4Identity(tmp);
+      tmp[3] := Num(args[0], 0);
+      if Length(args) > 1 then tmp[7] := Num(args[1], 0);
+      if Length(args) > 2 then tmp[11] := Num(args[2], 0);
+      Apply(tmp);
+    end
+    else if fn = 'translate' then
+    begin
+      Mat4Identity(tmp); tmp[3] := Num(args[0], 0);
+      if Length(args) > 1 then tmp[7] := Num(args[1], 0);
+      Apply(tmp);
+    end
+    else if fn = 'translatex' then begin Mat4Identity(tmp); tmp[3] := Num(args[0], 0); Apply(tmp); end
+    else if fn = 'translatey' then begin Mat4Identity(tmp); tmp[7] := Num(args[0], 0); Apply(tmp); end
+    else if fn = 'scale3d' then
+    begin
+      Result := True; Mat4Identity(tmp); tmp[0] := Num(args[0],1);
+      if Length(args) > 1 then tmp[5] := Num(args[1],1);
+      if Length(args) > 2 then tmp[10] := Num(args[2],1);
+      Apply(tmp);
+    end
+    else if fn = 'scalez' then begin Result := True; Mat4Identity(tmp); tmp[10] := Num(args[0],1); Apply(tmp); end
+    else if fn = 'scale' then
+    begin
+      Mat4Identity(tmp); tmp[0] := Num(args[0],1);
+      if Length(args) > 1 then tmp[5] := Num(args[1],1) else tmp[5] := Num(args[0],1);
+      Apply(tmp);
+    end
+    else if fn = 'scalex' then begin Mat4Identity(tmp); tmp[0] := Num(args[0],1); Apply(tmp); end
+    else if fn = 'scaley' then begin Mat4Identity(tmp); tmp[5] := Num(args[0],1); Apply(tmp); end
+    else if fn = 'matrix3d' then
+    begin
+      Result := True;
+      if Length(args) >= 16 then
+      begin
+        // CSS matrix3d is column-major; transpose into our row-major layout
+        for i := 0 to 3 do
+        begin
+          tmp[0*4+i] := Num(args[i*4+0], 0); tmp[1*4+i] := Num(args[i*4+1], 0);
+          tmp[2*4+i] := Num(args[i*4+2], 0); tmp[3*4+i] := Num(args[i*4+3], 0);
+        end;
+        Apply(tmp);
+      end;
+    end;
+    // (2D matrix()/skew handled by the existing 2D path; ignored here)
+  end;
+  for i := 0 to 15 do M[i] := cur[i];
 end;
 
 class function TComputedStyle.ResolveBlock(const Block: string; const Base: TComputedStyle): TComputedStyle;
@@ -4229,7 +4394,24 @@ begin
           end;
         end;
       end;
+      // build a 4x4 for the whole chain; flag if any 3D function was present
+      Style.Transform3DSet := Build3DTransform(TfStr, Style.TransformM3D);
     end;
+  end;
+
+  // perspective property (viewing distance) — establishes 3D for descendants;
+  // here we also honour it on the element's own transform for the common case.
+  if Decls.TryGetValue('perspective', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.Perspective := 0
+    else Style.Perspective := TComputedStyle.ParseLength(Trim(Temp), 16);
+  end;
+  if Decls.TryGetValue('perspective-origin', Temp) and not ShouldSkip(Temp) then
+  begin
+    OvParts := Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    if Length(OvParts) >= 1 then Style.PerspectiveOriginX := OriginToken(OvParts[0], True);
+    if Length(OvParts) >= 2 then Style.PerspectiveOriginY := OriginToken(OvParts[1], False)
+    else Style.PerspectiveOriginY := -50;
   end;
 
   // transform-origin: <x> [<y>]  — keyword/px/% (default 50% 50%)

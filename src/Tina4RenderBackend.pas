@@ -123,6 +123,12 @@ type
       (X,Y,W,H), run the filter chain over them, and paint the result back — done
       BEFORE the element itself draws. Default: no-op (backend has no read-back). }
     procedure BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); virtual;
+    { Finish a layer begun for a 3D transform: map the captured element texture
+      onto the projected quadrilateral. Corners is [x0,y0,x1,y1,x2,y2,x3,y3] in
+      doc coords for the texture's TL, TR, BR, BL. Default: no-op (drops the
+      layer), so backends without a warp show nothing rather than an unwarped
+      copy — callers may prefer to skip the 3D path when BeginLayer returns -1. }
+    procedure EndLayer3D(Handle: Integer; const Corners: array of Single); virtual;
   end;
 
   TTina4PaintEvent = procedure(Canvas: TTina4Canvas; Width, Height: Single) of object;
@@ -385,5 +391,6 @@ procedure TTina4Canvas.ClipPolygon(const Pts: TTina4PointArray); begin end;
 function TTina4Canvas.BeginLayer(X, Y, W, H, Pad: Single): Integer; begin Result := -1; end;
 procedure TTina4Canvas.EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); begin end;
 procedure TTina4Canvas.BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); begin end;
+procedure TTina4Canvas.EndLayer3D(Handle: Integer; const Corners: array of Single); begin end;
 
 end.

@@ -112,7 +112,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | opacity | ✅ | subtree alpha via ScaleAlpha (per-channel, not group compositing) |
 | transform: translate/rotate/scale/skew | ✅ | 2D transforms via NSAffineTransform (skew adds a shear on the shell canvas — `Skew` contract method) |
 | transform: matrix() | ✅ | `matrix(a,b,c,d,e,f)` concatenated on the shell canvas (`TransformMatrix` contract method → NSAffineTransformStruct); pivots at `transform-origin` |
-| transform: 3d | ❌ | 3D (rotateX/Y/Z, perspective) not applied — needs a projection pipeline |
+| transform: 3d | ✅ | `rotateX/Y/Z`, `translateZ/translate3d`, `scaleZ/scale3d`, `perspective()`, `matrix3d()`. The chain builds a 4×4 matrix; the element rasterises into the offscreen layer, its 4 corners project through the matrix + perspective divide, and the texture is perspective-warped onto the quad (`EndLayer3D`: inverse-homography sampling → CGBitmapContext blit). The `perspective`/`perspective-origin` properties parse; per-element `perspective()` in the transform is the supported viewing model. No backface-culling / z-sorting of separate elements (`transform-style: preserve-3d` scenes) |
 | transform-origin | ✅ | keyword/px/% pivot for rotate/scale/skew (default 50% 50%) |
 | perspective | ❌ | needs a 3D pipeline |
 | clip-path | ✅ | `inset()` / `circle()` / `ellipse()` / `polygon()` — the core tessellates the shape to a polygon in border-box coords and clips the subtree via the `ClipPolygon` contract method (Cocoa: `NSBezierPath.addClip`). Radius on `inset(... round)`, `path()`, and URL references not yet applied |
@@ -180,8 +180,9 @@ col/row-resize.
 
 **Outstanding — bigger rocks** (each needs a dedicated subsystem the immediate-
 mode renderer doesn't yet have):
-1. **transform** 3D + `perspective` — a 3D projection pipeline (2D
-    translate/rotate/scale/skew/matrix() + `transform-origin` done).
+1. **transform-style: preserve-3d** multi-plane 3D scenes — a shared 3D space
+    with z-sorting + backface-culling across sibling planes (single-element 3D
+    transforms, `perspective()`, `matrix3d` are done).
 2. **mask** long tail — `url()` image masks, `mask-mode:luminance`, mask
     position/size/repeat (gradient alpha masks + `filter`/`backdrop-filter`/
     `mix-blend-mode`/`drop-shadow` and clip-path basic shapes are done).

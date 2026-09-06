@@ -866,6 +866,35 @@ begin
   end;
 end;
 
+{ Project the four corners of a box through its 3D transform matrix and
+  perspective divide, into doc-space (x,y) pairs [TL,TR,BR,BL]. }
+procedure Compute3DCorners(const st: TComputedStyle; BX, BY, BW, BH: Single;
+  out C: array of Single);
+var
+  ox, oy, pivotX, pivotY, cx, cy, X, Y, W4: Single;
+  i: Integer;
+  lx, ly: array[0..3] of Single;
+begin
+  // transform-origin in px within the box
+  if st.TransformOriginX < -1.5 then ox := BW * (-st.TransformOriginX) / 100 else ox := st.TransformOriginX;
+  if st.TransformOriginY < -1.5 then oy := BH * (-st.TransformOriginY) / 100 else oy := st.TransformOriginY;
+  pivotX := BX + ox; pivotY := BY + oy;
+  lx[0] := -ox;      ly[0] := -oy;       // TL
+  lx[1] := BW - ox;  ly[1] := -oy;       // TR
+  lx[2] := BW - ox;  ly[2] := BH - oy;   // BR
+  lx[3] := -ox;      ly[3] := BH - oy;   // BL
+  for i := 0 to 3 do
+  begin
+    cx := lx[i]; cy := ly[i];
+    X  := st.TransformM3D[0]*cx + st.TransformM3D[1]*cy + st.TransformM3D[3];
+    Y  := st.TransformM3D[4]*cx + st.TransformM3D[5]*cy + st.TransformM3D[7];
+    W4 := st.TransformM3D[12]*cx + st.TransformM3D[13]*cy + st.TransformM3D[15];
+    if W4 < 0.0001 then W4 := 0.0001;    // clamp corners at/behind the camera
+    C[i*2]     := pivotX + X / W4;
+    C[i*2 + 1] := pivotY + Y / W4;
+  end;
+end;
+
 { Interpolate two colours (ARGB) by t. }
 function LerpColor(A, B: TTina4Color; t: Single): TTina4Color;
   function Ch(sh: Integer): Cardinal;
@@ -3982,8 +4011,9 @@ var
   st: TComputedStyle;
   y, innerOfs, thumbH, thumbY, thumbW, thumbX, cx, cy, gy: Single;
   mkImgSz, filterPad: Single;
-  filterLayer: Integer;
-  useLayer: Boolean;
+  filterLayer, layer3D: Integer;
+  useLayer, use3D: Boolean;
+  corners3d: array[0..7] of Single;
   sizeTxt, val: string;
   m: TTina4TextMetrics;
   didClip: Boolean;
@@ -4028,11 +4058,22 @@ begin
   if shifted then ShiftBoxTree(Box, tx, ty);
   try
   y := Box.Y - OffsetY;
+  // CSS 3D transform: capture the element into an offscreen layer, then map that
+  // texture onto its perspective-projected quad (EndLayer3D). Takes precedence
+  // over the 2D transform / filter paths for this element.
+  use3D := st.Transform3DSet;
+  layer3D := -1;
+  if use3D then
+  begin
+    Compute3DCorners(st, Box.X, y, Box.W, Box.H, corners3d);
+    layer3D := Canvas.BeginLayer(Box.X, y, Box.W, Box.H, 0);
+    if layer3D < 0 then use3D := False;   // no offscreen: fall back to a flat paint
+  end;
   // transform: rotate/scale — wrap the subtree paint in a canvas transform
   // about the box centre (default transform-origin)
-  hasRS := (st.TransformRotate <> 0) or (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1)
+  hasRS := (not use3D) and ((st.TransformRotate <> 0) or (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1)
     or (st.TransformSkewX <> 0) or (st.TransformSkewY <> 0) or st.TransformMatrixSet
-    or (st.ClipPath <> '');
+    or (st.ClipPath <> ''));
   if hasRS then
   begin
     // pivot at transform-origin (px or %-marker; default 50% 50% = centre)
@@ -4064,7 +4105,7 @@ begin
   // CSS filter / mix-blend-mode: render this box + subtree into an offscreen
   // layer, then composite it back with the pixel effect. BeginLayer returns -1
   // on backends without offscreen support, so the effect is simply skipped.
-  useLayer := (st.Filter <> '') or (st.MixBlendMode <> '') or (st.MaskImage <> '');
+  useLayer := (not use3D) and ((st.Filter <> '') or (st.MixBlendMode <> '') or (st.MaskImage <> ''));
   filterLayer := -1;
   if useLayer then
   begin
@@ -4486,6 +4527,8 @@ begin
   end;
   finally
     // composite the filter/blend layer back before undoing the transform
+    if use3D and (layer3D >= 0) then
+      Canvas.EndLayer3D(layer3D, corners3d);
     if useLayer and (filterLayer >= 0) then
       Canvas.EndLayerFiltered(filterLayer, st.Filter, st.MixBlendMode, st.MaskImage);
     if hasRS then Canvas.RestoreState;

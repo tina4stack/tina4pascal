@@ -72,6 +72,7 @@ type
     function BeginLayer(X, Y, W, H, Pad: Single): Integer; override;
     procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); override;
     procedure BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); override;
+    procedure EndLayer3D(Handle: Integer; const Corners: array of Single); override;
   end;
 
   { NSTimer target bridging into the shell's OnTick }
@@ -1303,6 +1304,147 @@ begin
   end;
   img.release;
   SetLength(FLayers, Handle);            // pop
+end;
+
+procedure TCocoaCanvas.EndLayer3D(Handle: Integer; const Corners: array of Single);
+var
+  img: NSImage; srcRep: NSBitmapImageRep;
+  src: PSingle; dst: PByte;
+  pw, ph, bps, i, x, y, dpw, dph, sxi, syi: Integer;
+  premult, isFloat: Boolean; sdata: PByte; sbpr: Integer;
+  bw, sc, minx, miny, maxx, maxy: Single;
+  qx, qy: array[0..3] of Single;
+  sx, sy, dx1, dx2, dy1, dy2, den, ga, hb, aa, bb, cc, dd, ee, ff: Single;
+  det, ia, ib, ic, id, ie, ig, ih, ii, idd, idd2: Single;
+  hix, hiy: array[0..8] of Single;
+  u, v, wv, fx, fy, tx0, ty0: Single;
+  r0, g0, b0, a0, r1, g1, b1, a1, wx, wy: Single;
+  o00, o10, o01, o11: Integer;
+  cg, bmp: CGContextRef; cs: CGColorSpaceRef; cgimg: CGImageRef;
+
+  function Samp(bx, by, ch: Integer): Single;
+  begin
+    if bx < 0 then bx := 0; if bx > pw - 1 then bx := pw - 1;
+    if by < 0 then by := 0; if by > ph - 1 then by := ph - 1;
+    Samp := src[(by * pw + bx) * 4 + ch];
+  end;
+
+begin
+  if (Handle < 0) or (Handle > High(FLayers)) then Exit;
+  img := NSImage(FLayers[Handle].ctx);
+  bw := FLayers[Handle].w;
+  img.unlockFocus;
+  srcRep := NSBitmapImageRep(NSBitmapImageRep.alloc.initWithCGImage(
+    img.CGImageForProposedRect_context_hints(nil, nil, nil)));
+  if srcRep = nil then begin img.release; SetLength(FLayers, Handle); Exit; end;
+  pw := srcRep.pixelsWide; ph := srcRep.pixelsHigh;
+  if bw > 0 then sc := pw / bw else sc := 1;
+  // decode the element texture into a premultiplied Single buffer
+  sdata := PByte(srcRep.bitmapData); sbpr := srcRep.bytesPerRow;
+  isFloat := (srcRep.bitmapFormat and 4) <> 0;
+  premult := (srcRep.bitmapFormat and 2) = 0;
+  bps := (srcRep.bitsPerPixel div 8) div 4;
+  GetMem(src, pw * ph * 4 * SizeOf(Single));
+  for i := 0 to pw * ph - 1 do
+  begin
+    x := (i div pw); y := i - x * pw;   // note: i = row*pw + col
+    o00 := (i div pw) * sbpr + (i mod pw) * bps * 4;
+    for sxi := 0 to 3 do
+      if isFloat then src[i*4+sxi] := Half2Single(PWord(sdata + o00 + sxi*bps)^)
+      else src[i*4+sxi] := sdata[o00 + sxi*bps] / 255;
+    if not premult then
+    begin
+      a0 := src[i*4+3];
+      src[i*4] := src[i*4]*a0; src[i*4+1] := src[i*4+1]*a0; src[i*4+2] := src[i*4+2]*a0;
+    end;
+  end;
+  // doc-space AABB of the projected quad
+  minx := Corners[0]; maxx := Corners[0]; miny := Corners[1]; maxy := Corners[1];
+  for i := 1 to 3 do
+  begin
+    if Corners[i*2]   < minx then minx := Corners[i*2];
+    if Corners[i*2]   > maxx then maxx := Corners[i*2];
+    if Corners[i*2+1] < miny then miny := Corners[i*2+1];
+    if Corners[i*2+1] > maxy then maxy := Corners[i*2+1];
+  end;
+  dpw := Round((maxx - minx) * sc); dph := Round((maxy - miny) * sc);
+  if (dpw <= 0) or (dph <= 0) then begin FreeMem(src); srcRep.release; img.release; SetLength(FLayers, Handle); Exit; end;
+  // quad corners in device pixels relative to the AABB
+  for i := 0 to 3 do
+  begin qx[i] := (Corners[i*2] - minx) * sc; qy[i] := (Corners[i*2+1] - miny) * sc; end;
+  // homography mapping unit square (u,v) -> quad (qx,qy): (0,0)TL (1,0)TR (1,1)BR (0,1)BL
+  sx := qx[0] - qx[1] + qx[2] - qx[3];
+  sy := qy[0] - qy[1] + qy[2] - qy[3];
+  if (Abs(sx) < 1e-6) and (Abs(sy) < 1e-6) then
+  begin
+    aa := qx[1]-qx[0]; bb := qx[3]-qx[0]; cc := qx[0];
+    dd := qy[1]-qy[0]; ee := qy[3]-qy[0]; ff := qy[0]; ga := 0; hb := 0;
+  end
+  else
+  begin
+    dx1 := qx[1]-qx[2]; dx2 := qx[3]-qx[2]; dy1 := qy[1]-qy[2]; dy2 := qy[3]-qy[2];
+    den := dx1*dy2 - dy1*dx2; if Abs(den) < 1e-9 then den := 1e-9;
+    ga := (sx*dy2 - sy*dx2)/den; hb := (dx1*sy - dy1*sx)/den;
+    aa := qx[1]-qx[0]+ga*qx[1]; bb := qx[3]-qx[0]+hb*qx[3]; cc := qx[0];
+    dd := qy[1]-qy[0]+ga*qy[1]; ee := qy[3]-qy[0]+hb*qy[3]; ff := qy[0];
+  end;
+  // invert the 3x3 [aa bb cc; dd ee ff; ga hb 1]
+  det := aa*(ee*1 - ff*hb) - bb*(dd*1 - ff*ga) + cc*(dd*hb - ee*ga);
+  if Abs(det) < 1e-12 then det := 1e-12;
+  idd2 := 1/det;
+  ia := (ee*1 - ff*hb)*idd2;  ib := -(bb*1 - cc*hb)*idd2; ic := (bb*ff - cc*ee)*idd2;
+  id := -(dd*1 - ff*ga)*idd2; ie := (aa*1 - cc*ga)*idd2;  ig := -(aa*ff - cc*dd)*idd2;
+  ih := (dd*hb - ee*ga)*idd2; ii := -(aa*hb - bb*ga)*idd2; idd := (aa*ee - bb*dd)*idd2;
+  hix[0]:=ia; hix[1]:=ib; hix[2]:=ic; hiy[0]:=id; hiy[1]:=ie; hiy[2]:=ig;
+  // (ih,ii,idd) = last row of the inverse (the w' coefficients)
+  GetMem(dst, dpw * dph * 4);
+  FillChar(dst^, dpw * dph * 4, 0);
+  for y := 0 to dph - 1 do
+    for x := 0 to dpw - 1 do
+    begin
+      fx := x + 0.5; fy := y + 0.5;
+      wv := ih*fx + ii*fy + idd;
+      if Abs(wv) < 1e-9 then Continue;
+      u := (ia*fx + ib*fy + ic) / wv;
+      v := (id*fx + ie*fy + ig) / wv;
+      if (u < 0) or (u > 1) or (v < 0) or (v > 1) then Continue;
+      // bilinear sample of the premultiplied source texture
+      tx0 := u * (pw - 1); ty0 := v * (ph - 1);
+      sxi := Trunc(tx0); syi := Trunc(ty0); wx := tx0 - sxi; wy := ty0 - syi;
+      // top/bottom rows interpolated horizontally, then blended vertically
+      r0 := Samp(sxi,syi,0)*(1-wx)+Samp(sxi+1,syi,0)*wx;
+      g0 := Samp(sxi,syi,1)*(1-wx)+Samp(sxi+1,syi,1)*wx;
+      b0 := Samp(sxi,syi,2)*(1-wx)+Samp(sxi+1,syi,2)*wx;
+      a0 := Samp(sxi,syi,3)*(1-wx)+Samp(sxi+1,syi,3)*wx;
+      r1 := Samp(sxi,syi+1,0)*(1-wx)+Samp(sxi+1,syi+1,0)*wx;
+      g1 := Samp(sxi,syi+1,1)*(1-wx)+Samp(sxi+1,syi+1,1)*wx;
+      b1 := Samp(sxi,syi+1,2)*(1-wx)+Samp(sxi+1,syi+1,2)*wx;
+      a1 := Samp(sxi,syi+1,3)*(1-wx)+Samp(sxi+1,syi+1,3)*wx;
+      i := (y*dpw + x)*4;
+      dst[i]   := Round((r0*(1-wy)+r1*wy)*255);
+      dst[i+1] := Round((g0*(1-wy)+g1*wy)*255);
+      dst[i+2] := Round((b0*(1-wy)+b1*wy)*255);
+      dst[i+3] := Round((a0*(1-wy)+a1*wy)*255);
+    end;
+  // wrap dst in a CGImage and blit into the view context at the AABB
+  cs := CGColorSpaceCreateDeviceRGB;
+  bmp := CGBitmapContextCreate(dst, dpw, dph, 8, dpw*4, cs, kCGImageAlphaPremultipliedLast);
+  if bmp <> nil then
+  begin
+    cgimg := CGBitmapContextCreateImage(bmp);
+    cg := CGContextRef(NSGraphicsContext.currentContext.CGContext);
+    CGContextSaveGState(cg);
+    CGContextTranslateCTM(cg, minx, miny + (maxy - miny));
+    CGContextScaleCTM(cg, 1, -1);
+    CGContextDrawImage(cg, CGRectMake(0, 0, maxx - minx, maxy - miny), cgimg);
+    CGContextRestoreGState(cg);
+    CGImageRelease(cgimg);
+    CGContextRelease(bmp);
+  end;
+  CGColorSpaceRelease(cs);
+  FreeMem(dst); FreeMem(src);
+  srcRep.release; img.release;
+  SetLength(FLayers, Handle);
 end;
 
 procedure TCocoaCanvas.BackdropFilter(X, Y, W, H: Single; const FilterSpec: string);
