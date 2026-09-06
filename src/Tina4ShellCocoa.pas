@@ -70,7 +70,7 @@ type
     procedure TransformMatrix(A, B, C, D, E, F: Single); override;
     procedure ClipPolygon(const Pts: TTina4PointArray); override;
     function BeginLayer(X, Y, W, H, Pad: Single): Integer; override;
-    procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode: string); override;
+    procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); override;
     procedure BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); override;
   end;
 
@@ -913,6 +913,24 @@ begin
   end;
 end;
 
+{ Comma-split a string, ignoring commas inside parentheses (for gradient stops). }
+function SplitTopLevel(const S: string): TStringArray;
+var i, depth, start, cnt: Integer;
+begin
+  SetLength(Result, 0); depth := 0; start := 1; cnt := 0;
+  for i := 1 to Length(S) do
+  begin
+    if S[i] = '(' then Inc(depth)
+    else if S[i] = ')' then Dec(depth)
+    else if (S[i] = ',') and (depth = 0) then
+    begin
+      SetLength(Result, cnt + 1); Result[cnt] := Copy(S, start, i - start); Inc(cnt);
+      start := i + 1;
+    end;
+  end;
+  SetLength(Result, cnt + 1); Result[cnt] := Copy(S, start, Length(S) - start + 1);
+end;
+
 { Parse a CSS colour (#rgb / #rrggbb / rgb() / rgba() / a few names) to 0..1 rgba. }
 procedure ParseCssColor(const S: string; out r, g, b, a: Single);
 var t, body: string; p, q: Integer; parts: TStringArray;
@@ -920,6 +938,7 @@ begin
   r := 0; g := 0; b := 0; a := 1;
   t := LowerCase(Trim(S));
   if t = '' then Exit;
+  if t = 'transparent' then begin r := 0; g := 0; b := 0; a := 0; Exit; end;
   if t[1] = '#' then
   begin
     Delete(t, 1, 1);
@@ -954,16 +973,97 @@ begin
   // else stays black
 end;
 
-{ Apply the CSS filter chain to a bitmap rep. Decodes the rep (8-bit or 16-bit
-  float, pre- or non-premultiplied RGBA) into a planar premultiplied Single
-  buffer, runs the chain, and writes it back. }
-procedure ApplyFilterToRep(rep: NSBitmapImageRep; const Spec: string; Scale: Single);
+{ Apply the CSS filter chain (and an optional mask) to a bitmap rep. Decodes the
+  rep (8-bit or 16-bit float, pre-/non-premultiplied RGBA) into a planar
+  premultiplied Single buffer, runs the chain, applies the mask, writes back. }
+procedure ApplyFilterToRep(rep: NSBitmapImageRep; const Spec, MaskSpec: string; Scale: Single);
 var
   data: PByte; buf: PSingle;
   pw, ph, bpr, bps, n, i, o, so: Integer;
   premult, isFloat: Boolean;
   s, fn, arg: string; p, q, depth: Integer;
   sdx, sdy, sblur: Integer; sr, sg, sb, sa2: Single;
+
+  { multiply the element alpha by a linear-gradient mask (alpha mode). Supports
+    `linear-gradient([<dir>|<angle>,] stop, stop, ...)`; each stop's mask value is
+    its colour alpha (black/white=1, transparent=0), positions optional. }
+  procedure ApplyGradientMask(const M: string);
+  var
+    inner, dir, stopStr: string; body: TStringArray;
+    x, y, j, si, nstops: Integer;
+    dirDx, dirDy, t, mv, r2, g2, b2, a2, prevPos, prevA, segT: Single;
+    stopA, stopP: array of Single; hasPos: array of Boolean;
+    p2, q2: Integer; angDeg: Single;
+  begin
+    j := Pos('(', M); if j = 0 then Exit;
+    inner := Copy(M, j + 1, MaxInt);
+    j := LastDelimiter(')', inner); if j > 0 then inner := Copy(inner, 1, j - 1);
+    body := SplitTopLevel(inner);           // comma-split respecting parens
+    if Length(body) = 0 then Exit;
+    // direction (default: to bottom). Sets a unit axis in 0..1 buffer space.
+    dirDx := 0; dirDy := 1; si := 0;
+    dir := LowerCase(Trim(body[0]));
+    if dir.StartsWith('to ') or dir.EndsWith('deg') then
+    begin
+      si := 1;
+      if dir.EndsWith('deg') then
+      begin
+        angDeg := StrToFloatDef(Trim(Copy(dir, 1, Length(dir) - 3)), 180);
+        // CSS: 0deg = to top, 90deg = to right
+        dirDx := Sin(angDeg * Pi / 180); dirDy := -Cos(angDeg * Pi / 180);
+      end
+      else if Pos('right', dir) > 0 then begin dirDx := 1; dirDy := 0; end
+      else if Pos('left', dir) > 0 then begin dirDx := -1; dirDy := 0; end
+      else if Pos('top', dir) > 0 then begin dirDx := 0; dirDy := -1; end
+      else begin dirDx := 0; dirDy := 1; end;   // to bottom
+    end;
+    nstops := Length(body) - si;
+    if nstops < 1 then Exit;
+    SetLength(stopA, nstops); SetLength(stopP, nstops); SetLength(hasPos, nstops);
+    for j := 0 to nstops - 1 do
+    begin
+      stopStr := Trim(body[si + j]);
+      p2 := Pos('%', stopStr);
+      hasPos[j] := p2 > 0;
+      if hasPos[j] then
+      begin
+        q2 := p2 - 1; while (q2 > 1) and (stopStr[q2] <> ' ') do Dec(q2);
+        stopP[j] := StrToFloatDef(Trim(Copy(stopStr, q2, p2 - q2)), 0) / 100;
+        stopStr := Trim(Copy(stopStr, 1, q2));
+      end;
+      ParseCssColor(stopStr, r2, g2, b2, a2);
+      stopA[j] := a2;
+    end;
+    // fill implicit positions evenly across [0,1]
+    if not hasPos[0] then begin stopP[0] := 0; hasPos[0] := True; end;
+    if not hasPos[nstops - 1] then begin stopP[nstops - 1] := 1; hasPos[nstops - 1] := True; end;
+    for j := 1 to nstops - 2 do
+      if not hasPos[j] then stopP[j] := j / (nstops - 1);
+    // project every pixel onto the axis and sample the piecewise-linear alpha
+    for y := 0 to ph - 1 do
+      for x := 0 to pw - 1 do
+      begin
+        // t = normalised distance along the direction (centre-relative → 0..1)
+        t := ((x / pw - 0.5) * dirDx + (y / ph - 0.5) * dirDy) + 0.5;
+        if t < 0 then t := 0; if t > 1 then t := 1;
+        mv := stopA[0];
+        prevPos := stopP[0]; prevA := stopA[0];
+        for si := 1 to nstops - 1 do
+        begin
+          if t <= stopP[si] then
+          begin
+            if stopP[si] > prevPos then segT := (t - prevPos) / (stopP[si] - prevPos)
+            else segT := 0;
+            mv := prevA + (stopA[si] - prevA) * segT;
+            Break;
+          end;
+          prevPos := stopP[si]; prevA := stopA[si]; mv := stopA[si];
+        end;
+        o := (y * pw + x) * 4;
+        buf[o] := buf[o] * mv; buf[o+1] := buf[o+1] * mv;
+        buf[o+2] := buf[o+2] * mv; buf[o+3] := buf[o+3] * mv;   // premult → scale all
+      end;
+  end;
 
   function ReadSample(byteOff: Integer): Single;
   begin
@@ -1118,6 +1218,9 @@ begin
         DropShadow(sdx, sdy, sblur, sr, sg, sb, sa2);
       end;
     end;
+    // mask-image: multiply the element alpha by a gradient mask
+    if (MaskSpec <> '') and (Pos('gradient(', LowerCase(MaskSpec)) > 0) then
+      ApplyGradientMask(MaskSpec);
     // encode back
     for i := 0 to n - 1 do
     begin
@@ -1161,7 +1264,7 @@ begin
   Result := n;
 end;
 
-procedure TCocoaCanvas.EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode: string);
+procedure TCocoaCanvas.EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string);
 var
   img: NSImage; rep: NSBitmapImageRep;
   ox, oy, bw, bh, sc: Single;
@@ -1179,7 +1282,7 @@ begin
   if rep <> nil then
   begin
     if bw > 0 then sc := rep.pixelsWide / bw else sc := 1;
-    if FilterSpec <> '' then ApplyFilterToRep(rep, FilterSpec, sc);
+    if (FilterSpec <> '') or (MaskSpec <> '') then ApplyFilterToRep(rep, FilterSpec, MaskSpec, sc);
     if BlendMode <> '' then
     begin
       // mix-blend-mode: draw the CGImage directly so CGContextSetBlendMode is
@@ -1211,7 +1314,7 @@ begin
   if rep <> nil then
   begin
     if W > 0 then sc := rep.pixelsWide / W else sc := 1;
-    ApplyFilterToRep(rep, FilterSpec, sc);
+    ApplyFilterToRep(rep, FilterSpec, '', sc);
     rep.drawInRect_fromRect_operation_fraction_respectFlipped_hints(
       NSMakeRect(X, Y, W, H), NSZeroRect, 2 {SourceOver}, 1.0, True, nil);
     rep.release;

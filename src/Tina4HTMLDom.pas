@@ -392,6 +392,7 @@ type
     ClipPath: string;              // CSS clip-path (inset/circle/ellipse/polygon), '' = none
     Filter: string;                // CSS filter chain (blur/grayscale/…), '' = none
     BackdropFilter: string;        // CSS backdrop-filter chain, '' = none
+    MaskImage: string;             // CSS mask-image (gradient/url), '' = none
     MixBlendMode: string;          // CSS mix-blend-mode, '' = normal
     TransformOriginX: Single;      // px, or a %-marker (<-1.5); default -50 = 50%
     TransformOriginY: Single;
@@ -2315,7 +2316,7 @@ begin
   Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
   Result.TransformMatrixSet := False;
   Result.ClipPath := '';
-  Result.Filter := ''; Result.BackdropFilter := ''; Result.MixBlendMode := '';
+  Result.Filter := ''; Result.BackdropFilter := ''; Result.MaskImage := ''; Result.MixBlendMode := '';
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 end;
@@ -2766,7 +2767,7 @@ begin
   Result.TransformSkewX := 0; Result.TransformSkewY := 0; Result.TransformOriginX := -50; Result.TransformOriginY := -50;
   Result.TransformMatrixSet := False;
   Result.ClipPath := '';
-  Result.Filter := ''; Result.BackdropFilter := ''; Result.MixBlendMode := '';
+  Result.Filter := ''; Result.BackdropFilter := ''; Result.MaskImage := ''; Result.MixBlendMode := '';
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 
@@ -4261,6 +4262,21 @@ begin
   begin
     if SameText(Trim(Temp), 'none') then Style.BackdropFilter := ''
     else Style.BackdropFilter := Trim(Temp);
+  end;
+  if Decls.TryGetValue('mask-image', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.MaskImage := '' else Style.MaskImage := Trim(Temp);
+  end;
+  if Decls.TryGetValue('-webkit-mask-image', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.MaskImage := '' else Style.MaskImage := Trim(Temp);
+  end;
+  if Decls.TryGetValue('mask', Temp) and not ShouldSkip(Temp) then
+  begin
+    // shorthand: take the image (gradient/url) part; ignore position/size/repeat
+    if SameText(Trim(Temp), 'none') then Style.MaskImage := ''
+    else if (Pos('gradient(', LowerCase(Temp)) > 0) or (Pos('url(', LowerCase(Temp)) > 0) then
+      Style.MaskImage := Trim(Temp);
   end;
   if Decls.TryGetValue('mix-blend-mode', Temp) and not ShouldSkip(Temp) then
   begin

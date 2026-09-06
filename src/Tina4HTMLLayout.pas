@@ -4064,7 +4064,7 @@ begin
   // CSS filter / mix-blend-mode: render this box + subtree into an offscreen
   // layer, then composite it back with the pixel effect. BeginLayer returns -1
   // on backends without offscreen support, so the effect is simply skipped.
-  useLayer := (st.Filter <> '') or (st.MixBlendMode <> '');
+  useLayer := (st.Filter <> '') or (st.MixBlendMode <> '') or (st.MaskImage <> '');
   filterLayer := -1;
   if useLayer then
   begin
@@ -4487,7 +4487,7 @@ begin
   finally
     // composite the filter/blend layer back before undoing the transform
     if useLayer and (filterLayer >= 0) then
-      Canvas.EndLayerFiltered(filterLayer, st.Filter, st.MixBlendMode);
+      Canvas.EndLayerFiltered(filterLayer, st.Filter, st.MixBlendMode, st.MaskImage);
     if hasRS then Canvas.RestoreState;
     if shifted then ShiftBoxTree(Box, -tx, -ty);
   end;

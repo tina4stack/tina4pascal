@@ -119,7 +119,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | filter | ✅ | `blur` · `grayscale` · `brightness` · `contrast` · `invert` · `saturate` · `sepia` · `hue-rotate` · `opacity` · `drop-shadow`, chained. Rendered through a new offscreen-layer contract (`BeginLayer`/`EndLayerFiltered`): the element+subtree draw into an offscreen buffer, the pixels are filtered (separable box-blur ≈ Gaussian; colour-matrix ops; drop-shadow is a blurred, offset silhouette painted behind), then composited back |
 | mix-blend-mode | ✅ | all 16 separable + non-separable modes (multiply/screen/overlay/darken/lighten/color-dodge/color-burn/soft-light/hard-light/difference/exclusion/hue/saturation/color/luminosity) via `CGContextSetBlendMode` when the layer composites back |
 | backdrop-filter | ✅ | filters the already-painted pixels behind the element (captured via `initWithFocusedViewRect`) before its own background draws — same filter chain as `filter`. `-webkit-backdrop-filter` alias too |
-| mask, background-blend-mode | ❌ | mask needs a second offscreen alpha channel |
+| mask-image, mask, -webkit-mask-image | 🟡 | `linear-gradient(...)` masks (alpha mode): the gradient alpha multiplies into the element's alpha in the offscreen buffer — the common fade-out. `url()` image masks, `mask-mode:luminance`, and mask position/size/repeat not yet done |
+| background-blend-mode | ❌ | needs per-background-layer compositing |
 | animation, @keyframes | ✅ | `@keyframes` parsed; `animation` shorthand + longhands (name/duration/delay/timing/iteration/direction). Per-frame interpolation at paint off the ticker: transform (translate/rotate/scale), opacity, background-color, color; timing linear/ease/ease-in/-out; iteration + alternate/reverse |
 | transition | ✅ | eases a property toward its computed value when it changes (hover/focus/DOM): background-color, color, opacity, transform (translate/rotate/scale). Per-element from/start tracked on the tag; duration/delay/timing/property from the shorthand + longhands. Mid-transition reversal supported |
 | will-change, contain | ❌ | |
@@ -181,9 +182,9 @@ col/row-resize.
 mode renderer doesn't yet have):
 1. **transform** 3D + `perspective` — a 3D projection pipeline (2D
     translate/rotate/scale/skew/matrix() + `transform-origin` done).
-2. **mask** — extend the offscreen-layer subsystem (`filter`, `backdrop-filter`,
-    `mix-blend-mode`, `drop-shadow` and clip-path basic shapes are done): mask
-    needs a second offscreen alpha channel to multiply into the element's alpha.
+2. **mask** long tail — `url()` image masks, `mask-mode:luminance`, mask
+    position/size/repeat (gradient alpha masks + `filter`/`backdrop-filter`/
+    `mix-blend-mode`/`drop-shadow` and clip-path basic shapes are done).
 3. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
     `direction`/`writing-mode` (bidi), `vertical-align`
     text-top/text-bottom.
