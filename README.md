@@ -67,6 +67,32 @@ tina4pascal build android   # ship an APK (arm64 + armv7 + x86_64), signed
 tina4pascal doctor          # see the whole toolchain
 ```
 
+## Spot the browser
+
+One of these is Chrome. The other is a **~1.4 MB native binary** with no browser,
+no WebView, no HTML/CSS engine but its own — the same `kitchen-sink.html`,
+rendered by pure Free Pascal. Which is which?
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/images/vs-tina4.png" alt="render A"><br><sub><b>A</b></sub></td>
+<td width="50%" valign="top"><img src="docs/images/vs-chrome.png" alt="render B"><br><sub><b>B</b></sub></td>
+</tr>
+</table>
+
+<details>
+<summary><b>Reveal</b></summary><br>
+
+**A is Tina4Pascal** (native Free Pascal); **B is Chrome.** Gradients, the
+web-loaded photo, bold/italic/monospace type, linear + radial swatches,
+gradient/solid/outline buttons, the `<select>`, the checkbox and the whole card
+layout all match. The only tells are the platform form widgets: the
+`<input type="date">` (Tina4 formats it `06 Sep 2026` with a calendar glyph;
+Chrome shows the OS `2026/09/06` spinner) and the `<select>` chevron — Tina4
+draws both itself, so they follow **your CSS**, not the OS. Reproduce it with
+`tools/tina4pascal render` (Tina4) beside any browser.
+</details>
+
 ## Toolsets
 
 Everything you drive the stack with — by hand, from an IDE, or from an AI agent.

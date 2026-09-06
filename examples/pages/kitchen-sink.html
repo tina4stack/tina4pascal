@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", Helvetica, Arial, sans-serif; color: #1c2033; background: #f4f5fb; }
+  .hero {
+    padding: 34px 40px 30px;
+    background: linear-gradient(135deg, #5b3df6 0%, #9b2fe4 55%, #e0459b 100%);
+    color: #fff;
+  }
+  .hero h1 { margin: 0 0 6px; font-size: 40px; font-weight: 800; letter-spacing: -0.5px; }
+  .hero p  { margin: 0; font-size: 16px; opacity: 0.92; }
+  .badge {
+    display: inline-block; margin-bottom: 14px; padding: 5px 13px; border-radius: 20px;
+    background: rgba(255,255,255,0.18); font-size: 12px; font-weight: 700; letter-spacing: 1px;
+  }
+  .wrap { padding: 26px 40px 40px; }
+  .row { display: flex; gap: 20px; }
+  .card {
+    flex: 1; background: #fff; border-radius: 16px; padding: 20px;
+    box-shadow: 0 10px 28px rgba(40,30,90,0.12); border: 1px solid #ececf5;
+  }
+  .card h3 { margin: 0 0 10px; font-size: 18px; }
+  .card img { width: 100%; height: 130px; object-fit: cover; border-radius: 10px; margin-bottom: 12px; }
+  .muted { color: #6b6f86; font-size: 14px; line-height: 1.5; }
+  .btns { margin-top: 16px; }
+  .btn { display: inline-block; padding: 10px 18px; border-radius: 10px; font-weight: 700; font-size: 14px; margin-right: 8px; border: none; }
+  .btn-grad { background: linear-gradient(90deg,#5b3df6,#e0459b); color: #fff; }
+  .btn-solid { background: #1c2033; color: #fff; }
+  .btn-out { background: #fff; color: #5b3df6; border: 2px solid #5b3df6; }
+  label { display: block; font-size: 12px; font-weight: 700; color: #4a4e66; margin: 14px 0 5px; letter-spacing: .3px; }
+  input[type=text], input[type=email], select, input[type=date] {
+    width: 100%; padding: 10px 12px; border: 1.5px solid #d5d7e6; border-radius: 9px;
+    font-size: 14px; font-family: inherit; background: #fff; color: #1c2033;
+  }
+  .check { margin-top: 14px; font-size: 14px; color: #4a4e66; }
+  .mono { font-family: "Consolas", monospace; background: #eceaff; color: #5b3df6; padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+  .swatches { display: flex; gap: 8px; margin-top: 12px; }
+  .sw { width: 40px; height: 40px; border-radius: 10px; }
+  .s1 { background: linear-gradient(135deg,#ff9a3c,#ff3c6f); }
+  .s2 { background: radial-gradient(circle at 30% 30%,#57e6c3,#1f9d8f); }
+  .s3 { background: linear-gradient(135deg,#5b8def,#3d5afe); }
+  .s4 { background: linear-gradient(135deg,#c86dd7,#3023ae); }
+</style>
+</head>
+<body>
+  <div class="hero">
+    <span class="badge">TINA4PASCAL · NATIVE RENDER</span>
+    <h1>Kitchen Sink</h1>
+    <p>Gradients, fonts, images, buttons, inputs &amp; the date picker — one HTML file, drawn natively by Free Pascal.</p>
+  </div>
+
+  <div class="wrap">
+    <div class="row">
+      <div class="card">
+        <h3>Images &amp; type</h3>
+        <img src="https://picsum.photos/id/1069/600/300" alt="photo">
+        <p class="muted">A web-loaded photo, <b>bold</b>, <i>italic</i>, and <span class="mono">monospace</span> — full typographic control from CSS.</p>
+        <div class="swatches"><div class="sw s1"></div><div class="sw s2"></div><div class="sw s3"></div><div class="sw s4"></div></div>
+      </div>
+
+      <div class="card">
+        <h3>Buttons</h3>
+        <p class="muted">Gradient, solid and outline — with radius and shadow.</p>
+        <div class="btns">
+          <button class="btn btn-grad">Get started</button>
+          <button class="btn btn-solid">Docs</button>
+          <button class="btn btn-out">GitHub</button>
+        </div>
+        <label>Colour theme</label>
+        <select><option>Aurora (default)</option><option>Midnight</option><option>Sunrise</option></select>
+        <div class="check"><input type="checkbox" checked> Ship both ABIs</div>
+      </div>
+
+      <div class="card">
+        <h3>Form &amp; calendar</h3>
+        <label>Name</label>
+        <input type="text" value="Ada Lovelace">
+        <label>Email</label>
+        <input type="email" value="ada@tina4.com">
+        <label>Release date</label>
+        <input type="date" value="2026-09-06">
+      </div>
+    </div>
+  </div>
+</body>
+</html>
