@@ -231,9 +231,28 @@ render_project() {
   build_project "$rtarget"
   rname="$(basename "$PWD")"
   case "$rout" in *.*) : ;; *) case "$rtarget" in linux*) rout="$rout.bmp" ;; *) rout="$rout.png" ;; esac ;; esac
-  "$PWD/build/$rtarget/$rname" --snapshot "$rout" --width "$rw" --height "$rh" >/dev/null 2>&1 || true
+  rexe="$PWD/build/$rtarget/$rname"
+  # The X11 app needs a display. On a headless server (no DISPLAY) fall back to
+  # Xvfb so `render linux` still works in CI/agents; macOS/Windows render headless.
+  rneedx=0; case "$rtarget" in linux*) [ -z "${DISPLAY:-}" ] && rneedx=1 ;; esac
+  if [ "$rneedx" -eq 1 ]; then
+    if command -v xvfb-run >/dev/null 2>&1; then
+      say "${D}no DISPLAY — rendering under xvfb-run${Z}"
+      xvfb-run -a -s "-screen 0 ${rw}x${rh}x24" "$rexe" --snapshot "$rout" --width "$rw" --height "$rh" >/dev/null 2>&1 || true
+    elif command -v Xvfb >/dev/null 2>&1; then
+      say "${D}no DISPLAY — starting Xvfb :99${Z}"
+      Xvfb :99 -screen 0 "${rw}x${rh}x24" >/dev/null 2>&1 & xvpid=$!
+      sleep 1
+      DISPLAY=:99 "$rexe" --snapshot "$rout" --width "$rw" --height "$rh" >/dev/null 2>&1 || true
+      kill "$xvpid" >/dev/null 2>&1 || true
+    else
+      bad "no DISPLAY and no Xvfb — install it (Debian/Ubuntu: 'sudo apt install xvfb'; Fedora: 'dnf install xorg-x11-server-Xvfb') or set DISPLAY"; return 1
+    fi
+  else
+    "$rexe" --snapshot "$rout" --width "$rw" --height "$rh" >/dev/null 2>&1 || true
+  fi
   if [ -f "$rout" ]; then ok "rendered $rout"; echo "$rout"
-  else bad "no snapshot — the linux target needs an X display (Xvfb/WSLg); macOS/Windows render headless"; fi
+  else bad "no snapshot produced"; fi
 }
 where_project() { echo "$PWD/build/${1:-$(default_host_target)}/$(basename "$PWD")"; }
 
@@ -713,8 +732,8 @@ case "$cmd" in
   dev)        cmd_dev "$@" ;;
   macos)      cmd_macos "$@" ;;
   run)        if is_project; then run_project "$@"; else cmd_run "$@"; fi ;;
-  render)     is_project && render_project "$@" || die "render: run inside a project dir" ;;
-  where)      is_project && where_project "$@" || die "where: run inside a project dir" ;;
+  render)     if is_project; then render_project "$@"; else die "render: run inside a project dir"; fi ;;
+  where)      if is_project; then where_project "$@"; else die "where: run inside a project dir"; fi ;;
   snapshot)   cmd_snapshot "$@" ;;
   compliance) cmd_compliance "$@" ;;
   apk)        cmd_apk "$@" ;;
