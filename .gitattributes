@@ -1,0 +1,6 @@
+# Shell scripts and the POSIX CLI must stay LF so they run on macOS/Linux even
+# when the repo is checked out on Windows.
+tools/tina4pascal text eol=lf
+*.sh            text eol=lf
+# PowerShell is fine either way; keep CRLF on Windows checkouts.
+*.ps1           text eol=crlf

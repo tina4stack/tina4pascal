@@ -179,22 +179,21 @@ end.
   <p style="color:#5b5c78;margin:0">Your Tina4Pascal app is running natively.</p>
 </body>
 "@
-  Write-File (Join-Path $proj 'src\app\app.rc') "MAINICON ICON `"assets/icon.ico`"`n"
   Write-File (Join-Path $proj 'src\app\main.pas') @"
 program $name;
 {`$mode objfpc}{`$H+}
-{`$IFDEF WINDOWS}{`$R app.rc}{`$ENDIF}   // exe icon (Windows resource)
 uses Tina4App;
 begin
+  // window/taskbar icon + the on-screen logo both come from assets/icon.png,
+  // so the project builds on any host for any target with no icon tooling.
   RunApp('$Title', 'src/templates', 'index.twig', '{"name":"World"}', 'assets/icon.png', 900, 640);
 end.
 "@
-  # app icon: copy the framework brand as a starter, generate the .ico for the exe
+  # app icon: copy the framework brand as a starter (used at runtime + in the UI)
   $brand = Join-Path $Root 'branding\icon.png'
   if (Test-Path $brand) {
     New-Item -ItemType Directory -Force -Path (Join-Path $proj 'assets') | Out-Null
     Copy-Item $brand (Join-Path $proj 'assets\icon.png') -Force
-    Make-Ico (Join-Path $proj 'assets\icon.png') (Join-Path $proj 'assets\icon.ico')
   }
   Ok "scaffolded: $proj"
   # build + run
@@ -209,7 +208,35 @@ end.
   }
 }
 
+function Build-ProjectLinux($proj) {
+  # cross to Linux through WSL (the desktop X11 target)
+  if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) { Write-Host "wsl not available for the linux target" -ForegroundColor Red; return $null }
+  $name = Split-Path -Leaf $proj
+  $wproj = '/mnt/' + ($proj -replace '^([A-Za-z]):','$1').Substring(0,1).ToLower() + ($proj.Substring(2) -replace '\\','/')
+  $wfw   = '/mnt/' + ($Src  -replace '^([A-Za-z]):','$1').Substring(0,1).ToLower() + ($Src.Substring(2)  -replace '\\','/')
+  $sh = @"
+export PATH=`$HOME/fpc/bin:`$PATH
+mkdir -p `$HOME/xstublibs; [ -e `$HOME/xstublibs/libX11.so ] || ln -s /usr/lib/x86_64-linux-gnu/libX11.so.6 `$HOME/xstublibs/libX11.so
+cd '$wproj'; mkdir -p build/linux
+fpc -Mdelphi -O2 -Xs -Fu'$wfw' -Fusrc/app -Fusrc/routes -Fl`$HOME/xstublibs -k-L`$HOME/xstublibs -FEbuild/linux -FUbuild/linux -o$name src/app/main.pas 2>&1 | grep -iE 'error|fatal|linking' | tail -6
+[ -x build/linux/$name ] && echo "OK build/linux/$name" || echo "FAILED"
+"@
+  $tmp = Join-Path $env:TEMP 't4p_linux.sh'; [System.IO.File]::WriteAllText($tmp, ($sh -replace "`r`n","`n"))
+  $wtmp = '/mnt/c' + ($tmp.Substring(2) -replace '\\','/')
+  & wsl.exe -e bash $wtmp
+  $exe = Join-Path $proj "build\linux\$name"
+  if (Test-Path $exe) { Ok "built (linux): $exe"; return $exe }
+  return $null
+}
+
 function Build-Project($proj, $t) {
+  if ($t -eq 'linux') { return Build-ProjectLinux $proj }
+  if ($t -eq 'all') {
+    Build-Project $proj 'win64' | Out-Null
+    Build-Project $proj 'linux' | Out-Null
+    Write-Host "(macos / android / ios build from a Mac via tools/tina4pascal - full cross toolchain)" -ForegroundColor DarkGray
+    return $null
+  }
   $fpc = Find-Fpc
   if (-not $fpc) { Write-Host "fpc.exe not found - run doctor" -ForegroundColor Red; return $null }
   $flags = @('-Twin64','-Px86_64'); if ($t -eq 'win32') { $flags=@() }
@@ -227,21 +254,34 @@ function Build-Project($proj, $t) {
   Write-Host "build failed" -ForegroundColor Red; return $null
 }
 
+# Is the current directory a Tina4Pascal project?
+function Project-Root { if (Test-Path (Join-Path (Get-Location) 'tina4.json')) { return (Get-Location).Path } else { return $null } }
+
 if ($cmd -eq 'doctor') {
   Invoke-Doctor
 } elseif ($cmd -eq 'init') {
   Invoke-Init $target
 } elseif ($cmd -eq 'build') {
-  Invoke-Build $target | Out-Null
+  $pr = Project-Root
+  if ($pr) { Build-Project $pr $target | Out-Null }   # inside a project: build the app
+  else { Invoke-Build $target | Out-Null }             # inside the framework: build the viewer
 } elseif ($cmd -eq 'run') {
-  $exe = Invoke-Build $target
-  if ($exe) {
-    if (-not $page) { $page = Join-Path $View 'win-test.html' }
-    Write-Host "-> $page"
-    Start-Process -FilePath $exe -ArgumentList $page -WorkingDirectory $View
+  $pr = Project-Root
+  if ($pr) {
+    $exe = Build-Project $pr $target
+    if ($exe) { Write-Host "-> running"; Start-Process -FilePath $exe -WorkingDirectory $pr }
+  } else {
+    $exe = Invoke-Build $target
+    if ($exe) {
+      if (-not $page) { $page = Join-Path $View 'win-test.html' }
+      Write-Host "-> $page"
+      Start-Process -FilePath $exe -ArgumentList $page -WorkingDirectory $View
+    }
   }
 } elseif ($cmd -eq 'where') {
-  Write-Host (Join-Path (Join-Path $Build $target) 'htmlviewer_win.exe')
+  $pr = Project-Root
+  if ($pr) { Write-Host (Join-Path (Join-Path $pr "build\$target") ((Split-Path -Leaf $pr) + '.exe')) }
+  else { Write-Host (Join-Path (Join-Path $Build $target) 'htmlviewer_win.exe') }
 } else {
-  Write-Host "unknown command '$cmd' (doctor | build | run | where)"
+  Write-Host "unknown command '$cmd' (doctor | init | build | run | where)"
 }

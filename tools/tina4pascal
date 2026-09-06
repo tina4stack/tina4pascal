@@ -177,6 +177,108 @@ cmd_build() {
   esac
 }
 
+# ---- projects: init / project-aware build & run -----------------------------
+is_project() { [ -f "$PWD/tina4.json" ]; }
+default_host_target() {
+  case "$(uname -s)" in Darwin) echo macos ;; Linux) echo linux ;; *) echo linux ;; esac
+}
+
+# build the current project's native app for a target into build/<target>/<name>
+build_project() {
+  target="${1:-$(default_host_target)}"
+  is_project || die "not a Tina4Pascal project (no tina4.json)"
+  if [ "$target" = "all" ]; then
+    # every desktop/mobile target the toolchain can reach; skip the ones it can't
+    for t in macos windows linux linux-arm64 android ios; do
+      say "${B}— $t —${Z}"
+      ( build_project "$t" ) || bad "$t skipped (cross toolchain not installed for this target)"
+    done
+    return
+  fi
+  name="$(basename "$PWD")"
+  flags="$(target_flags "$target")" || die "unknown target '$target'"
+  need_fpc
+  out="$PWD/build/$target"; mkdir -p "$out"
+  extra=""
+  case "$target" in
+    linux|linux-arm64)
+      # make -lX11 resolvable without libx11-dev
+      if [ ! -e /usr/lib/x86_64-linux-gnu/libX11.so ] && [ -e /usr/lib/x86_64-linux-gnu/libX11.so.6 ]; then
+        mkdir -p "$HOME/.tina4/xstub"
+        ln -sf /usr/lib/x86_64-linux-gnu/libX11.so.6 "$HOME/.tina4/xstub/libX11.so"
+        extra="-Fl$HOME/.tina4/xstub -k-L$HOME/.tina4/xstub"
+      fi ;;
+  esac
+  say "${D}fpc $flags src/app/main.pas${Z}"
+  "$FPC" -Mdelphi -O2 -Xs $flags -Fu"$SRC" -Fusrc/app -Fusrc/routes $extra \
+    -FE"$out" -FU"$out" -o"$name" src/app/main.pas 2>&1 | grep -Ei "error|fatal" && die "build failed" || true
+  ok "$name ($target) -> build/$target/$name"
+}
+
+run_project() {
+  target="${1:-$(default_host_target)}"
+  build_project "$target"
+  name="$(basename "$PWD")"
+  say "→ running build/$target/$name"
+  ( exec "$PWD/build/$target/$name" )
+}
+
+# scaffold a full Tina4-backend-style project, then build + run it
+cmd_init() {
+  name="${1:-}"; [ -n "$name" ] || die "usage: tina4pascal init <name>"
+  [ -e "$name" ] && die "'$name' already exists"
+  need_fpc
+  title="$(printf '%s' "$name" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
+  d="$name"
+  mkdir -p "$d/migrations" "$d/assets" "$d/src/app" "$d/src/routes" "$d/src/orm" "$d/src/services" "$d/src/templates"
+
+  cat > "$d/tina4.json" <<EOF
+{
+  "name": "$name",
+  "title": "$title",
+  "bundleId": "com.tina4.$name",
+  "window": { "width": 900, "height": 640 },
+  "entry": "src/templates/index.twig",
+  "targets": ["macos", "linux", "win64", "android", "ios"]
+}
+EOF
+  printf 'build/\n*.o\n*.ppu\n*.exe\n' > "$d/.gitignore"
+  printf '# %s\n\nA Tina4Pascal native app. `tina4pascal run` builds and launches it.\n' "$title" > "$d/README.md"
+  printf -- '-- 0001_init: first migration\n-- CREATE TABLE example (id INTEGER PRIMARY KEY, name TEXT);\n' > "$d/migrations/0001_init.sql"
+  : > "$d/src/orm/.gitkeep"; : > "$d/src/services/.gitkeep"
+  cat > "$d/src/routes/home.pas" <<'EOF'
+unit home;
+{ Route handlers for semantic events, e.g. onclick="Home:hello". }
+{$mode objfpc}{$H+}
+interface
+implementation
+end.
+EOF
+  cat > "$d/src/templates/layout.twig" <<'EOF'
+<body style="margin:0;font-family:Helvetica,Segoe UI,sans-serif;background:#fbfaf7">
+  {% block content %}{% endblock %}
+</body>
+EOF
+  cat > "$d/src/templates/index.twig" <<'EOF'
+<body style="margin:0;font-family:Helvetica,Segoe UI,sans-serif;background:#fbfaf7;text-align:center;padding-top:140px">
+  <img src="assets/icon.png" width="96" height="96" style="border-radius:22px">
+  <h1 style="color:#2b41e6;margin:18px 0 4px;font-size:34px">Hello {{ name }}!</h1>
+  <p style="color:#5b5c78;margin:0">Your Tina4Pascal app is running natively.</p>
+</body>
+EOF
+  cat > "$d/src/app/main.pas" <<EOF
+program $name;
+{\$mode objfpc}{\$H+}
+uses Tina4App;
+begin
+  RunApp('$title', 'src/templates', 'index.twig', '{"name":"World"}', 'assets/icon.png', 900, 640);
+end.
+EOF
+  [ -f "$ROOT/branding/icon.png" ] && cp "$ROOT/branding/icon.png" "$d/assets/icon.png"
+  ok "scaffolded ${B}$d/${Z}"
+  ( cd "$d" && run_project "$(default_host_target)" )
+}
+
 # ---- test / run / snapshot / compliance -------------------------------------
 cmd_test() {
   need_fpc
@@ -584,12 +686,13 @@ cmd="${1:-help}"; [ $# -gt 0 ] && shift || true
 case "$cmd" in
   doctor)     cmd_doctor "$@" ;;
   setup)      cmd_setup "$@" ;;
-  build)      cmd_build "$@" ;;
+  init)       cmd_init "$@" ;;
+  build)      if is_project; then build_project "$@"; else cmd_build "$@"; fi ;;
   test)       cmd_test "$@" ;;
   new)        cmd_new "$@" ;;
   dev)        cmd_dev "$@" ;;
   macos)      cmd_macos "$@" ;;
-  run)        cmd_run "$@" ;;
+  run)        if is_project; then run_project "$@"; else cmd_run "$@"; fi ;;
   snapshot)   cmd_snapshot "$@" ;;
   compliance) cmd_compliance "$@" ;;
   apk)        cmd_apk "$@" ;;
