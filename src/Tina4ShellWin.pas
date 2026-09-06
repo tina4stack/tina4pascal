@@ -69,6 +69,7 @@ type
     function MeasureText(const Text: string; FontSize: Single;
       Styles: TTina4FontStyles): TTina4TextMetrics; override;
     procedure SetClip(X, Y, W, H: Single); override;
+    procedure ClipPolygon(const Pts: TTina4PointArray); override;
     procedure ClearClip; override;
     procedure SaveState; override;
     procedure RestoreState; override;
@@ -129,6 +130,16 @@ function GdipDeleteGraphics(graphics: Pointer): Integer; stdcall; external 'gdip
 function GdipSetInterpolationMode(graphics: Pointer; mode: Integer): Integer;
   stdcall; external 'gdiplus.dll';
 function GdipDrawImageRectI(graphics, image: Pointer; x, y, w, h: Integer): Integer;
+  stdcall; external 'gdiplus.dll';
+function GdipDrawImageRectRectI(graphics, image: Pointer;
+  dstx, dsty, dstw, dsth, srcx, srcy, srcw, srch, srcUnit: Integer;
+  imageAttributes, callback, callbackData: Pointer): Integer;
+  stdcall; external 'gdiplus.dll';
+function GdipCreateImageAttributes(out imageattr: Pointer): Integer;
+  stdcall; external 'gdiplus.dll';
+function GdipSetImageAttributesWrapMode(imageattr: Pointer; wrap: Integer;
+  argb: LongWord; clamp: LongBool): Integer; stdcall; external 'gdiplus.dll';
+function GdipDisposeImageAttributes(imageattr: Pointer): Integer;
   stdcall; external 'gdiplus.dll';
 function GdipCreateHICONFromBitmap(bitmap: Pointer; out hicon: HICON): Integer;
   stdcall; external 'gdiplus.dll';
@@ -382,13 +393,29 @@ begin
 end;
 
 procedure TWinCanvas.DrawImage(Handle: Integer; X, Y, W, H: Single);
-var g: Pointer;
+var g, attr: Pointer; iw, ih: LongWord;
 begin
   if (Handle < 0) or (Handle > High(FImages)) or (FImages[Handle].Img = nil) then Exit;
   if (W <= 0) or (H <= 0) then Exit;
   if GdipCreateFromHDC(DC, g) <> 0 then Exit;
   GdipSetInterpolationMode(g, 7);   // HighQualityBicubic
-  GdipDrawImageRectI(g, FImages[Handle].Img, Round(X), Round(Y), Round(W), Round(H));
+  // Draw from the explicit source rect with a TileFlipXY wrap mode: when the
+  // image is upscaled (e.g. background-size:cover on a tiny bitmap), bicubic
+  // sampling past the edge would otherwise fade to transparent and leave a halo.
+  iw := 0; ih := 0;
+  GdipGetImageWidth(FImages[Handle].Img, iw);
+  GdipGetImageHeight(FImages[Handle].Img, ih);
+  attr := nil;
+  if (iw > 0) and (ih > 0) and (GdipCreateImageAttributes(attr) = 0) then
+  begin
+    GdipSetImageAttributesWrapMode(attr, 3 {WrapModeTileFlipXY}, 0, False);
+    GdipDrawImageRectRectI(g, FImages[Handle].Img,
+      Round(X), Round(Y), Round(W), Round(H),
+      0, 0, Integer(iw), Integer(ih), 2 {UnitPixel}, attr, nil, nil);
+    GdipDisposeImageAttributes(attr);
+  end
+  else
+    GdipDrawImageRectI(g, FImages[Handle].Img, Round(X), Round(Y), Round(W), Round(H));
   GdipDeleteGraphics(g);
 end;
 
@@ -647,6 +674,30 @@ end;
 procedure TWinCanvas.ClearClip;
 begin
   if FClipSaved then begin RestoreDC(DC, -1); FClipSaved := False; end;
+end;
+
+{ CSS clip-path: intersect a polygon (device coords) into the current clip.
+  Undone by the surrounding SaveState/RestoreState, matching the Cocoa backend.
+  The GDI region is in device space, so it ignores any active world transform —
+  fine for a plain clip-path (the transform is identity); a clip-path combined
+  with rotate/scale is a known limitation. }
+procedure TWinCanvas.ClipPolygon(const Pts: TTina4PointArray);
+var rgn: HRGN; i, n: Integer; gp: array of TPoint;
+begin
+  n := Length(Pts);
+  if n < 3 then Exit;
+  SetLength(gp, n);
+  for i := 0 to n - 1 do
+  begin
+    gp[i].X := Round(Pts[i].X);
+    gp[i].Y := Round(Pts[i].Y);
+  end;
+  rgn := CreatePolygonRgn(gp[0], n, WINDING);
+  if rgn <> 0 then
+  begin
+    ExtSelectClipRgn(DC, rgn, RGN_AND);
+    DeleteObject(rgn);
+  end;
 end;
 
 procedure TWinCanvas.SaveState;

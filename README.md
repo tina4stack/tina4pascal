@@ -260,20 +260,19 @@ PPC_CONFIG_PATH=$HOME/fpc/etc $HOME/fpc/bin/fpc -Mdelphi -Twin64 -Px86_64 \
 
 ### What's next on Windows
 
-The GDI+ shell renders shapes, ClearType text, clipping, 2D transforms, the full
-compositing pipeline, **AA gradients (linear/radial), `<img>` decode/draw, and
-per-pixel `rgba()` alpha** — the [comparison above](#spot-the-browser) exercises
-all of them. Reftests: **128/130** pass. What's left:
+The GDI+ shell renders shapes, ClearType text, clipping, `clip-path`, 2D
+transforms, the full compositing pipeline, **AA gradients (linear/radial),
+`<img>` decode/draw, per-pixel `rgba()` alpha and `background-size: cover`** —
+the [comparison above](#spot-the-browser) exercises them. Reftests: **130/130**
+pass. What's left:
 
-1. **`background-size: cover`** (`bgimage-cover` reftest) — cover sizing/anchoring
-   of a background image isn't pixel-exact yet.
-2. **`clip-path` accuracy** (`css-clippath` reftest) — basic shapes tessellate
-   and clip, but don't yet pixel-match the reference.
-3. **Advanced blend modes** — `color-dodge`/`burn`, `hue`/`saturation`/`color`/
+1. **Advanced blend modes** — `color-dodge`/`burn`, `hue`/`saturation`/`color`/
    `luminosity` fall back to source-over in `BlendPixel` (multiply, screen,
    darken, lighten, overlay, difference are in).
-4. **HiDPI** — the shell runs at density 1; read the per-monitor DPI and
+2. **HiDPI** — the shell runs at density 1; read the per-monitor DPI and
    supersample the layers.
+3. **`clip-path` under a transform** — the GDI clip is device-space, so a
+   clip-path combined with rotate/scale isn't yet positioned correctly.
 
 See `src/Tina4ShellWin.pas` (canvas) and `examples/htmlviewer/htmlviewer_win.pas`
 (the Win32 host + message loop).
@@ -291,7 +290,7 @@ Each layer has a design doc:
 
 | Layer | Status | Doc |
 |---|---|---|
-| Renderer (DOM/CSS/layout) | rendering on macOS, Windows (128/130 reftests) and Linux; systematic conformance push | [CONFORMANCE.md](docs/CONFORMANCE.md), [CSS-PROPERTY-INDEX.md](docs/CSS-PROPERTY-INDEX.md), [HTML-ELEMENT-INDEX.md](docs/HTML-ELEMENT-INDEX.md) |
+| Renderer (DOM/CSS/layout) | rendering on macOS, Windows (130/130 reftests) and Linux; systematic conformance push | [CONFORMANCE.md](docs/CONFORMANCE.md), [CSS-PROPERTY-INDEX.md](docs/CSS-PROPERTY-INDEX.md), [HTML-ELEMENT-INDEX.md](docs/HTML-ELEMENT-INDEX.md) |
 | Platform shells | macOS + iOS (Objective-Pascal), Windows (GDI+), Linux (Xlib) and Android (JNI → Canvas) all render; desktop shells share offscreen filter/blend/mask/3D compositing. Android APKs build **natively from Windows** | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Data layer (WS/SSE/API) | designed, ports of tina4delphi units | [ROADMAP-DATALAYER.md](docs/ROADMAP-DATALAYER.md) |
 | Frond template engine | designed, port of Tina4Frond.pas | [ROADMAP-FROND.md](docs/ROADMAP-FROND.md) |
@@ -308,8 +307,7 @@ tools/compare.sh bootstrap_test  # stack our render over Chrome for a page
 
 ## Roadmap
 
-1. **Conformance**: close the last Windows reftests (`background-size: cover`,
-   `clip-path`), add the advanced blend modes and HiDPI, then keep pushing
+1. **Conformance**: add the advanced blend modes and HiDPI (last Windows gaps), then keep pushing
    flexbox, positioning, list markers and table spans.
 2. **Linux shell parity**: images + the filter/blend/mask/3D compositor (the
    desktop-class pieces the X11 shell doesn't share yet).
