@@ -938,6 +938,12 @@ begin
   end;
 end;
 
+{ bridge the decoupled Tina4Notify hook to the Cocoa shell's native banner }
+procedure NotifyBridge(const Title, Body, Tag: string);
+begin
+  if (Viewer <> nil) and (Viewer.Shell <> nil) then Viewer.Shell.Notify(Title, Body, Tag);
+end;
+
 var
   FileName, SnapPath, HTML, CSSFile, CSSCacheDir, ScriptPath, FontFam, FontUrl: string;
   SL: TStringList;
@@ -995,6 +1001,7 @@ begin
   RecalcOutputs(BuiltinsRoot);            // seed <output> values before first paint
   Viewer.Sheet := TCSSStyleSheet.Create;
   Viewer.Shell := TCocoaShell.Create;            // created early: fetches remote <link> CSS
+  Tina4SetNotifyHandler(@NotifyBridge);          // notify.show(...) → native banner
   RegisterCanvasPainter('demo', @CanvasDemo);   // <canvas id="demo"> → the Pascal painter
   RegisterCanvasPainter('lottie', @LottiePainter);
 

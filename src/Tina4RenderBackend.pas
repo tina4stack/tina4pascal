@@ -174,6 +174,10 @@ type
     procedure SetTitle(const Title: string); virtual;
     { Set the OS pointer shape (CSS `cursor`). Default: no-op (touch shells). }
     procedure SetCursor(C: TTina4Cursor); virtual;
+    { Post a local OS notification (Notification Center / toast / libnotify).
+      Tag lets a later notification replace an earlier one with the same tag.
+      Default: no-op; each desktop/mobile shell overrides with the native call. }
+    procedure Notify(const Title, Body, Tag: string); virtual;
     { Fetch a URL synchronously and write the bytes to DestPath. Used to pull an
       external <link rel=stylesheet href> before the first layout (same idea as
       the font fetch). Returns True on success. Default: False (no network). }
@@ -188,7 +192,27 @@ type
     function GetMeasuringCanvas: TTina4Canvas; virtual; abstract;
   end;
 
+  { A decoupled notification hook: the host wires this to its shell's Notify, and
+    the core (an HTML `notify.show` action or an SSE/WS handler) calls Tina4Notify
+    without a shell reference. No-op until a host registers a handler. }
+  TTina4NotifyProc = procedure(const Title, Body, Tag: string);
+
+procedure Tina4SetNotifyHandler(P: TTina4NotifyProc);
+procedure Tina4Notify(const Title, Body, Tag: string);
+
 implementation
+
+var GNotifyHook: TTina4NotifyProc = nil;
+
+procedure Tina4SetNotifyHandler(P: TTina4NotifyProc);
+begin
+  GNotifyHook := P;
+end;
+
+procedure Tina4Notify(const Title, Body, Tag: string);
+begin
+  if Assigned(GNotifyHook) then GNotifyHook(Title, Body, Tag);
+end;
 
 procedure TTina4Shell.SetTitle(const Title: string);
 begin
@@ -198,6 +222,11 @@ end;
 procedure TTina4Shell.SetCursor(C: TTina4Cursor);
 begin
   // optional per shell (desktop shells override with native cursors)
+end;
+
+procedure TTina4Shell.Notify(const Title, Body, Tag: string);
+begin
+  // optional per shell (desktop/mobile shells post a native notification)
 end;
 
 function TTina4Shell.FetchToFile(const Url, DestPath: string): Boolean;

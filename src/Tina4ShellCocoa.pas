@@ -124,6 +124,7 @@ type
     procedure Quit; override;
     procedure SetTitle(const Title: string); override;
     procedure SetCursor(C: TTina4Cursor); override;
+    procedure Notify(const Title, Body, Tag: string); override;
     function FetchToFile(const Url, DestPath: string): Boolean; override;
     procedure StartTicker(IntervalMs: Integer); override;
     function PickFile: string; override;
@@ -1247,6 +1248,28 @@ begin
     cur := NSCursor.arrowCursor;          // default / wait / help
   end;
   if cur <> nil then cur.set_;
+end;
+
+{ Post a Notification Center banner. AppleScript's `display notification` works
+  from any process (a bundled app is not required), so we launch osascript with
+  NSTask — non-blocking, no shell quoting (args are passed directly). }
+procedure TCocoaShell.Notify(const Title, Body, Tag: string);
+  function Esc(const S: string): string;   // escape for an AppleScript string literal
+  begin
+    Result := StringReplace(S, '\', '\\', [rfReplaceAll]);
+    Result := StringReplace(Result, '"', '\"', [rfReplaceAll]);
+  end;
+var task: NSTask; args: NSMutableArray; script: string;
+begin
+  script := 'display notification "' + Esc(Body) + '" with title "' + Esc(Title) + '"';
+  args := NSMutableArray.arrayWithCapacity(2);
+  args.addObject(NSSTR('-e'));
+  args.addObject(NSSTR(PAnsiChar(UTF8Encode(script))));
+  task := NSTask.alloc.init;
+  task.setLaunchPath(NSSTR('/usr/bin/osascript'));
+  task.setArguments(args);
+  try task.launch; except end;   // best-effort; never block the UI
+  task.release;
 end;
 
 function TCocoaShell.FetchToFile(const Url, DestPath: string): Boolean;

@@ -39,7 +39,7 @@ function FindByName(Root: THTMLTag; const Name: string): THTMLTag;
 
 implementation
 
-uses SysUtils, Tina4Events;
+uses SysUtils, Tina4Events, Tina4RenderBackend;
 
 function FindById(Root: THTMLTag; const Id: string): THTMLTag;
 var c: THTMLTag;
@@ -278,10 +278,51 @@ begin
   BuiltinsDirty := True;
 end;
 
+{ first #text child's text, joined — reads what SetElementText writes }
+function ElemText(T: THTMLTag): string;
+var i: Integer;
+begin
+  Result := '';
+  if T = nil then Exit;
+  for i := 0 to T.Children.Count - 1 do
+    if T.Children[i].TagName = '#text' then Result := Result + T.Children[i].Text;
+end;
+
+{ notify.show('Title', 'Body') — post a local OS notification through the host's
+  registered handler. One arg = title only; the id of an element resolves to its
+  text if unquoted (so notify.show(msg) can surface a live SSE value). }
+procedure ActNotifyShow(const Args: string);
+var s, a0, a1, title, body: string; depth, i, comma: Integer; inq: Char; el: THTMLTag;
+begin
+  s := Trim(Args);
+  // split on the first top-level comma (respect quotes)
+  comma := 0; depth := 0; inq := #0;
+  for i := 1 to Length(s) do
+  begin
+    if inq <> #0 then begin if s[i] = inq then inq := #0; end
+    else if (s[i] = '''') or (s[i] = '"') then inq := s[i]
+    else if s[i] = '(' then Inc(depth)
+    else if s[i] = ')' then Dec(depth)
+    else if (s[i] = ',') and (depth = 0) then begin comma := i; Break; end;
+  end;
+  if comma > 0 then begin a0 := Trim(Copy(s, 1, comma - 1)); a1 := Trim(Copy(s, comma + 1, MaxInt)); end
+  else begin a0 := s; a1 := ''; end;
+
+  // a quoted arg is a literal; a bare identifier is an element id → its text
+  if (a0 <> '') and (a0[1] in ['''', '"']) then title := Unquote(a0)
+  else begin el := FindById(BuiltinsRoot, a0); if el <> nil then title := ElemText(el) else title := a0; end;
+  if (a1 <> '') and (a1[1] in ['''', '"']) then body := Unquote(a1)
+  else if a1 <> '' then begin el := FindById(BuiltinsRoot, a1); if el <> nil then body := ElemText(el) else body := a1; end
+  else body := '';
+
+  Tina4Notify(title, body, '');
+end;
+
 procedure RegisterBuiltinActions;
 begin
   RegisterAction('dialog.show', @ActDialogShow);
   RegisterAction('dialog.showModal', @ActDialogShowModal);
+  RegisterAction('notify.show', @ActNotifyShow);
   RegisterAction('dialog.close', @ActDialogClose);
   RegisterAction('output.recalc', @ActOutputRecalc);
 end;
