@@ -37,6 +37,12 @@ procedure RecalcOutputs(Root: THTMLTag);
 function FindById(Root: THTMLTag; const Id: string): THTMLTag;
 function FindByName(Root: THTMLTag; const Name: string): THTMLTag;
 
+{ Set an element's rendered text (reuses/creates its #text child). Exposed so the
+  live data layer (Tina4Live) can bind an SSE/WS event to a DOM node by id. }
+procedure SetElementText(T: THTMLTag; const S: string);
+{ Strip surrounding quotes from an action argument ('info' → info). }
+function Unquote(const S: string): string;
+
 implementation
 
 uses SysUtils, Tina4Events, Tina4RenderBackend;
