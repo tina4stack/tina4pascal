@@ -306,6 +306,39 @@ tools/run-compliance.sh          # reftest suite → PASS/FAIL table
 tools/compare.sh bootstrap_test  # stack our render over Chrome for a page
 ```
 
+## Releases
+
+Signed downloads (Windows Authenticode + Linux GPG) are on the
+[GitHub Releases](https://github.com/tina4stack/tina4pascal/releases) page; each
+asset ships a `.sha256`.
+
+### v1.0.1
+
+- **WebP** — pure-Pascal decoder (VP8L lossless, lossy VP8, lossy + ALPH alpha),
+  wired into the image pipeline. No external libraries.
+- **HTML → PDF** — a headless `Tina4CanvasPdf` renders the same layout to a
+  FlateDecode-compressed PDF (`--pdf`), with embedded images and text.
+- **Linux text via FreeType** — scalable, Unicode, anti-aliased. The old X11
+  core-font path only reached 8-bit iso8859-1, so glyphs like `−`, `—`, `…`,
+  `↔` rendered as tofu; they render correctly now. **Bundled fonts**: a
+  `fonts/` directory beside the executable wins over system fonts, so an app
+  renders identically everywhere (including minimal containers).
+- **DrawRGBA on every shell** (Windows / Cocoa / Linux) — on-screen WebP and
+  faster Lottie.
+- **Fix** — inline `margin-right` was dropped by the layout engine, so
+  inline-block elements sat flush against the next box (a chip strip touched
+  instead of spacing out). Now honoured for inline-block, `<img>`, form
+  controls and `<svg>` on every backend.
+- **Tests / CI** — new `webp` and `pdf` suites wired into `tina4pascal test`
+  (12 total); a cross-OS matrix builds/tests on every push and attaches the
+  Linux + macOS artifacts when a release is tagged.
+
+### v1.0.0
+
+First release — the native HTML/CSS engine on Windows (GDI+), Linux (X11),
+macOS (Cocoa) and Android (JNI), with the developer CLIs, the AI-drivable MCP
+server, and signed Windows + FPC→Android cross-pack artifacts.
+
 ## Roadmap
 
 1. **Conformance**: add the advanced blend modes and HiDPI (last Windows gaps), then keep pushing
