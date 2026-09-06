@@ -20,4 +20,10 @@ tests/leakcheck
 
 # tina4pascal CLI build outputs
 /build/
+# local FPC build/output dirs used when compiling examples/tests
+_b/
+_rel/
+_chk/
+_fpcbuild/
+*.exe
 examples/canvas/main

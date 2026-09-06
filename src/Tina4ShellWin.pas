@@ -27,6 +27,9 @@ type
     ox, oy, w, h: Integer;
   end;
 
+  { one decoded image: a GDI+ GpImage plus its pixel size }
+  TWinImage = record Img: Pointer; W, H: Integer; end;
+
   TWinCanvas = class(TTina4Canvas)
   private
     FDC: HDC;              // current frame device context (set by BeginFrame)
@@ -35,6 +38,8 @@ type
     FDestBits: PByte;      // the frame's back-buffer DIB pixels (BGRA, top-down)
     FDestW, FDestH: Integer;
     FLayers: array of TWinLayer;
+    FImages: array of TWinImage;  // handle -> decoded GDI+ image
+    FImageSrc: TStringList;       // src -> handle (Objects=PtrInt), -1 = cached failure
     function FaceFor(const Family: string): WideString;
     function MakeFont(SizePx: Single; Styles: TTina4FontStyles): HFONT;
     function DC: HDC;      // FDC if painting, else the measuring DC
@@ -47,6 +52,9 @@ type
     { ADC is the frame's memory DC; DestBits/DW/DH are its backing 32-bit
       top-down DIB pixels so blend-modes and backdrop-filter can read/write them. }
     procedure BeginFrame(ADC: HDC; DestBits: PByte; DW, DH: Integer);
+    function LoadImage(const Src: string): Integer; override;
+    function ImageSize(Handle: Integer; out W, H: Single): Boolean; override;
+    procedure DrawImage(Handle: Integer; X, Y, W, H: Single); override;
     procedure FillRect(X, Y, W, H: Single; Color: TTina4Color); override;
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); override;
     procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); override;
@@ -69,10 +77,172 @@ type
     procedure EndLayer3D(Handle: Integer; const Corners: array of Single); override;
   end;
 
+{ Decode an image file (png/jpg/ico/bmp) through GDI+ and hand back a Windows
+  HICON, so the app/window can wear the real Tina4 branding logo instead of the
+  default. Returns 0 if the file is missing or cannot be decoded. }
+function WinLoadHIcon(const Path: string): HICON;
+
+{ Save a 32-bit top-down BGRA buffer (w*h*4 bytes) as an opaque PNG via GDI+.
+  Used by the headless snapshot / reftest path. }
+function WinSaveDibPng(bits: PByte; w, h: Integer; const path: string): Boolean;
+
 implementation
+
+uses
+  base64, md5;
 
 const
   CLEARTYPE_QUALITY = 5;
+
+{ ---- GDI+ flat API (image decode + blit) ---------------------------------
+  Images on Windows go through GDI+ (gdiplus.dll, present on every supported
+  Windows): it decodes png/jpg/gif/bmp and blits with alpha through the same
+  HDC the engine paints into, so clipping (border-radius / overflow) is honoured.
+  The GDI world transform used for CSS transforms is GDI-only and not seen by
+  GDI+, so an image inside a `transform` paints unwarped in v1. }
+type
+  TGdiplusStartupInput = record
+    GdiplusVersion: LongWord;
+    DebugEventCallback: Pointer;
+    SuppressBackgroundThread: LongBool;
+    SuppressExternalCodecs: LongBool;
+  end;
+
+function GdiplusStartup(out token: PtrUInt; const input: TGdiplusStartupInput;
+  output: Pointer): Integer; stdcall; external 'gdiplus.dll';
+procedure GdiplusShutdown(token: PtrUInt); stdcall; external 'gdiplus.dll';
+function GdipLoadImageFromFile(filename: PWideChar; out image: Pointer): Integer;
+  stdcall; external 'gdiplus.dll';
+function GdipDisposeImage(image: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipGetImageWidth(image: Pointer; out w: LongWord): Integer;
+  stdcall; external 'gdiplus.dll';
+function GdipGetImageHeight(image: Pointer; out h: LongWord): Integer;
+  stdcall; external 'gdiplus.dll';
+function GdipCreateFromHDC(hdc: HDC; out graphics: Pointer): Integer;
+  stdcall; external 'gdiplus.dll';
+function GdipDeleteGraphics(graphics: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipSetInterpolationMode(graphics: Pointer; mode: Integer): Integer;
+  stdcall; external 'gdiplus.dll';
+function GdipDrawImageRectI(graphics, image: Pointer; x, y, w, h: Integer): Integer;
+  stdcall; external 'gdiplus.dll';
+function GdipCreateHICONFromBitmap(bitmap: Pointer; out hicon: HICON): Integer;
+  stdcall; external 'gdiplus.dll';
+function GdipCreateBitmapFromScan0(w, h, stride, format: Integer; scan0: PByte;
+  out bitmap: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipSaveImageToFile(image: Pointer; filename: PWideChar;
+  const clsid: TGUID; encoderParams: Pointer): Integer; stdcall; external 'gdiplus.dll';
+
+function URLDownloadToFileW(caller: Pointer; url, filename: PWideChar;
+  reserved: DWORD; cb: Pointer): HRESULT; stdcall; external 'urlmon.dll';
+
+var
+  GGdiplusToken: PtrUInt = 0;
+  GGdiplusOK: Boolean = False;
+
+{ Start GDI+ once, lazily, on first image/icon use. }
+procedure EnsureGdiplus;
+var si: TGdiplusStartupInput;
+begin
+  if GGdiplusOK then Exit;
+  FillChar(si, SizeOf(si), 0);
+  si.GdiplusVersion := 1;
+  if GdiplusStartup(GGdiplusToken, si, nil) = 0 then GGdiplusOK := True;
+end;
+
+{ Write raw bytes to a file (whole-buffer). }
+procedure BytesToFile(const Bytes: AnsiString; const Path: string);
+var fs: TFileStream;
+begin
+  fs := TFileStream.Create(Path, fmCreate);
+  try
+    if Length(Bytes) > 0 then fs.WriteBuffer(Bytes[1], Length(Bytes));
+  finally
+    fs.Free;
+  end;
+end;
+
+{ Resolve a CSS image Src (data: URI, http(s) URL, or local path) to a decodable
+  local file, using a temp cache so repeat/network sources are only fetched once.
+  Returns '' if it cannot be resolved. }
+function ResolveImageToFile(const Src: string): string;
+var
+  low, cacheDir, cacheFile, ext, b64: string;
+  comma: Integer;
+begin
+  Result := '';
+  low := LowerCase(Src);
+  cacheDir := IncludeTrailingPathDelimiter(GetTempDir) + 'tina4render' + PathDelim;
+  ForceDirectories(cacheDir);
+
+  if Pos('data:', low) = 1 then
+  begin
+    comma := Pos(',', Src);
+    if comma = 0 then Exit;
+    ext := '.img';
+    if Pos('image/png', low) > 0 then ext := '.png'
+    else if (Pos('image/jpeg', low) > 0) or (Pos('image/jpg', low) > 0) then ext := '.jpg'
+    else if Pos('image/gif', low) > 0 then ext := '.gif'
+    else if Pos('image/bmp', low) > 0 then ext := '.bmp';
+    cacheFile := cacheDir + MD5Print(MD5String(Src)) + ext;
+    if not FileExists(cacheFile) then
+    begin
+      b64 := Copy(Src, comma + 1, MaxInt);
+      // only base64 payloads are supported (the common CSS/img case)
+      if Pos(';base64', low) = 0 then Exit;
+      try BytesToFile(DecodeStringBase64(b64), cacheFile); except Exit; end;
+    end;
+    Result := cacheFile;
+  end
+  else if (Pos('http://', low) = 1) or (Pos('https://', low) = 1) then
+  begin
+    cacheFile := cacheDir + MD5Print(MD5String(Src)) + '.img';
+    if not FileExists(cacheFile) then
+      if URLDownloadToFileW(nil, PWideChar(UTF8Decode(Src)),
+           PWideChar(UTF8Decode(cacheFile)), 0, nil) <> 0 then Exit;
+    if FileExists(cacheFile) then Result := cacheFile;
+  end
+  else
+  begin
+    ext := Src;
+    if Pos('file://', low) = 1 then ext := Copy(Src, 8, MaxInt);
+    if FileExists(ext) then Result := ext;
+  end;
+end;
+
+function WinLoadHIcon(const Path: string): HICON;
+var img: Pointer; file_: string;
+begin
+  Result := 0;
+  EnsureGdiplus;
+  if not GGdiplusOK then Exit;
+  file_ := ResolveImageToFile(Path);
+  if file_ = '' then Exit;
+  img := nil;
+  if GdipLoadImageFromFile(PWideChar(UTF8Decode(file_)), img) <> 0 then Exit;
+  if img <> nil then
+  begin
+    GdipCreateHICONFromBitmap(img, Result);
+    GdipDisposeImage(img);
+  end;
+end;
+
+{ Save a 32-bit top-down BGRA DIB buffer to a PNG (GDI+), for headless snapshots
+  — the Windows side of the reftest/compliance harness. Uses 32bppRGB so the
+  alpha channel (which GDI leaves at 0 on drawn pixels) is ignored and the output
+  is opaque. }
+function WinSaveDibPng(bits: PByte; w, h: Integer; const path: string): Boolean;
+const
+  PNG_CLSID: TGUID = '{557CF406-1A04-11D3-9A73-0000F81EF32E}';
+  PixelFormat32bppRGB = $22009;
+var bmp: Pointer;
+begin
+  Result := False;
+  EnsureGdiplus;
+  if not GGdiplusOK then Exit;
+  if GdipCreateBitmapFromScan0(w, h, w * 4, PixelFormat32bppRGB, bits, bmp) <> 0 then Exit;
+  Result := GdipSaveImageToFile(bmp, PWideChar(UTF8Decode(path)), PNG_CLSID, nil) = 0;
+  GdipDisposeImage(bmp);
+end;
 
 function ColorRefOf(C: TTina4Color): COLORREF;
 begin
@@ -85,10 +255,17 @@ begin
   inherited Create;
   FMeasDC := CreateCompatibleDC(0);
   SetBkMode(FMeasDC, TRANSPARENT);
+  FImageSrc := TStringList.Create;
+  FImageSrc.Sorted := True;
+  FImageSrc.Duplicates := dupIgnore;
 end;
 
 destructor TWinCanvas.Destroy;
+var i: Integer;
 begin
+  for i := 0 to High(FImages) do
+    if FImages[i].Img <> nil then GdipDisposeImage(FImages[i].Img);
+  FImageSrc.Free;
   if FMeasDC <> 0 then DeleteDC(FMeasDC);
   inherited Destroy;
 end;
@@ -104,6 +281,50 @@ end;
 function TWinCanvas.DC: HDC;
 begin
   if FDC <> 0 then Result := FDC else Result := FMeasDC;
+end;
+
+function TWinCanvas.LoadImage(const Src: string): Integer;
+var idx, n: Integer; file_: string; img: Pointer; w, h: LongWord;
+begin
+  if FImageSrc.Find(Src, idx) then
+    Exit(Integer(PtrInt(FImageSrc.Objects[idx])));
+  Result := -1;
+  EnsureGdiplus;
+  if GGdiplusOK then
+  begin
+    file_ := ResolveImageToFile(Src);
+    if file_ <> '' then
+    begin
+      img := nil;
+      if (GdipLoadImageFromFile(PWideChar(UTF8Decode(file_)), img) = 0) and (img <> nil) then
+      begin
+        w := 0; h := 0;
+        GdipGetImageWidth(img, w); GdipGetImageHeight(img, h);
+        n := Length(FImages); SetLength(FImages, n + 1);
+        FImages[n].Img := img; FImages[n].W := w; FImages[n].H := h;
+        Result := n;
+      end;
+    end;
+  end;
+  FImageSrc.AddObject(Src, TObject(PtrInt(Result)));   // cache success or failure
+end;
+
+function TWinCanvas.ImageSize(Handle: Integer; out W, H: Single): Boolean;
+begin
+  W := 0; H := 0;
+  Result := (Handle >= 0) and (Handle <= High(FImages)) and (FImages[Handle].Img <> nil);
+  if Result then begin W := FImages[Handle].W; H := FImages[Handle].H; end;
+end;
+
+procedure TWinCanvas.DrawImage(Handle: Integer; X, Y, W, H: Single);
+var g: Pointer;
+begin
+  if (Handle < 0) or (Handle > High(FImages)) or (FImages[Handle].Img = nil) then Exit;
+  if (W <= 0) or (H <= 0) then Exit;
+  if GdipCreateFromHDC(DC, g) <> 0 then Exit;
+  GdipSetInterpolationMode(g, 7);   // HighQualityBicubic
+  GdipDrawImageRectI(g, FImages[Handle].Img, Round(X), Round(Y), Round(W), Round(H));
+  GdipDeleteGraphics(g);
 end;
 
 { Map a CSS font-family list to a concrete Windows face. }

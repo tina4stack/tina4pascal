@@ -11,6 +11,7 @@ program htmlviewer_win;
 
 {$mode delphi}{$H+}
 {$apptype gui}
+{$R htmlviewer_win.rc}
 
 uses
   Windows, SysUtils, Classes,
@@ -174,7 +175,11 @@ begin
         PostQuitMessage(0);
       end;
   else
-    Result := DefWindowProc(hwnd, msg, wp, lp);
+    // DefWindowProcW (not the ANSI DefWindowProc alias): the class is registered
+    // with RegisterClassExW, so a Unicode window whose fallback ran through the
+    // ANSI DefWindowProc mangled the caption (WM_SETTEXT/WM_GETTEXT) down to its
+    // first byte — hence the old one-letter "T" title.
+    Result := DefWindowProcW(hwnd, msg, wp, lp);
   end;
 end;
 
@@ -192,11 +197,96 @@ begin
     TinaSetHtml('@demo');
 end;
 
+{ Find the Tina4 branding logo by walking up from the exe (and the cwd) looking
+  for branding\icon.png, so the shipped app wears the real logo wherever it runs
+  from in the tree. }
+function FindBrandingIcon: string;
+var base, cand: string; i: Integer;
+begin
+  Result := '';
+  base := ExtractFileDir(ParamStr(0));
+  for i := 0 to 5 do
+  begin
+    cand := IncludeTrailingPathDelimiter(base) + 'branding' + PathDelim + 'icon.png';
+    if FileExists(cand) then Exit(cand);
+    base := ExtractFileDir(base);
+    if base = '' then Break;
+  end;
+  cand := 'branding' + PathDelim + 'icon.png';
+  if FileExists(cand) then Result := cand;
+end;
+
+{ Put the branding logo on the window (title bar + taskbar). }
+procedure ApplyWindowIcon(hwnd: HWND);
+var ico: HICON; p: string;
+begin
+  p := FindBrandingIcon;
+  if p = '' then Exit;
+  ico := WinLoadHIcon(p);
+  if ico <> 0 then
+  begin
+    SendMessageW(hwnd, WM_SETICON, ICON_BIG, LPARAM(ico));
+    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, LPARAM(ico));
+  end;
+end;
+
+{ Headless render: paint one page into an offscreen DIB and write it to a PNG,
+  no window shown. Drives the Windows reftest/compliance harness (mirrors the
+  macOS viewer's `<page> --snapshot <out.png>`). Fixed 1024x800 like the suite. }
+procedure RunSnapshot(const page, outPath: string);
+const SW = 1024; SH = 800;
+var
+  mem: HDC; dib, oldb: HGDIOBJ; bmi: BITMAPINFO; bits: PByte; i: Integer;
+  sl: TStringList; html: string; canvas: TWinCanvas;
+begin
+  GW := SW; GH := SH;
+  mem := CreateCompatibleDC(0);
+  FillChar(bmi, SizeOf(bmi), 0);
+  bmi.bmiHeader.biSize := SizeOf(BITMAPINFOHEADER);
+  bmi.bmiHeader.biWidth := SW; bmi.bmiHeader.biHeight := -SH;   // top-down
+  bmi.bmiHeader.biPlanes := 1; bmi.bmiHeader.biBitCount := 32; bmi.bmiHeader.biCompression := BI_RGB;
+  bits := nil;
+  dib := CreateDIBSection(0, bmi, DIB_RGB_COLORS, bits, 0, 0);
+  oldb := SelectObject(mem, dib);
+  SetBkMode(mem, TRANSPARENT); SetGraphicsMode(mem, GM_ADVANCED);
+  if bits <> nil then
+    for i := 0 to SW * SH - 1 do
+    begin bits[i*4] := 255; bits[i*4+1] := 255; bits[i*4+2] := 255; bits[i*4+3] := 255; end;
+  canvas := TWinCanvas.Create;
+  TinaInit(canvas);
+  html := '@demo';
+  if (page <> '') and FileExists(page) then
+  begin
+    sl := TStringList.Create;
+    try sl.LoadFromFile(page); html := sl.Text; finally sl.Free; end;
+  end;
+  TinaSetHtml(html);
+  canvas.BeginFrame(mem, bits, SW, SH);
+  TinaFrame(SW, SH, 1.0);
+  GdiFlush;
+  WinSaveDibPng(bits, SW, SH, outPath);
+  canvas.Free;
+  SelectObject(mem, oldb); DeleteObject(dib); DeleteDC(mem);
+end;
+
 var
   wc: WNDCLASSEXW;
   m: MSG;
-  cls: WideString;
+  cls: UnicodeString;
+  title: UnicodeString;
+  i: Integer;
+  snapOut: string;
 begin
+  // headless: <page> --snapshot <out.png>
+  snapOut := '';
+  for i := 1 to ParamCount - 1 do
+    if ParamStr(i) = '--snapshot' then snapOut := ParamStr(i + 1);
+  if snapOut <> '' then
+  begin
+    RunSnapshot(ParamStr(1), snapOut);
+    Halt(0);
+  end;
+
   cls := 'Tina4Window';
   FillChar(wc, SizeOf(wc), 0);
   wc.cbSize := SizeOf(wc);
@@ -208,8 +298,10 @@ begin
   wc.lpszClassName := PWideChar(cls);
   RegisterClassExW(wc);
 
-  GHwnd := CreateWindowExW(0, PWideChar(cls), PWideChar(WideString('Tina4Pascal — Windows')),
+  title := 'Tina4Pascal - Windows';
+  GHwnd := CreateWindowExW(0, PWideChar(cls), PWideChar(title),
     WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, GW, GH, 0, 0, HInstance, nil);
+  ApplyWindowIcon(GHwnd);
 
   GCanvas := TWinCanvas.Create;
   TinaInit(GCanvas);

@@ -1,0 +1,3 @@
+/* Windows resources for the Tina4Pascal htmlviewer.
+   MAINICON becomes the .exe's Explorer/taskbar icon — the real Tina4 logo. */
+MAINICON ICON "../../branding/icon.ico"

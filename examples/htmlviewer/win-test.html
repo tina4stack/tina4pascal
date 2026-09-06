@@ -1,6 +1,6 @@
 <body style="margin:0;background:#fbfaf7;font-family:Segoe UI,sans-serif;padding:24px">
 <h1 style="color:#2b41e6;margin:0 0 4px">Tina4Pascal on Windows</h1>
-<p style="color:#5b5c78;margin:0 0 18px">Pure Free Pascal → GDI + DIB-section compositing.</p>
+<p style="color:#5b5c78;margin:0 0 18px">Pure Free Pascal → GDI + DIB-section compositing, software gradients, GDI+ images.</p>
 
 <h3 style="color:#15162e;margin:8px 0">Basic paint</h3>
 <div style="display:flex;gap:14px">
@@ -9,20 +9,26 @@
   <div style="width:130px;height:80px;background:#ffd23c;border-radius:14px;color:#15162e;text-align:center;line-height:80px">yellow</div>
 </div>
 
-<h3 style="color:#15162e;margin:18px 0 8px">filter</h3>
+<h3 style="color:#15162e;margin:18px 0 8px">gradients</h3>
 <div style="display:flex;gap:14px">
-  <div style="width:120px;height:80px;background:#2b41e6"></div>
-  <div style="width:120px;height:80px;background:#2b41e6;filter:blur(5px)"></div>
-  <div style="width:120px;height:80px;background:#2b41e6;filter:grayscale(1)"></div>
-  <div style="width:120px;height:80px;background:#ff5aa0;filter:drop-shadow(6px 8px 6px rgba(0,0,0,0.5))"></div>
+  <div style="width:130px;height:80px;background:linear-gradient(#2b41e6, #ff5aa0);color:#fff;text-align:center;line-height:80px">vertical</div>
+  <div style="width:130px;height:80px;background:linear-gradient(90deg, #2b41e6, #22d3a0);color:#fff;text-align:center;line-height:80px">90°</div>
+  <div style="width:130px;height:80px;background:linear-gradient(135deg, #2b41e6, #ffd23c, #ff5aa0);color:#15162e;text-align:center;line-height:80px">3-stop</div>
+  <div style="width:130px;height:80px;border-radius:16px;background:radial-gradient(#ffd23c, #ff5aa0);color:#15162e;text-align:center;line-height:80px">radial</div>
 </div>
 
-<h3 style="color:#15162e;margin:18px 0 8px">blend · mask · 3D</h3>
-<div style="display:flex;gap:24px;align-items:center">
-  <div style="position:relative;width:200px;height:90px">
-    <div style="position:absolute;left:0;top:0;width:120px;height:90px;background:#2b41e6"></div>
-    <div style="position:absolute;left:70px;top:0;width:120px;height:90px;background:#ffd23c;mix-blend-mode:multiply"></div>
-  </div>
+<h3 style="color:#15162e;margin:18px 0 8px">images</h3>
+<div style="display:flex;gap:18px;align-items:center">
+  <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAATuSURBVHhe7dpLUBp3HAdwjx49evSYY47e5NDdZXntLrurxjTVMZPR6SvUdhycmpYxk9im09JJ7Zhpm6HTpDFNeMgjLqJkFURQQVAIC3jgyNEjx19nmfHAiiIGeSz5zvxuDOxnd/9vuro+5EOaklFluv82llSc1ASWVEg/I4sMYULfMJo2jGACdwtLxz/B0jCGvYNxLAW3lSm4o0zChDIJk8pD+BQ/gM/wA/gCTwhf4gneoNw3TqHRa9LvbPmwSPY6iwimIUQQRjABbmIC3MLScEE83MUT8BUehyk8Dt+o9mEa3xdmVDHztDLaL/2tlgqNCQoGzcQH0QwMoxmoC161D0ZVDGZUMfhWFYVZ1V5+Fo+Q0t9uaggke51GshyLZuEq8fdUe/Cdeg9M6l2YU++G76vDze03WFWql0JzFhrNQoPxcF+9Aw80EbG4B5pQ4/sJ8amTSK7QTPxDTQR+0IThkSZc/FETalyzoJDsMIlmiy2Ch5+02/Czdht+0QSN0mutewgka6LQHLQa3qwNwa/aEDzWbi1ZBvhu6XXXJSSas7Q0XrcFv+m2YEEXCNf9JlDI0Xw74H/XBWFRF4Qnuk2H1HDpiG2+vfAB+EMXgD+JTZPUUnOoj3L9rdjhVcP/RWzCU2ITLAR/+dGBwIS+FhrqLoHfgL+JjaJFw19unkAhOUeb4+EfgodnOn9caqua0vRWBvjnxFt4Qb6Ff4n12ppCE+b2V4ZfIv3wkvTHLaMXHBr1aIaUE/4/0g+vyXWwET6D1FoxV72kbQqeWgM76Svw1d4CcU0vSzy1BsuUD5zE6pjUXJZBJDsvV7xLLNK7JDWXZRjJ5OWKd1Or4CG9xTObwQ00c03O+DfUKnB6L3gpr1JqL+UGJphkj9d7wUetWKT2UkZQISx7vJ4DH8UVpPZSPkbTBbnj1/Qc+PUrULEf6Bi8WATXV4YfxYS+TsFv0G8gSLvLt9TFs7pOwQfEYtzDZTdgHD0kOwW/RXsgSLnL1wXj2OFkp+BDtAfCtLt8u+yOMjncMXjGDWG9q/wMQTyf7xR8hHHDDussXxRNYPG+TsHvMi7Yox2SUWAg390p+CjjhKjedXqj9HNl4rgT8DHGCXHC0SP1d93FE0JH4OnlotReyhS+b5Y9nlmGA2a58rHZ11hcIXs8K5bj7G2xaTx2LGf8Ieuo3P5PYsRjFjnjU6ydl5rLMoNHSRnjIcnYzj8b+H6A757F9wpyxKcYezHFvuqVmk/lnnrXIDf8O9YOAms1S60VI74Fc+rdgszwxxd6+ieZwyOkfPA2yFRr+5XyUBOJywGfZWyF/Kjl9CZotcyrw4q2x5fKevbEp1oeabcN7Yw/umjHd17M2tBiO+Jzg9bzJz0Xjfinw8e6Lb6d8EesNZ8/b8pba8wE37OgDebbAZ8bfH2c0VtPb3i8bxZUfO8TXSDcynjxyWfZV9el1163iM3hKRFYbEW82Obr+tqfFwvBG1oJfzRoXZRe45XnGcErnuv8+abiGVvhvcb5euQFsW54Sa4XGou3HmdZm6lhr3y1OAi+x0atmeykr9gAvLmmhU0j42E9vU7Ca3BRq3w98UnGFk+xdqMw5Cg/12/liDeD03NjPopz+KiVYs14ZplLsPbJln3atYYnHD087VaIf04I6l3GEO02iae0Yu3QTpN4XCXWDuuRB7gd8j90dbDeD6ShIAAAAABJRU5ErkJggg==" width="64" height="64" style="border-radius:12px">
+  <img src="../../branding/icon.png" width="72" height="72">
+  <img src="https://www.google.com/favicon.ico" width="48" height="48">
+  <span style="color:#5b5c78">data-URI · local logo · https fetch</span>
+</div>
+
+<h3 style="color:#15162e;margin:18px 0 8px">filter · blend · mask · 3D</h3>
+<div style="display:flex;gap:14px;align-items:center">
+  <div style="width:110px;height:80px;background:#2b41e6;filter:blur(5px)"></div>
+  <div style="width:110px;height:80px;background:#ff5aa0;filter:drop-shadow(6px 8px 6px rgba(0,0,0,0.5))"></div>
   <div style="width:150px;height:80px;background:#ff5aa0;mask-image:linear-gradient(to right, black, transparent)"></div>
   <div style="width:110px;height:80px;background:#2b41e6;color:#fff;text-align:center;line-height:80px;transform:perspective(500px) rotateY(38deg)">3D</div>
 </div>
