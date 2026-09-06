@@ -16,12 +16,73 @@ uses
   Windows, SysUtils, Classes,
   Tina4RenderBackend, Tina4ShellWin, Tina4Interact;
 
+const
+  NIM_ADD = 0; NIM_MODIFY = 1; NIM_DELETE = 2;
+  NIF_MESSAGE = $1; NIF_ICON = $2; NIF_TIP = $4; NIF_INFO = $10;
+  NIIF_INFO = $1;
+
+type
+  { the Windows-2000+ NOTIFYICONDATAW (FPC's built-in one predates the balloon
+    fields), truncated at dwInfoFlags — cbSize below picks this V2 layout }
+  TNotifyIconDataW = record
+    cbSize: DWORD;
+    hWnd: HWND;
+    uID: UINT;
+    uFlags: UINT;
+    uCallbackMessage: UINT;
+    hIcon: HICON;
+    szTip: array[0..127] of WideChar;
+    dwState: DWORD;
+    dwStateMask: DWORD;
+    szInfo: array[0..255] of WideChar;
+    uTimeoutOrVersion: UINT;
+    szInfoTitle: array[0..63] of WideChar;
+    dwInfoFlags: DWORD;
+  end;
+
+function Shell_NotifyIconW(dwMessage: DWORD; lpData: Pointer): BOOL; stdcall;
+  external 'shell32.dll' name 'Shell_NotifyIconW';
+
 var
   GCanvas: TWinCanvas;
   GHwnd: HWND;
   GW: Integer = 1024;
   GH: Integer = 768;
   GMouseDown: Boolean = False;
+  GNid: TNotifyIconDataW;
+  GTrayAdded: Boolean = False;
+
+{ copy a WideString into a fixed WideChar array field (NUL-terminated) }
+procedure WFill(p: PWideChar; cap: Integer; const s: WideString);
+var i, n: Integer;
+begin
+  n := Length(s); if n > cap - 1 then n := cap - 1;
+  for i := 1 to n do p[i - 1] := s[i];
+  p[n] := #0;
+end;
+
+{ notify.show(...) on Windows → a Shell_NotifyIcon balloon/toast }
+procedure NotifyWin(const Title, Body, Tag: string);
+begin
+  if not GTrayAdded then Exit;
+  GNid.uFlags := NIF_INFO;
+  GNid.dwInfoFlags := NIIF_INFO;
+  WFill(@GNid.szInfoTitle[0], Length(GNid.szInfoTitle), UTF8Decode(Title));
+  WFill(@GNid.szInfo[0], Length(GNid.szInfo), UTF8Decode(Body));
+  Shell_NotifyIconW(NIM_MODIFY, @GNid);
+end;
+
+procedure TrayAdd;
+begin
+  FillChar(GNid, SizeOf(GNid), 0);
+  GNid.cbSize := SizeOf(GNid);
+  GNid.hWnd := GHwnd;
+  GNid.uID := 1;
+  GNid.uFlags := NIF_ICON or NIF_TIP;
+  GNid.hIcon := LoadIcon(0, IDI_APPLICATION);
+  WFill(@GNid.szTip[0], Length(GNid.szTip), 'Tina4Pascal');
+  GTrayAdded := Shell_NotifyIconW(NIM_ADD, @GNid);
+end;
 
 procedure Repaint;
 begin
@@ -107,7 +168,11 @@ begin
       begin
         if TinaTick = 1 then Repaint;
       end;
-    WM_DESTROY: PostQuitMessage(0);
+    WM_DESTROY:
+      begin
+        if GTrayAdded then Shell_NotifyIconW(NIM_DELETE, @GNid);
+        PostQuitMessage(0);
+      end;
   else
     Result := DefWindowProc(hwnd, msg, wp, lp);
   end;
@@ -148,6 +213,8 @@ begin
 
   GCanvas := TWinCanvas.Create;
   TinaInit(GCanvas);
+  TrayAdd;                                 // tray icon backs the balloon toasts
+  Tina4SetNotifyHandler(@NotifyWin);       // notify.show(...) → Windows toast
   LoadInitial;
 
   SetTimer(GHwnd, 1, 16, nil);   // ~60fps tick for animations/caret
