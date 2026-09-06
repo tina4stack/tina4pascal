@@ -20,6 +20,7 @@ uses
 var
   GCanvas: TAndroidCanvas = nil;
   GShell: TAndroidShell = nil;
+  {$IFDEF TINA_PROFILE}GProfT0: QWord;{$ENDIF}
 
 function JToStr(Env: PJNIEnv; S: jstring): string;
 var p: PAnsiChar;
@@ -75,8 +76,16 @@ begin
   end;
   HttpPump;                    // deliver any completed HTTP responses (main thread)
   GCanvas.BeginFrame(Env, Canvas);
+  {$IFDEF TINA_PROFILE}
+  GProfT0 := GetTickCount64;
   TinaFrame(W, H, Density);
+  AndroidLog(Format('nativePaint %d ms', [GetTickCount64 - GProfT0]));
+  {$ELSE}
+  TinaFrame(W, H, Density);
+  {$ENDIF}
 end;
+
+{ (profiling is compiled in only with -dTINA_PROFILE; release builds omit it) }
 
 function Java_com_tina4_pascal_Tina4View_nativeTouch(Env: PJNIEnv; This: jobject;
   Action: jint; X, Y: jfloat): jint; cdecl;
@@ -87,6 +96,11 @@ end;
 function Java_com_tina4_pascal_Tina4View_nativeTick(Env: PJNIEnv; This: jobject): jint; cdecl;
 begin
   Result := TinaTick;
+end;
+
+function Java_com_tina4_pascal_Tina4View_nativeAnimActive(Env: PJNIEnv; This: jobject): jint; cdecl;
+begin
+  Result := TinaAnimActive;
 end;
 
 procedure Java_com_tina4_pascal_Tina4View_nativeBlur(Env: PJNIEnv; This: jobject); cdecl;
@@ -172,6 +186,7 @@ exports
   Java_com_tina4_pascal_Tina4View_nativePaint,
   Java_com_tina4_pascal_Tina4View_nativeTouch,
   Java_com_tina4_pascal_Tina4View_nativeTick,
+  Java_com_tina4_pascal_Tina4View_nativeAnimActive,
   Java_com_tina4_pascal_Tina4View_nativeWantsKeyboard,
   Java_com_tina4_pascal_Tina4View_nativeBlur,
   Java_com_tina4_pascal_Tina4View_nativeBlinkCaret,

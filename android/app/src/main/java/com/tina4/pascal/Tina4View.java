@@ -35,6 +35,7 @@ public class Tina4View extends View implements Runnable {
     private native void nativePaint(Canvas canvas, int w, int h, float density);
     private native int  nativeTouch(int action, float x, float y);
     private native int  nativeTick();
+    private native int  nativeAnimActive();   // 1 if last paint has live animation
     private native int  nativeWantsKeyboard();
     private native void nativeBlur();
     private native int  nativeBlinkCaret();
@@ -105,17 +106,32 @@ public class Tina4View extends View implements Runnable {
     }
 
 
-    // fling: the native side decays the velocity; we re-post each frame
+    // Animation/fling ticker. The native side decays fling velocity AND advances
+    // the shared anim clock (<lottie>, CSS transitions) by REAL elapsed time, so we
+    // deliberately throttle repaints to ~30fps: on Android every draw call is a JNI
+    // round-trip, and a full-document repaint at 60fps saturates the main thread
+    // (janky scroll, laggy <video> overlay). 30fps halves that cost with no visible
+    // slow-mo because the clock is wall-clock driven.
+    private static final long FRAME_MS = 32;   // ~30fps
+    private boolean ticking = false;
     @Override
     public void run() {
-        if (nativeTick() != 0) { invalidate(); postOnAnimation(this); }
+        ticking = false;
+        if (nativeTick() != 0) { invalidate(); ensureTicking(); }
     }
-    private void startFling() { removeCallbacks(this); postOnAnimation(this); }
-    private void stopFling()  { removeCallbacks(this); }
+    // Post one throttled tick if none is pending. onDraw calls this whenever the
+    // last paint marked animated content active, so animation runs on load without
+    // needing a fling; it self-stops when nativeTick() returns 0 (nothing animating).
+    private void ensureTicking() {
+        if (!ticking) { ticking = true; postDelayed(this, FRAME_MS); }
+    }
+    private void startFling() { ensureTicking(); }
+    private void stopFling()  { removeCallbacks(this); ticking = false; }
 
     @Override
     protected void onDraw(Canvas canvas) {
         nativePaint(canvas, getWidth(), getHeight(), density);
+        if (nativeAnimActive() != 0) ensureTicking();   // keep animating (throttled)
         // autofocus: the engine parses on the first frame, so poll here (it
         // returns 1 exactly once, after an input[autofocus] has been focused)
         if (nativeWantsKeyboard() != 0) showKeyboard();

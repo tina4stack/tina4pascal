@@ -13,7 +13,7 @@ interface
 uses
   SysUtils, Classes, Math, Generics.Collections,
   Tina4HTMLDom, Tina4RenderBackend, Tina4Theme, Tina4QR, Tina4SVG, Tina4Canvas2D,
-  Tina4Lottie;
+  Tina4Lottie, Tina4RasterCanvas;
 
 type
   TTextRun = record
@@ -113,6 +113,10 @@ var
   Tina4CaretVisible: Boolean = True;
   { Persistent scrollbar thumbs. Shells can disable them (mobile convention). }
   Tina4ScrollbarsVisible: Boolean = True;
+  { Device pixels per CSS px for the current frame. The host (Tina4Interact) sets
+    this each frame from its density so the core can rasterize time-driven canvas
+    content (<lottie>) at native resolution before a single DrawRGBA blit. }
+  PaintDeviceScale: Single = 1;
 
 procedure PaintBox(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single);
 function HitTest(Box: TLayoutBox; X, Y: Single): THTMLTag;
@@ -163,6 +167,11 @@ implementation
 const
   IMG_PLACEHOLDER_BG: TTina4Color = $FFE9ECEF;
   IMG_PLACEHOLDER_FG: TTina4Color = $FF6C757D;
+
+var
+  { Reused across frames/elements so a <lottie> repaint allocates no buffer once
+    its size settles (Resize is a no-op when unchanged). Freed at finalization. }
+  GLottieRaster: TTina4RasterCanvas = nil;
 
 { TLayoutBox }
 
@@ -4034,7 +4043,8 @@ var
   cvPaint: TCanvasPaintProc;
   lot: TTina4Lottie;
   lotF: Double;
-  lotTotal, lotFrame: Single;
+  lotTotal, lotFrame, lotFit, lsc: Single;
+  lpw, lph: Integer;
 begin
   st := Box.Style;
   // CSS transition: ease transform/opacity/colours toward their computed value
@@ -4299,20 +4309,46 @@ begin
       if lotTotal <= 0 then lotTotal := 1;
       lotF := AnimClock * lot.FrameRate;
       lotFrame := lot.InPoint + (lotF - lotTotal * Floor(lotF / lotTotal));
-      Canvas.SaveState;
-      Canvas.SetClip(Box.X, y, Box.W, Box.H);
-      cv2d := TTina4Canvas2D.Create(Canvas, Box.W, Box.H, bg);
-      try
-        // contain-fit + centre (fills the box at full composition size)
-        lotTotal := Min(Box.W / lot.Width, Box.H / lot.Height);
-        cv2d.Translate(Box.X + (Box.W - lot.Width * lotTotal) / 2,
-                       y + (Box.H - lot.Height * lotTotal) / 2);
-        cv2d.Scale(lotTotal, lotTotal);
-        try lot.Render(cv2d, lotFrame); except end;
-      finally
-        cv2d.Free;
-        Canvas.ClearClip;
-        Canvas.RestoreState;
+      lotFit := Min(Box.W / lot.Width, Box.H / lot.Height);   // contain-fit + centre
+      if Canvas.SupportsRGBA then
+      begin
+        // Fast path: rasterize every Lottie shape in PURE PASCAL into an in-process
+        // ARGB buffer (Tina4RasterCanvas — no OS calls), then hand the shell ONE
+        // composited image (DrawRGBA). A rich animation is dozens–hundreds of filled
+        // paths; proxying each to the native canvas is one draw call per shape, and
+        // on Android every call crosses JNI. This collapses it to a single blit.
+        lsc := PaintDeviceScale; if lsc <= 0 then lsc := 1;
+        lpw := Max(1, Round(Box.W * lsc)); lph := Max(1, Round(Box.H * lsc));
+        if GLottieRaster = nil then GLottieRaster := TTina4RasterCanvas.Create(lpw, lph)
+        else GLottieRaster.Resize(lpw, lph);
+        GLottieRaster.Clear(0);                    // transparent; blit over the box bg
+        cv2d := TTina4Canvas2D.Create(GLottieRaster, Box.W, Box.H, 0);
+        try
+          cv2d.Scale(lsc, lsc);                    // CSS px → device px (raster space)
+          cv2d.Translate((Box.W - lot.Width * lotFit) / 2,
+                         (Box.H - lot.Height * lotFit) / 2);
+          cv2d.Scale(lotFit, lotFit);
+          try lot.Render(cv2d, lotFrame); except end;
+        finally cv2d.Free; end;
+        Canvas.DrawRGBA(GLottieRaster.Bits, lpw, lph, Box.X, y, Box.W, Box.H);
+      end
+      else
+      begin
+        // Fallback: proxy each shape straight to the shell canvas (works everywhere,
+        // used by backends that don't implement DrawRGBA yet).
+        Canvas.SaveState;
+        Canvas.SetClip(Box.X, y, Box.W, Box.H);
+        cv2d := TTina4Canvas2D.Create(Canvas, Box.W, Box.H, bg);
+        try
+          cv2d.Translate(Box.X + (Box.W - lot.Width * lotFit) / 2,
+                         y + (Box.H - lot.Height * lotFit) / 2);
+          cv2d.Scale(lotFit, lotFit);
+          try lot.Render(cv2d, lotFrame); except end;
+        finally
+          cv2d.Free;
+          Canvas.ClearClip;
+          Canvas.RestoreState;
+        end;
       end;
       AnimMarkActive;   // keep repainting so it animates
     end;
@@ -4598,5 +4634,8 @@ begin
     if Result <> nil then Exit;
   end;
 end;
+
+finalization
+  FreeAndNil(GLottieRaster);
 
 end.

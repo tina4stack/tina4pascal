@@ -45,6 +45,11 @@ type
     mSetTypeface, mTypefaceFromFile: jmethodID;
     tfSerif, tfMono, tfSans: jobject;        // static generic typefaces (global refs)
     FRegFonts: TStringList;                  // @font-face: family(lower) → Typeface global ref
+    // text paint-config cache — skip redundant JNI setX calls between runs that
+    // share a font (the common case), and reuse ascent/descent instead of re-querying
+    FCfgValid: Boolean;
+    FLastTf: jobject; FLastSize, FLastSkew, FLastAscent, FLastDescent: Single;
+    FLastBold, FLastUnder, FLastStrike: Boolean;
     // Path methods
     mPathInit, mMoveTo, mLineTo, mClose: jmethodID;
     // image decode/draw
@@ -56,7 +61,16 @@ type
     mImgCached: jmethodID;                  // ImageLoader.cached(url) → local path/""
     FImgSrcs: TStringList;                   // src → index into FImgs
     FImgs: array of record Bmp: jobject; W, H: Single; end;
+    // raw $AARRGGBB blit (Tina4RasterCanvas → one drawBitmap): lazy-init + reused
+    clsBitmapConfig: jclass;
+    cfgARGB8888: jobject;                   // Bitmap.Config.ARGB_8888 (global ref)
+    mCreateBitmap: jmethodID;               // static Bitmap.createBitmap(int,int,Config)
+    mSetPixels, mBmpRecycle: jmethodID;
+    FRgbaBmp: jobject;                       // cached Bitmap sized FRgbaW×FRgbaH (global)
+    FRgbaArr: jintArray;                     // cached int[] (global ref)
+    FRgbaW, FRgbaH: Integer;
     procedure EnsureImageMethods;
+    procedure EnsureRGBA;
     function MID(cls: jclass; const name, sig: string): jmethodID;
     function EnumVal(const clsName, field, sig: string): jobject;
     function JStr(const S: string): jstring;
@@ -83,6 +97,8 @@ type
     procedure SaveState; override;
     procedure RestoreState; override;
     procedure Scale(SX, SY: Single); override;
+    function SupportsRGBA: Boolean; override;
+    procedure DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single); override;
     function LoadImage(const Src: string): Integer; override;
     function ImageSize(Handle: Integer; out W, H: Single): Boolean; override;
     procedure DrawImage(Handle: Integer; X, Y, W, H: Single); override;
@@ -214,6 +230,7 @@ begin
   FRegFonts := TStringList.Create;
   FRegFonts.CaseSensitive := False;
   FRegFonts.Sorted := True;   // enables Find()
+  FCfgValid := False;         // text paint-config cache starts cold
 
   // Path
   mPathInit := MID(clsPath, '<init>', '()V');
@@ -268,22 +285,45 @@ end;
 
 procedure TAndroidCanvas.ConfigurePaintText(FontSize: Single;
   Styles: TTina4FontStyles; Color: TTina4Color);
-var a: array[0..0] of jvalue; tf: jobject;
+var
+  a: array[0..0] of jvalue; tf: jobject;
+  bold, under, strike, needAsc: Boolean; skew: Single;
 begin
   tf := TypefaceFor(FontFamily);
-  a[0].l := tf;   // nil => default typeface
-  FEnv^.CallObjectMethodA(FEnv, FPaint, mSetTypeface, @a[0]);
+  bold := tfsBold in Styles;
+  under := tfsUnderline in Styles;
+  strike := tfsStrike in Styles;
+  if tfsItalic in Styles then skew := -0.25 else skew := 0;
+  // ascent/descent depend only on typeface+size+bold+skew — decide up front,
+  // before the cache fields are updated below.
+  needAsc := (not FCfgValid) or (tf <> FLastTf) or (FontSize <> FLastSize)
+             or (bold <> FLastBold) or (skew <> FLastSkew);
+  // typeface (nil => default). TypefaceFor returns stable global refs, so a
+  // pointer compare is a valid "unchanged" test.
+  if (not FCfgValid) or (tf <> FLastTf) then
+  begin
+    a[0].l := tf; FEnv^.CallObjectMethodA(FEnv, FPaint, mSetTypeface, @a[0]);
+    FLastTf := tf;
+  end;
+  // colour + style are clobbered by FillRect/StrokeRect between runs, so always set
   a[0].i := jint(Color); FEnv^.CallVoidMethodA(FEnv, FPaint, mSetColor, @a[0]);
   a[0].l := styleFill;   FEnv^.CallVoidMethodA(FEnv, FPaint, mSetStyle, @a[0]);
-  a[0].f := FontSize;    FEnv^.CallVoidMethodA(FEnv, FPaint, mSetTextSize, @a[0]);
-  a[0].z := Ord(tfsBold in Styles);
-  FEnv^.CallVoidMethodA(FEnv, FPaint, mSetFakeBold, @a[0]);
-  if tfsItalic in Styles then a[0].f := -0.25 else a[0].f := 0;
-  FEnv^.CallVoidMethodA(FEnv, FPaint, mSetSkewX, @a[0]);
-  a[0].z := Ord(tfsUnderline in Styles);
-  FEnv^.CallVoidMethodA(FEnv, FPaint, mSetUnderline, @a[0]);
-  a[0].z := Ord(tfsStrike in Styles);
-  FEnv^.CallVoidMethodA(FEnv, FPaint, mSetStrike, @a[0]);
+  if (not FCfgValid) or (FontSize <> FLastSize) then
+  begin a[0].f := FontSize; FEnv^.CallVoidMethodA(FEnv, FPaint, mSetTextSize, @a[0]); FLastSize := FontSize; end;
+  if (not FCfgValid) or (bold <> FLastBold) then
+  begin a[0].z := Ord(bold); FEnv^.CallVoidMethodA(FEnv, FPaint, mSetFakeBold, @a[0]); FLastBold := bold; end;
+  if (not FCfgValid) or (skew <> FLastSkew) then
+  begin a[0].f := skew; FEnv^.CallVoidMethodA(FEnv, FPaint, mSetSkewX, @a[0]); FLastSkew := skew; end;
+  if (not FCfgValid) or (under <> FLastUnder) then
+  begin a[0].z := Ord(under); FEnv^.CallVoidMethodA(FEnv, FPaint, mSetUnderline, @a[0]); FLastUnder := under; end;
+  if (not FCfgValid) or (strike <> FLastStrike) then
+  begin a[0].z := Ord(strike); FEnv^.CallVoidMethodA(FEnv, FPaint, mSetStrike, @a[0]); FLastStrike := strike; end;
+  if needAsc then
+  begin
+    FLastAscent := FEnv^.CallFloatMethodA(FEnv, FPaint, mAscent, nil);
+    FLastDescent := FEnv^.CallFloatMethodA(FEnv, FPaint, mDescent, nil);
+  end;
+  FCfgValid := True;
 end;
 
 { ---- shapes ------------------------------------------------------------ }
@@ -376,13 +416,11 @@ procedure TAndroidCanvas.DrawText(X, Y: Single; const Text: string; FontSize: Si
 var
   a: array[0..3] of jvalue;
   s: jstring;
-  ascent: jfloat;
 begin
   if Text = '' then Exit;
   ConfigurePaintText(FontSize, Styles, Color);
-  ascent := FEnv^.CallFloatMethodA(FEnv, FPaint, mAscent, nil);  // negative
   s := JStr(Text);
-  a[0].l := s; a[1].f := X; a[2].f := Y - ascent; a[3].l := FPaint;  // Y=top → baseline
+  a[0].l := s; a[1].f := X; a[2].f := Y - FLastAscent; a[3].l := FPaint;  // Y=top → baseline (cached ascent, negative)
   FEnv^.CallVoidMethodA(FEnv, FCanvas, mDrawText, @a[0]);
   FEnv^.DeleteLocalRef(FEnv, s);
 end;
@@ -392,19 +430,19 @@ function TAndroidCanvas.MeasureText(const Text: string; FontSize: Single;
 var
   a: array[0..0] of jvalue;
   s: jstring;
-  asc, desc: jfloat;
 begin
   ConfigurePaintText(FontSize, Styles, $FF000000);
-  if Text = '' then s := JStr(' ') else s := JStr(Text);
-  a[0].l := s;
   if Text = '' then Result.Width := 0
-  else Result.Width := FEnv^.CallFloatMethodA(FEnv, FPaint, mMeasureText, @a[0]);
-  FEnv^.DeleteLocalRef(FEnv, s);
-  asc := FEnv^.CallFloatMethodA(FEnv, FPaint, mAscent, nil);    // negative
-  desc := FEnv^.CallFloatMethodA(FEnv, FPaint, mDescent, nil);  // positive
-  Result.Ascent := -asc;
-  Result.Descent := desc;
-  Result.LineHeight := desc - asc;
+  else
+  begin
+    s := JStr(Text);
+    a[0].l := s;
+    Result.Width := FEnv^.CallFloatMethodA(FEnv, FPaint, mMeasureText, @a[0]);
+    FEnv^.DeleteLocalRef(FEnv, s);
+  end;
+  Result.Ascent := -FLastAscent;               // cached (ascent is negative)
+  Result.Descent := FLastDescent;              // cached
+  Result.LineHeight := FLastDescent - FLastAscent;
 end;
 
 { ---- clip / state ------------------------------------------------------ }
@@ -437,6 +475,66 @@ var a: array[0..1] of jvalue;
 begin
   a[0].f := SX; a[1].f := SY;
   FEnv^.CallVoidMethodA(FEnv, FCanvas, mScale, @a[0]);
+end;
+
+{ ---- raw ARGB blit (pure-Pascal raster → one drawBitmap) --------------- }
+
+function TAndroidCanvas.SupportsRGBA: Boolean;
+begin
+  Result := True;
+end;
+
+procedure TAndroidCanvas.EnsureRGBA;
+var lc: jclass; fid: jfieldID;
+begin
+  if mCreateBitmap <> nil then Exit;
+  EnsureImageMethods;                    // clsBitmap, clsRectF, mRectFInit, mDrawBitmap
+  lc := FEnv^.FindClass(FEnv, 'android/graphics/Bitmap$Config');
+  clsBitmapConfig := FEnv^.NewGlobalRef(FEnv, lc);
+  fid := FEnv^.GetStaticFieldID(FEnv, clsBitmapConfig, 'ARGB_8888',
+    'Landroid/graphics/Bitmap$Config;');
+  cfgARGB8888 := FEnv^.NewGlobalRef(FEnv,
+    FEnv^.GetStaticObjectField(FEnv, clsBitmapConfig, fid));
+  mCreateBitmap := FEnv^.GetStaticMethodID(FEnv, clsBitmap, 'createBitmap',
+    '(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;');
+  mSetPixels := MID(clsBitmap, 'setPixels', '([IIIIIII)V');
+  mBmpRecycle := MID(clsBitmap, 'recycle', '()V');
+end;
+
+{ Blit a straight-$AARRGGBB buffer: copy into a reused java int[] (identical
+  layout), setPixels into a reused ARGB_8888 Bitmap, then one drawBitmap scaled to
+  the dest rect. Bitmap + array are cached and only reallocated when the size
+  changes, so a steady <lottie> allocates nothing per frame. }
+procedure TAndroidCanvas.DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single);
+var a: array[0..6] of jvalue; dst, bmp: jobject;
+begin
+  if (Buf = nil) or (BW <= 0) or (BH <= 0) then Exit;
+  EnsureRGBA;
+  if (FRgbaBmp = nil) or (BW <> FRgbaW) or (BH <> FRgbaH) then
+  begin
+    if FRgbaBmp <> nil then
+    begin
+      FEnv^.CallVoidMethodA(FEnv, FRgbaBmp, mBmpRecycle, nil);
+      FEnv^.DeleteGlobalRef(FEnv, FRgbaBmp); FRgbaBmp := nil;
+    end;
+    if FRgbaArr <> nil then begin FEnv^.DeleteGlobalRef(FEnv, FRgbaArr); FRgbaArr := nil; end;
+    a[0].i := BW; a[1].i := BH; a[2].l := cfgARGB8888;
+    bmp := FEnv^.CallStaticObjectMethodA(FEnv, clsBitmap, mCreateBitmap, @a[0]);
+    if bmp = nil then Exit;
+    FRgbaBmp := FEnv^.NewGlobalRef(FEnv, bmp); FEnv^.DeleteLocalRef(FEnv, bmp);
+    FRgbaArr := FEnv^.NewGlobalRef(FEnv, FEnv^.NewIntArray(FEnv, BW * BH));
+    FRgbaW := BW; FRgbaH := BH;
+  end;
+  if FRgbaArr = nil then Exit;
+  FEnv^.SetIntArrayRegion(FEnv, FRgbaArr, 0, BW * BH, PJInt(Buf));
+  a[0].l := FRgbaArr; a[1].i := 0; a[2].i := BW;    // pixels, offset, stride
+  a[3].i := 0; a[4].i := 0; a[5].i := BW; a[6].i := BH;  // x, y, width, height
+  FEnv^.CallVoidMethodA(FEnv, FRgbaBmp, mSetPixels, @a[0]);
+  a[0].f := DX; a[1].f := DY; a[2].f := DX + DW; a[3].f := DY + DH;
+  dst := FEnv^.NewObjectA(FEnv, clsRectF, mRectFInit, @a[0]);
+  a[0].l := FRgbaBmp; a[1].l := nil; a[2].l := dst; a[3].l := FPaint;
+  FEnv^.CallVoidMethodA(FEnv, FCanvas, mDrawBitmap, @a[0]);
+  FEnv^.DeleteLocalRef(FEnv, dst);
 end;
 
 { ---- images ------------------------------------------------------------ }
@@ -577,6 +675,12 @@ var i: Integer;
 begin
   for i := 0 to High(FImgs) do
     if FImgs[i].Bmp <> nil then FEnv^.DeleteGlobalRef(FEnv, FImgs[i].Bmp);
+  if FRgbaBmp <> nil then
+  begin
+    FEnv^.CallVoidMethodA(FEnv, FRgbaBmp, mBmpRecycle, nil);
+    FEnv^.DeleteGlobalRef(FEnv, FRgbaBmp);
+  end;
+  if FRgbaArr <> nil then FEnv^.DeleteGlobalRef(FEnv, FRgbaArr);
   FImgSrcs.Free;
   if FRegFonts <> nil then
   begin

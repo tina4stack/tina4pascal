@@ -69,6 +69,9 @@ procedure TinaHover(X, Y: Single);
 function TinaCursorAt(X, Y: Single): TTina4Cursor;
 { Advance momentum one frame; 1 = keep animating. }
 function TinaTick: Integer;
+{ 1 if the last paint has live animation (does NOT advance the clock) — a host uses
+  this to (re)start a throttled tick loop without double-advancing time. }
+function TinaAnimActive: Integer;
 { 1 once if the just-loaded document autofocused an input (raise the keyboard). }
 function TinaWantsKeyboard: Integer;
 { Drop input focus (e.g. the shell's keyboard was dismissed). }
@@ -188,6 +191,7 @@ var
   GCalHdrY, GCalHdrH, GCalTodayY, GCalTodayH: Single;
   GCalFirstDow, GCalDays: Integer;    // weekday of the 1st (0=Sun), days in month
   GYearMinusMs, GYearPlusMs: QWord;   // last « / » tap — a quick 2nd tap = ±10 years
+  GLastTickMs: QWord = 0;             // wall-clock of the last anim tick (real-time dt)
 
 { ---- DOM helpers ------------------------------------------------------- }
 procedure SetAttr(Tag: THTMLTag; const Name, Value: string);
@@ -1158,6 +1162,7 @@ begin
   if Density > 0 then GDensity := Density;
   cssW := WPx / GDensity; cssH := HPx / GDensity;
   GViewH := cssH;
+  PaintDeviceScale := GDensity;               // core rasterizes <lottie> at native res
   GCanvas.Scale(GDensity, GDensity);          // CSS px → physical px
   GCanvas.FillRect(0, 0, cssW, cssH, BodyBg);
   if GHtml = '' then Exit;
@@ -1398,13 +1403,31 @@ begin
   end;
 end;
 
+function TinaAnimActive: Integer;
+begin
+  if AnimActive then Result := 1 else Result := 0;
+end;
+
 function TinaTick: Integer;
 const FRICTION = 0.95; STOPV = 0.3;
-var nx, ny: Single;
+var nx, ny: Single; nowMs: QWord; dt: Double;
 begin
   Result := 0;
-  // time-driven canvas content (<lottie>) keeps the repaint loop alive
-  if AnimActive then begin AnimAdvance(1.0 / 60.0); Result := 1; end;
+  // time-driven canvas content (<lottie>) keeps the repaint loop alive. Advance
+  // the clock by REAL elapsed time (clamped) so the animation runs at the correct
+  // speed no matter what cadence the host posts frames at — this lets a shell
+  // throttle repaints (e.g. Android at 30fps) for performance without slow-mo.
+  if AnimActive then
+  begin
+    nowMs := GetTickCount64;
+    if GLastTickMs = 0 then dt := 1.0 / 60.0 else dt := (nowMs - GLastTickMs) / 1000.0;
+    GLastTickMs := nowMs;
+    if dt < 0 then dt := 0;
+    if dt > 0.1 then dt := 0.1;          // a stall shouldn't fast-forward the anim
+    AnimAdvance(dt); Result := 1;
+  end
+  else
+    GLastTickMs := 0;                     // reset so the next active run starts fresh
   if (GFlingVX = 0) and (GFlingVY = 0) then Exit;
   if GDragBox <> nil then
   begin

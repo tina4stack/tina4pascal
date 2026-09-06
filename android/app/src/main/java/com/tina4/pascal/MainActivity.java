@@ -47,7 +47,7 @@ public class MainActivity extends Activity {
         setContentView(root);
         ImageLoader.init(getCacheDir(), view);   // async remote <img> cache + repaint
         // "@demo" = built-in interactive demo; an asset name renders that page.
-        view.setHtml(loadAsset("http_demo.html"));
+        view.setHtml(loadAsset("showcase.html"));
     }
 
     /** Called from the view when an <input type=file> is tapped. */

@@ -129,6 +129,16 @@ type
       layer), so backends without a warp show nothing rather than an unwarped
       copy — callers may prefer to skip the 3D path when BeginLayer returns -1. }
     procedure EndLayer3D(Handle: Integer; const Corners: array of Single); virtual;
+    { Blit a raw $AARRGGBB pixel buffer (BW×BH, row-major, top-left origin,
+      straight/non-premultiplied alpha) into the doc-space rect (DX,DY,DW,DH),
+      scaling as needed. Lets the core render vector-heavy, time-driven content
+      (e.g. a <lottie>) into an in-process software buffer (Tina4RasterCanvas) and
+      hand the shell ONE composited image per frame instead of hundreds of small
+      draw calls — decisive on Android where each call is a JNI round-trip. A
+      backend advertises real support via SupportsRGBA; the default is a no-op, so
+      the core keeps a direct-draw fallback for backends that don't implement it. }
+    function SupportsRGBA: Boolean; virtual;
+    procedure DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single); virtual;
   end;
 
   TTina4PaintEvent = procedure(Canvas: TTina4Canvas; Width, Height: Single) of object;
@@ -543,5 +553,7 @@ function TTina4Canvas.BeginLayer(X, Y, W, H, Pad: Single): Integer; begin Result
 procedure TTina4Canvas.EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); begin end;
 procedure TTina4Canvas.BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); begin end;
 procedure TTina4Canvas.EndLayer3D(Handle: Integer; const Corners: array of Single); begin end;
+function TTina4Canvas.SupportsRGBA: Boolean; begin Result := False; end;
+procedure TTina4Canvas.DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single); begin end;
 
 end.
