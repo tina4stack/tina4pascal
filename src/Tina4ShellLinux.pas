@@ -64,6 +64,7 @@ type
     procedure PopState;
     function DX(v: Single): cint; inline;
     function DY(v: Single): cint; inline;
+    procedure AlphaFillRound(x, y, w, h, r: cint; Color: TTina4Color);
   public
     constructor Create(ADpy: PXDisplay; AScreen: cint; AGC: TGC);
     destructor Destroy; override;
@@ -426,9 +427,56 @@ begin
   Result := f;
 end;
 
+{ Alpha-blend a (optionally rounded) rect over the back-buffer via XGetImage/
+  XPutImage — core X fills are opaque, so this is how rgba()/box-shadow render
+  (and why the date-picker calendar's soft shadow no longer paints solid black). }
+procedure TX11Canvas.AlphaFillRound(x, y, w, h, r: cint; Color: TTina4Color);
+var
+  img: PXImage; vx0, vy0, vx1, vy1, i, j, px, py, cxp, cyp: cint;
+  sr, sg, sb, sa: Single; inside: Boolean; dpx: LongWord;
+begin
+  if (w <= 0) or (h <= 0) then Exit;
+  if r > (w div 2) then r := w div 2;
+  if r > (h div 2) then r := h div 2;
+  if r < 0 then r := 0;
+  vx0 := x; if vx0 < 0 then vx0 := 0;
+  vy0 := y; if vy0 < 0 then vy0 := 0;
+  vx1 := x + w; if vx1 > FW then vx1 := FW;
+  vy1 := y + h; if vy1 > FH then vy1 := FH;
+  if (vx1 <= vx0) or (vy1 <= vy0) then Exit;
+  sa := ((Color shr 24) and $FF) / 255;
+  sr := (((Color shr 16) and $FF) / 255) * sa;
+  sg := (((Color shr 8) and $FF) / 255) * sa;
+  sb := ((Color and $FF) / 255) * sa;
+  img := XGetImage(FDpy, FDraw, vx0, vy0, vx1 - vx0, vy1 - vy0, AllPlanes, ZPixmap);
+  if img = nil then Exit;
+  for j := 0 to (vy1 - vy0) - 1 do
+    for i := 0 to (vx1 - vx0) - 1 do
+    begin
+      px := vx0 + i; py := vy0 + j; inside := True;
+      if r > 0 then
+      begin
+        if px < x + r then cxp := x + r else if px > x + w - 1 - r then cxp := x + w - 1 - r else cxp := px;
+        if py < y + r then cyp := y + r else if py > y + h - 1 - r then cyp := y + h - 1 - r else cyp := py;
+        if (cxp <> px) or (cyp <> py) then
+          inside := ((px - cxp) * (px - cxp) + (py - cyp) * (py - cyp)) <= r * r;
+      end;
+      if inside then
+      begin
+        dpx := GetPx(img, i, j);
+        SetPx(img, i, j, BlendRGB(dpx, sr, sg, sb, sa, ''));
+      end;
+    end;
+  XPutImage(FDpy, FDraw, FGC, img, 0, 0, vx0, vy0, vx1 - vx0, vy1 - vy0);
+  DestroyImage(img);
+end;
+
 procedure TX11Canvas.FillRect(X, Y, W, H: Single; Color: TTina4Color);
+var a: LongWord;
 begin
   if (W <= 0) or (H <= 0) then Exit;
+  a := (LongWord(Color) shr 24) and $FF;
+  if (a > 0) and (a < $FF) then begin AlphaFillRound(DX(X), DY(Y), Round(W), Round(H), 0, Color); Exit; end;
   SetFg(Color);
   XFillRectangle(FDpy, FDraw, FGC, DX(X), DY(Y), Round(W), Round(H));
 end;
@@ -441,9 +489,12 @@ begin
 end;
 
 procedure TX11Canvas.FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color);
-var xi, yi, wi, hi, r, d: cint;
+var xi, yi, wi, hi, r, d: cint; a: LongWord;
 begin
   if (W <= 0) or (H <= 0) then Exit;
+  a := (LongWord(Color) shr 24) and $FF;
+  if (a > 0) and (a < $FF) then
+  begin AlphaFillRound(DX(X), DY(Y), Round(W), Round(H), Round(Radius), Color); Exit; end;
   r := Round(Radius);
   if r > Round(W / 2) then r := Round(W / 2);
   if r > Round(H / 2) then r := Round(H / 2);
