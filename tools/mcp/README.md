@@ -24,7 +24,9 @@ release binary. Never `python app.py`.)
 | Tool | What it does |
 |---|---|
 | `tina4_doctor` | report the toolchain (FPC/Android/iOS/Java) |
-| `tina4_build` `{target}` | cross-compile the engine (`android`/`ios`/`macos`/`win64`/`linux`/`all`) |
+| `tina4_init` `{name, directory?}` | scaffold a NEW project (full layout) + build it for the host — no window; returns the project path |
+| `tina4_build` `{target, project?}` | build a project's app (with `project`) or cross-compile the engine (`android`/`ios`/`macos`/`win64`/`linux`/`all`) |
+| `tina4_run` `{project, target?}` | build a project + launch its native app detached; returns the exe path |
 | `tina4_test` | run the DOM/CSS unit suites |
 | `tina4_compliance` `{glob?}` | run the W3C reftest suite |
 | `tina4_deploy` `{target}` | build + install/open + launch |

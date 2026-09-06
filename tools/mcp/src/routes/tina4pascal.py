@@ -17,16 +17,23 @@ mcp = McpServer("/tina4pascal", name="Tina4Pascal Dev Tools", version="1.0.0")
 TARGETS = "android | ios | macos | win64 | linux"
 
 
-def _run(args, timeout=1800):
+def _run(args, timeout=1800, cwd=None):
     """Run the tina4pascal CLI; return its combined output (or an error line)."""
     try:
-        p = subprocess.run([CLI, *args], cwd=REPO, capture_output=True,
+        p = subprocess.run([CLI, *args], cwd=(cwd or REPO), capture_output=True,
                            text=True, timeout=timeout)
         return ((p.stdout or "") + (p.stderr or "")).strip() or "(no output)"
     except subprocess.TimeoutExpired:
         return f"error: timed out after {timeout}s"
     except Exception as e:  # noqa: BLE001
         return f"error: {e}"
+
+
+# Where new projects are scaffolded when the caller doesn't say. Override with
+# TINA4_WORKSPACE; defaults to a `workspace/` beside the repo so projects never
+# clutter the framework tree.
+WORKSPACE = os.environ.get(
+    "TINA4_WORKSPACE", os.path.abspath(os.path.join(REPO, "..", "tina4-workspace")))
 
 
 # ── build / test ──────────────────────────────────────────────────────
@@ -36,10 +43,44 @@ def doctor():
     return _run(["doctor"])
 
 
-@mcp_tool("tina4_build", description=f"Cross-compile the engine for a target "
-          f"({TARGETS} | all).", server=mcp)
-def build(target: str):
-    return _run(["build", target])
+# ── scaffold / build / run a project ──────────────────────────────────
+@mcp_tool("tina4_init", description="Scaffold a NEW Tina4Pascal project (full "
+          "backend-style layout: migrations/, assets/, src/{app,routes,orm,"
+          "services,templates}, tina4.json) and build it for the host target. "
+          "Does NOT open a window. `directory` is the parent to create it in "
+          "(defaults to the server workspace). Returns the project path + log.",
+          server=mcp)
+def init(name: str, directory: str = ""):
+    parent = directory or WORKSPACE
+    os.makedirs(parent, exist_ok=True)
+    log = _run(["init", name, "--no-run"], cwd=parent)
+    return {"project": os.path.join(parent, name), "log": log}
+
+
+@mcp_tool("tina4_build", description=f"Build for a target ({TARGETS} | all). "
+          f"With `project` set, builds that project's native app; otherwise "
+          f"cross-compiles the framework engine.", server=mcp)
+def build(target: str, project: str = ""):
+    return _run(["build", target], cwd=(project or REPO))
+
+
+@mcp_tool("tina4_run", description="Build a project for a target and launch its "
+          "native app detached (non-blocking). Returns the executable path. On a "
+          "headless server the process starts but no window shows — use "
+          "tina4_deploy/tina4_screenshot for on-device targets.", server=mcp)
+def run(project: str, target: str = ""):
+    tgt = target or ("macos" if os.uname().sysname == "Darwin" else "linux")
+    build_log = _run(["build", tgt], cwd=project)
+    name = os.path.basename(os.path.normpath(project))
+    exe = os.path.join(project, "build", tgt, name)
+    if not os.path.exists(exe):
+        return {"ok": False, "log": build_log}
+    try:
+        subprocess.Popen([exe], cwd=project,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "exe": exe, "error": str(e), "log": build_log}
+    return {"ok": True, "exe": exe, "log": build_log}
 
 
 @mcp_tool("tina4_test", description="Build + run all DOM/CSS unit suites.",

@@ -134,8 +134,8 @@ function Write-File($path, $content) {
   [System.IO.File]::WriteAllText($path, $content)
 }
 
-function Invoke-Init($name) {
-  if (-not $name -or $name -eq 'win64') { Write-Host "usage: tina4pascal.ps1 init <projectname>" -ForegroundColor Red; return }
+function Invoke-Init($name, $norun) {
+  if (-not $name -or $name -eq 'win64') { Write-Host "usage: tina4pascal.ps1 init <projectname> [--no-run]" -ForegroundColor Red; return }
   $fpc = Ensure-Fpc
   if (-not $fpc) { return }
   $proj = Join-Path (Get-Location) $name
@@ -204,7 +204,7 @@ end.
     Write-Host "  Project:  $proj" -ForegroundColor Green
     Write-Host "  Build/run again:  cd $name; ..\tools\tina4pascal.ps1 run" -ForegroundColor DarkGray
     Write-Host "  MCP (AI-drivable): cd tools/mcp; uv sync; tina4 serve  ->  http://localhost:7146/tina4pascal" -ForegroundColor DarkGray
-    Start-Process -FilePath $exe -WorkingDirectory $proj
+    if (-not $norun) { Start-Process -FilePath $exe -WorkingDirectory $proj }
   }
 }
 
@@ -260,7 +260,7 @@ function Project-Root { if (Test-Path (Join-Path (Get-Location) 'tina4.json')) {
 if ($cmd -eq 'doctor') {
   Invoke-Doctor
 } elseif ($cmd -eq 'init') {
-  Invoke-Init $target
+  Invoke-Init $target ($page -eq '--no-run')
 } elseif ($cmd -eq 'build') {
   $pr = Project-Root
   if ($pr) { Build-Project $pr $target | Out-Null }   # inside a project: build the app

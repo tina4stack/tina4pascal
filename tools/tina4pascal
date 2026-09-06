@@ -225,7 +225,9 @@ run_project() {
 
 # scaffold a full Tina4-backend-style project, then build + run it
 cmd_init() {
-  name="${1:-}"; [ -n "$name" ] || die "usage: tina4pascal init <name>"
+  name=""; norun=0
+  for a in "$@"; do case "$a" in --no-run) norun=1 ;; *) [ -z "$name" ] && name="$a" ;; esac; done
+  [ -n "$name" ] || die "usage: tina4pascal init <name> [--no-run]"
   [ -e "$name" ] && die "'$name' already exists"
   need_fpc
   title="$(printf '%s' "$name" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
@@ -276,7 +278,11 @@ end.
 EOF
   [ -f "$ROOT/branding/icon.png" ] && cp "$ROOT/branding/icon.png" "$d/assets/icon.png"
   ok "scaffolded ${B}$d/${Z}"
-  ( cd "$d" && run_project "$(default_host_target)" )
+  if [ "$norun" -eq 1 ]; then
+    ( cd "$d" && build_project "$(default_host_target)" )   # scaffold + build, no window (AI/MCP)
+  else
+    ( cd "$d" && run_project "$(default_host_target)" )
+  fi
 }
 
 # ---- test / run / snapshot / compliance -------------------------------------
