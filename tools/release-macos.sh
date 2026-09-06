@@ -35,7 +35,8 @@ BIN="build/macos/htmlviewer"
 [ -f "$BIN" ] || { echo "build failed: $BIN missing"; exit 1; }
 
 echo "== smoke render (best effort) =="
-if "$BIN" --snapshot build/macos/smoke.png >/dev/null 2>&1; then
+if "$BIN" examples/pages/bootstrap_test.html --snapshot build/macos/smoke.png >/dev/null 2>&1 \
+   && [ -f build/macos/smoke.png ]; then
   echo "  rendered build/macos/smoke.png"
 else
   echo "  (snapshot skipped)"
