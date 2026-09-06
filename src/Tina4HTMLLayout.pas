@@ -2192,7 +2192,7 @@ var
     begin
       it := items[lineItems[k]];
       if it.SpaceBefore and (k > 0) then
-        lineW := lineW + FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width;
+        lineW := lineW + FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width + ParentStyle.WordSpacing;
       lineW := lineW + it.W;
     end;
     // float-aware line box: narrow the available span by any floats overlapping
@@ -2236,7 +2236,7 @@ var
     begin
       it := items[lineItems[k]];
       if it.SpaceBefore and (k > 0) then
-        x := x + FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width + gapExtra;
+        x := x + FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width + gapExtra + ParentStyle.WordSpacing;
       if it.Box <> nil then
       begin
         if SameText(it.Box.Style.VerticalAlign, 'top') then
@@ -2292,7 +2292,7 @@ var
         end;
         spaceW := 0;
         if it.SpaceBefore and (lineItems.Count > 0) then
-          spaceW := FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width;
+          spaceW := FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width + ParentStyle.WordSpacing;
         // float-aware usable width: floats overlapping this line's y-range narrow
         // it (so text wraps beside a floated box).
         LineBounds(y, y + Max(lineH, it.H), flw0, flw1);
@@ -2543,6 +2543,11 @@ begin
     end;
     box.MarkerText := MarkerFor(
       TComputedStyle.ForTag(Tag.Parent, ParentStyle, FSheet).ListStyleType, liIdx);
+    // list-style-position: inside — the marker joins the content flow: reserve
+    // room for it at the content start (drawn there instead of outdented).
+    if st.ListStyleInside and (box.MarkerText <> '') then
+      st.Padding.Left := st.Padding.Left +
+        FCanvas.MeasureText(box.MarkerText + ' ', st.FontSize, []).Width;
   end;
   // <summary> disclosure triangle, reflecting the parent <details> open state
   if SameText(Tag.TagName, 'summary') and (Tag.Parent <> nil) then
@@ -3631,9 +3636,16 @@ begin
   if (not Hidden) and (Box.MarkerText <> '') then
   begin
     m := Canvas.MeasureText(Box.MarkerText, st.FontSize, []);
-    Canvas.DrawText(Box.X + st.BorderWidths.Left + st.Padding.Left - 8 - m.Width,
-      y + st.BorderWidths.Top + st.Padding.Top, Box.MarkerText,
-      st.FontSize, [], ScaleAlpha(st.Color, op));
+    if st.ListStyleInside then
+      // inside: the padding was widened by the marker; draw it in that reserved gap
+      Canvas.DrawText(Box.X + st.BorderWidths.Left + st.Padding.Left
+        - Canvas.MeasureText(Box.MarkerText + ' ', st.FontSize, []).Width,
+        y + st.BorderWidths.Top + st.Padding.Top, Box.MarkerText,
+        st.FontSize, [], ScaleAlpha(st.Color, op))
+    else
+      Canvas.DrawText(Box.X + st.BorderWidths.Left + st.Padding.Left - 8 - m.Width,
+        y + st.BorderWidths.Top + st.Padding.Top, Box.MarkerText,
+        st.FontSize, [], ScaleAlpha(st.Color, op));
   end;
 
   // scrollable / clipped inner box: clip, then draw content shifted by ScrollTop.

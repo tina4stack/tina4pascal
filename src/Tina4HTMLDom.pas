@@ -297,6 +297,8 @@ type
     MinHeight: Single;
     MaxHeight: Single;
     LetterSpacing: Single;
+    WordSpacing: Single;        // extra px added to each inter-word space
+    ListStyleInside: Boolean;   // list-style-position: inside
     TextIndent: Single;
     Visibility: string;
     ListStyleType: string;
@@ -2071,6 +2073,8 @@ begin
   Result.MinHeight := -1;
   Result.MaxHeight := -1;
   Result.LetterSpacing := 0;
+  Result.WordSpacing := 0;
+  Result.ListStyleInside := False;
   Result.TextIndent := 0;
   Result.Visibility := 'visible';
   Result.ListStyleType := '';
@@ -2479,6 +2483,8 @@ begin
   Result.ListStyleType := ParentStyle.ListStyleType;
   Result.TextTransform := ParentStyle.TextTransform;
   Result.LetterSpacing := ParentStyle.LetterSpacing;
+  Result.WordSpacing := ParentStyle.WordSpacing;
+  Result.ListStyleInside := ParentStyle.ListStyleInside;
   Result.TextIndent := ParentStyle.TextIndent;
   Result.Visibility := ParentStyle.Visibility;
   Result.WordBreak := ParentStyle.WordBreak;
@@ -3011,8 +3017,11 @@ var
   UrlPos: Integer;
   LH: Single;
   BParts, RParts, OvParts, SParts, OParts, FlexParts, TsParts, BgParts, GArgs, InsetParts, TfArgs: TStringArray;
-  BP, BT, SP, ST, OP, OT, TsP, TsT, GArg: string;
+  BP, BT, SP, ST, OP, OT, TsP, TsT, GArg, OvPart: string;
   R0, Ra, Rb, Rc, PL: Single;
+  FParts: TStringArray;
+  fi, slashp, fj: Integer;
+  fLp, fSz, fLhs, fFam: string;
   Nums: array of Single;
   ShadowStr, OutlineStr, FloatStr, ClrStr, FlexStr, TsStr: string;
   InsT, InsR, InsB, InsL: string;
@@ -3387,6 +3396,49 @@ begin
   if Decls.TryGetValue('letter-spacing', Temp) and not ShouldSkip(Temp) then
     Style.LetterSpacing := ParseLength(Temp, Style.FontSize);
 
+  if Decls.TryGetValue('word-spacing', Temp) and not ShouldSkip(Temp) then
+    Style.WordSpacing := ParseLength(Temp, Style.FontSize);
+
+  // font shorthand: [style] [variant] [weight] size[/line-height] family
+  if Decls.TryGetValue('font', Temp) and not ShouldSkip(Temp) then
+  begin
+    FParts := Temp.Trim.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    fi := 0;
+    while fi <= High(FParts) do   // leading style/variant/weight tokens
+    begin
+      fLp := LowerCase(FParts[fi]);
+      if (fLp = 'italic') or (fLp = 'oblique') then Style.Italic := True
+      else if fLp = 'bold' then begin Style.Bold := True; Style.FontWeight := 700; end
+      else if (fLp = 'normal') or (fLp = 'small-caps') then  // ignored
+      else if (Length(fLp) = 3) and (StrToIntDef(fLp, 0) >= 100) then
+        Style.FontWeight := StrToIntDef(fLp, 400)
+      else Break;   // first non-keyword token = the size
+      Inc(fi);
+    end;
+    if fi <= High(FParts) then
+    begin
+      fSz := FParts[fi];
+      slashp := Pos('/', fSz);
+      if slashp > 0 then
+      begin
+        Style.FontSize := ParseLength(Copy(fSz, 1, slashp - 1), Style.FontSize);
+        fLhs := Copy(fSz, slashp + 1, MaxInt);
+        if (Pos('px', fLhs) > 0) or (Pos('em', fLhs) > 0) then
+          Style.LineHeight := ParseLength(fLhs, Style.FontSize)
+        else Style.LineHeight := StrToFloatDef(fLhs, 1.4);
+      end
+      else
+        Style.FontSize := ParseLength(fSz, Style.FontSize);
+      Inc(fi);
+      if fi <= High(FParts) then
+      begin
+        fFam := '';
+        for fj := fi to High(FParts) do fFam := fFam + FParts[fj] + ' ';
+        Style.FontFamily := Trim(fFam);
+      end;
+    end;
+  end;
+
   if Decls.TryGetValue('text-indent', Temp) and not ShouldSkip(Temp) then
     Style.TextIndent := ParseLength(Temp, Style.FontSize);
 
@@ -3395,8 +3447,22 @@ begin
 
   if Decls.TryGetValue('list-style-type', Temp) and not ShouldSkip(Temp) then
     Style.ListStyleType := Temp.ToLower;
+  if Decls.TryGetValue('list-style-position', Temp) and not ShouldSkip(Temp) then
+    Style.ListStyleInside := SameText(Trim(Temp), 'inside');
+  // list-style shorthand: <type> || <position> || <image>. A `position`
+  // token (inside/outside) sets position; any other keyword sets the type.
   if Decls.TryGetValue('list-style', Temp) and not ShouldSkip(Temp) then
-    Style.ListStyleType := Temp.ToLower;
+  begin
+    for OvPart in Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+    begin
+      if (OvPart = 'inside') or (OvPart = 'outside') then
+        Style.ListStyleInside := (OvPart = 'inside')
+      else if OvPart.StartsWith('url(') then
+        // image marker not rendered
+      else
+        Style.ListStyleType := OvPart;
+    end;
+  end;
 
   if Decls.TryGetValue('overflow', Temp) and not ShouldSkip(Temp) then
   begin

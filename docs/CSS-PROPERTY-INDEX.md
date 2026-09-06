@@ -70,10 +70,11 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | font-weight | ✅ | numeric 100–900 + keywords, threaded to the canvas; Cocoa steps the system font weight (iOS/Android binary bold for now) |
 | font-style | ✅ | italic/oblique |
 | font-family | ✅ | resolved on all 3 shell canvases (generic + named + @font-face); real fonts, not one system face |
-| font (shorthand), font-variant, font-stretch | ❌ | not parsed |
+| font (shorthand) | ✅ | `[style] [variant] [weight] size[/line-height] family` — sets style/weight/size/line-height/family |
+| font-variant, font-stretch | 📦 | parsed-ignored (small-caps not synthesised) |
 | line-height | ✅ | unitless, px, em, % (÷100), rem (×16 root) |
 | letter-spacing | ✅ | applied in measure AND paint |
-| word-spacing | ❌ | |
+| word-spacing | ✅ | extra px added to every inter-word space (inherited; affects wrap + alignment) |
 | text-align | ✅ | left/center/right/justify (justify spreads slack across word gaps; last line stays left) |
 | text-decoration | 🟡 | underline + line-through (native) + overline (hand-ruled); no color/style longhands |
 | text-transform | ✅ | uppercase/lowercase/capitalize applied to painted glyphs |
@@ -84,7 +85,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | word-break, overflow-wrap | ✅ | break-word/break-all/anywhere: over-long words break between characters (UTF-8 aware) |
 | vertical-align | 🟡 | sub/super/top/middle; no text-top/bottom/length |
 | list-style-type | ✅ | disc/circle/square/decimal/alpha/roman/none |
-| list-style-position/image, list-style shorthand | 🟡/❌ | shorthand mis-parses multi-token; position/image absent |
+| list-style shorthand, list-style-position | ✅ | shorthand tokenised (type · inside/outside · url image ignored); `position:inside` draws the marker in the content flow. `list-style-image` still not rendered |
 | direction, unicode-bidi, writing-mode | ❌ | LTR only |
 | tab-size, hyphens, text-rendering, text-align-last, text-justify | ❌ | |
 
@@ -171,9 +172,9 @@ col/row-resize.
     `@supports` / `@import`.
 4. **transform** skew/matrix/3d + `transform-origin` / `perspective`; **filter /
     backdrop-filter / clip-path / mask**; blend-modes.
-5. Typography long tail: `font`/`font-variant`/`font-stretch` shorthands,
-    `word-spacing`, `direction`/`writing-mode` (bidi), `list-style` shorthand +
-    position/image, `vertical-align` text-top/bottom/length.
+5. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
+    `direction`/`writing-mode` (bidi), `list-style-image`, `vertical-align`
+    text-top/bottom/length.
 6. **user-select / resize** (need a selection model / drag-resize handle);
     `env()`; `table-layout:fixed`; `empty-cells`.
 
