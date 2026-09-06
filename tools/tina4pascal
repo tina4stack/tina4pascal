@@ -503,7 +503,13 @@ proj_ios_stage() {
   proj_dump_html "$iwork/index.html"
   iname="$(jget name "$(basename "$PWD")")"
   ibundle="$(jget bundleId "com.tina4.$iname")"
+  # team: env wins, else the literal tina4.json ios.team (a ${...} placeholder is
+  # ignored), so a zip-portable project can carry its own signing team.
   iteam="${TINA4_IOS_TEAM:-}"
+  if [ -z "$iteam" ]; then
+    jt="$(grep -oE '"team"[[:space:]]*:[[:space:]]*"[^"]*"' "$PWD/tina4.json" 2>/dev/null | head -1 | sed -E 's/.*"team"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/')"
+    case "$jt" in ''|*'${'*) : ;; *) iteam="$jt" ;; esac
+  fi
   ivname="$(jget versionName 1.0)"; ivcode="$(jget_num versionCode 1)"
   say "→ building iOS engine (libtina4ios.a)…"
   PPC_CONFIG_PATH="$FPC_HOME/etc" PATH="$FPC_HOME/bin:$PATH" sh "$ROOT/ios/build.sh" >/dev/null 2>&1 \
