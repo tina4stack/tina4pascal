@@ -291,13 +291,15 @@ build_project() {
 # host's asset, the same way the desktop app renders it. Uses the host build's
 # --dump-html mode so templating stays identical across every target.
 proj_dump_html() {
-  out="$1"
-  htgt="$(default_host_target)"
-  build_project "$htgt" >/dev/null 2>&1 || build_project "$htgt"
-  name="$(jget name "$(basename "$PWD")")"
-  "$PWD/build/$htgt/$name" --dump-html "$out" >/dev/null 2>&1 \
+  # distinct var names: build_project clobbers the shell-globals name/out/target
+  # (POSIX sh has no locals here), so keep our state out of their way.
+  dhout="$1"
+  dhtgt="$(default_host_target)"
+  build_project "$dhtgt" >/dev/null 2>&1 || build_project "$dhtgt"
+  dhname="$(jget name "$(basename "$PWD")")"
+  "$PWD/build/$dhtgt/$dhname" --dump-html "$dhout" >/dev/null 2>&1 \
     || die "could not render entry template to HTML (--dump-html)"
-  [ -s "$out" ] || die "rendered HTML is empty: check the entry template"
+  [ -s "$dhout" ] || die "rendered HTML is empty: check the entry template"
 }
 
 # Android/iOS host builds for a scaffolded project produce a signable app package
@@ -305,12 +307,113 @@ proj_dump_html() {
 # and the iOS xcodeproj generator bundle proj_dump_html output and sign from the
 # resolved keystore / provisioning profile. Being implemented (see
 # docs/TOOLING-DISTRIBUTION.md); until then, give a clear pointer, don't crash.
+# numeric key from tina4.json (nesting-agnostic; jget only does top-level strings)
+jget_num() { n="$(grep -oE "\"$1\"[[:space:]]*:[[:space:]]*[0-9]+" "$PWD/tina4.json" 2>/dev/null | grep -oE '[0-9]+$' | head -1)"; printf '%s' "${n:-$2}"; }
+
+# Package a scaffolded project into a signed APK with ITS OWN applicationId.
+# Gradle-free: reuse the reference app's Java/JNI/res, bundle this project's
+# rendered UI + icon, and rename the manifest package to the project's bundleId
+# (R/Java stay in com.tina4.pascal via --custom-package; the activity is FQCN).
 proj_android_build() {
+  need_fpc
+  BT="$ANDROID_SDK/build-tools/$BT_VER"
+  ANDROID_JAR="$ANDROID_SDK/platforms/$PLATFORM_VER/android.jar"
+  [ -x "$BT/aapt2" ]     || die "Android build-tools missing → tina4pascal setup android"
+  [ -f "$ANDROID_JAR" ]  || die "Android platform $PLATFORM_VER missing → tina4pascal setup android"
+  JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home 2>/dev/null || true)}"; export JAVA_HOME
+  JAVAC="$JAVA_HOME/bin/javac"; [ -x "$JAVAC" ] || JAVAC="javac"
+  command -v "$JAVAC" >/dev/null 2>&1 || die "JDK (javac) required to package APKs"
+
+  work="$PWD/build/android"; host="$work/host"; aout="$work/out"
+  mkdir -p "$work"
+
+  # 1. render the entry template → the UI asset MainActivity loads (showcase.html).
+  #    Do this FIRST: it builds the desktop host, which clobbers the shell-globals
+  #    name/out/target — so read our own config only AFTER it returns.
+  proj_dump_html "$work/index.html"
+
   name="$(jget name "$(basename "$PWD")")"
-  warn "scaffolded-project Android packaging is landing next (docs/TOOLING-DISTRIBUTION.md)."
-  say  "  For now build the reference app:  ${D}cd $ROOT/android && ABIS=arm64-v8a sh build.sh && sh build-apk.sh${Z}"
-  say  "  --dump-html renders this project's UI:  ${D}(cd \"$PWD\" && build/$(default_host_target)/$name --dump-html ui.html)${Z}"
-  return 0
+  title="$(jget title "$name")"
+  bundle="$(jget bundleId "com.tina4.$name")"
+  minsdk="$(jget_num androidMinSdk 21)"; tgtsdk="$(jget_num androidTargetSdk 34)"
+  say "${B}— android: $name ($bundle) —${Z}"
+  rm -rf "$host" "$aout"; mkdir -p "$aout/classes"
+
+  # 2. stage the reference host (Java + JNI + res + manifest) and overlay project bits
+  mkdir -p "$host"; cp -R "$ROOT/android/." "$host/"
+  APPDIR="$host/app/src/main"
+  rm -rf "$host/out" "$host"/*.apk "$host"/*.idsig "$APPDIR/jniLibs" 2>/dev/null || true
+  mkdir -p "$APPDIR/assets"; cp "$work/index.html" "$APPDIR/assets/showcase.html"
+  # bundle the project's assets (icon, images) into the APK; local-asset <img>
+  # resolution on Android is a follow-up (see docs/TOOLING-DISTRIBUTION.md).
+  [ -d "$PWD/assets" ] && cp -R "$PWD/assets/." "$APPDIR/assets/" 2>/dev/null || true
+  [ -f "$PWD/assets/icon.png" ] && find "$APPDIR/res" -name 'ic_launcher*.png' \
+    -exec cp "$PWD/assets/icon.png" {} \; 2>/dev/null || true
+
+  # 3. native lib(s) — compile the JNI bridge against the REPO engine (src)
+  for abi in ${ABIS:-arm64-v8a}; do
+    case "$abi" in
+      arm64-v8a)   af="-Tandroid -Paarch64" ;;
+      armeabi-v7a) af="-Tandroid -Parm -CpARMV7A -CfVFPV3" ;;
+      *) warn "skip unknown ABI $abi"; continue ;;
+    esac
+    o="$APPDIR/jniLibs/$abi"; mkdir -p "$o"; w="$(mktemp -d)"
+    say "${D}fpc $af → libtina4.so ($abi)${Z}"
+    "$FPC" -Mdelphi $af -O2 -Xs -Fu"$SRC" -FE"$w" -FU"$w" \
+      -o"$o/libtina4.so" "$host/jni/tina4jni.pas" 2>&1 | grep -Ei "error|fatal" \
+      && { rm -rf "$w"; die "native build failed ($abi)"; } || true
+    [ -f "$o/libtina4.so" ] || { rm -rf "$w"; die "native build produced no .so ($abi)"; }
+    rm -rf "$w"
+  done
+
+  # 4. Java → dex
+  say "${D}javac + d8${Z}"
+  "$JAVAC" --release 17 -classpath "$ANDROID_JAR" -d "$aout/classes" \
+    $(find "$APPDIR/java" -name '*.java') || die "javac failed"
+  "$BT/d8" --min-api "$minsdk" --lib "$ANDROID_JAR" --output "$aout" \
+    $(find "$aout/classes" -name '*.class') || die "d8 failed"
+
+  # 5. resources + manifest → applicationId renamed to the project's bundleId
+  RES=""
+  if [ -d "$APPDIR/res" ]; then "$BT/aapt2" compile --dir "$APPDIR/res" -o "$aout/res.zip"; RES="$aout/res.zip"; fi
+  # package=com.tina4.pascal keeps R/Java resolving; activity FQCN so it survives
+  # the rename; label shows the project title.
+  sed -e 's#<manifest #<manifest package="com.tina4.pascal" #' \
+      -e 's#android:name="\.MainActivity"#android:name="com.tina4.pascal.MainActivity"#' \
+      -e "s#android:label=\"[^\"]*\"#android:label=\"$title\"#" \
+      "$APPDIR/AndroidManifest.xml" > "$aout/AndroidManifest.xml"
+  "$BT/aapt2" link -o "$aout/base.apk" -I "$ANDROID_JAR" \
+    --manifest "$aout/AndroidManifest.xml" \
+    --rename-manifest-package "$bundle" --custom-package com.tina4.pascal \
+    --min-sdk-version "$minsdk" --target-sdk-version "$tgtsdk" \
+    -A "$APPDIR/assets" $RES || die "aapt2 link failed"
+
+  # 6. add dex + native libs into the APK
+  for abi in $(ls "$APPDIR/jniLibs" 2>/dev/null); do
+    [ -f "$APPDIR/jniLibs/$abi/libtina4.so" ] || continue
+    mkdir -p "$aout/lib/$abi"; cp "$APPDIR/jniLibs/$abi/libtina4.so" "$aout/lib/$abi/"
+  done
+  ( cd "$aout" && zip -qr base.apk classes*.dex lib ) || die "apk assembly failed"
+  "$BT/zipalign" -f -p 4 "$aout/base.apk" "$aout/aligned.apk" || die "zipalign failed"
+
+  # 7. sign: release from env (secret), else the project's committable debug key
+  apk="$work/$name.apk"
+  if [ -n "${TINA4_KEYSTORE:-}" ]; then
+    : "${TINA4_KEY_ALIAS:?set TINA4_KEY_ALIAS for release signing}"
+    : "${TINA4_KS_PASS:?set TINA4_KS_PASS for release signing}"
+    "$BT/apksigner" sign --ks "$TINA4_KEYSTORE" --ks-pass "pass:$TINA4_KS_PASS" \
+      --ks-key-alias "$TINA4_KEY_ALIAS" --key-pass "pass:${TINA4_KEY_PASS:-$TINA4_KS_PASS}" \
+      --out "$apk" "$aout/aligned.apk" || die "release signing failed"
+    ok "APK (RELEASE-signed) → build/android/$name.apk"
+  else
+    ks="$PWD/signing/debug.keystore"; [ -f "$ks" ] || ks="$ROOT/android/debug.keystore"
+    "$BT/apksigner" sign --ks "$ks" --ks-pass pass:android --key-pass pass:android \
+      --out "$apk" "$aout/aligned.apk" || die "debug signing failed"
+    ok "APK (debug-signed) → build/android/$name.apk"
+  fi
+  say "  applicationId ${D}$bundle${Z}"
+  say "  install:  ${D}adb install -r \"$apk\"${Z}"
+  say "  launch:   ${D}adb shell am start -n $bundle/com.tina4.pascal.MainActivity${Z}"
 }
 proj_ios_build() {
   warn "scaffolded-project iOS packaging is landing next (docs/TOOLING-DISTRIBUTION.md)."

@@ -64,18 +64,23 @@ HTML ✅. The Android/iOS host bundles that as its asset, so a phone shows the e
 same UI the desktop renders — no second templating path.
 
 ## Android → APK / AAB / Play 🏗
-Generate `platforms/android/` from `tina4.json` (gradle-free, reusing the
+`tina4pascal build android` packages a scaffolded project gradle-free (reusing the
 reference app's Java + JNI + `aapt2/d8/apksigner`):
 - **applicationId** = `bundleId` via `aapt2 link --rename-manifest-package <id>
   --custom-package com.tina4.pascal` (keeps the shared Java/R package, sets the
-  store id); activity referenced by FQCN.  ⬜
-- **icons** from `assets/icon.png` (all mipmap densities).  ⬜
-- **min/target SDK** from `tina4.json.toolchain`.  ⬜
-- **debug build** signs with `signing/debug.keystore`.  ⬜
+  store id); activity referenced by FQCN.  ✅ *(verified on the emulator: a
+  scaffolded project installs as its own `com.tina4.<name>` and renders its UI)*
+- **icons** from `assets/icon.png` (all mipmap densities).  ✅
+- **min/target SDK** from `tina4.json`.  ✅
+- **debug build** signs with `signing/debug.keystore` (falls back to the repo key). ✅
+- **UI** = `--dump-html` of the entry template, bundled as the `showcase.html`
+  asset.  ✅  · project `assets/` are bundled into the APK ✅, but a relative
+  `<img src="assets/…">` doesn't resolve on-device yet — needs the Android shell
+  to load from APK assets (extract to filesDir on first run, or an `asset://`
+  scheme in the image loader).  ⬜ *(follow-up)*
 - **release**: `tina4pascal release android` → a **signed AAB** (`bundletool`) —
   Play requires an `.aab`, not an `.apk` — plus a signed universal APK for
-  sideload testing. Signs from `TINA4_KEYSTORE`/`TINA4_KEY_ALIAS`/`TINA4_KS_PASS`
-  (already supported by `build-apk.sh`).  ⬜
+  sideload testing. Signs from `TINA4_KEYSTORE`/`TINA4_KEY_ALIAS`/`TINA4_KS_PASS`. ⬜
 - **upload**: `tina4pascal publish android` via the Play Developer API (service
   account JSON in `~/.tina4/`, never committed) → internal/closed/production track. ⬜
 
