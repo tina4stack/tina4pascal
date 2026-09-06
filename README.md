@@ -20,44 +20,51 @@ Android, iOS) that carries the whole engine and no runtime. See
 
 <table>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/showcase-windows.png" alt="Tina4Pascal showcase on Windows"><br><sub><b>Windows</b> · Win32 + GDI+</sub></td>
-<td width="50%" valign="top"><img src="docs/images/showcase-android.png" alt="Tina4Pascal showcase on Android"><br><sub><b>Android</b> · JNI → Canvas (built from Windows)</sub></td>
+<td valign="top"><img src="docs/images/showcase-windows.png" width="620" alt="Tina4Pascal showcase on Windows"><br><sub><b>Windows</b> · Win32 + GDI+</sub></td>
+<td valign="top" align="center"><img src="docs/images/showcase-android.png" width="200" alt="Tina4Pascal showcase on Android"><br><sub><b>Android</b> · JNI → Canvas<br>(built from Windows)</sub></td>
 </tr>
 </table>
 
 One HTML file — `showcase.html` — byte-identical, drawn by the native engine on
 each platform. The **Lottie** dino is a Bodymovin animation rendered by the
 pure-Pascal core (**no Skia, no JS**); the same page lays out `<video>`,
-gradients, `transform`, `position:fixed` and form controls.
+gradients, `transform`, `position:fixed` and form controls. The CSS engine even
+digests the real `bootstrap.min.css`.
 
-And it digests the real `bootstrap.min.css` — the proof-of-concept viewer (HTML
-parser, CSS engine, layout, HTTPS images, native window) is a **1.3 MB**
-stripped binary:
-
-![bootstrap_test.html rendered natively on macOS](docs/images/bootstrap-macos.png)
-
-## Quick start
-
-One CLI scaffolds, builds and runs a native app — no FPC flags to remember.
-
-```sh
-# macOS / Linux
-tools/tina4pascal init hello && cd hello && ../tools/tina4pascal run
-```
+## Install
 
 ```powershell
 # Windows (PowerShell)
-tools\tina4pascal.ps1 init hello ; cd hello ; ..\tools\tina4pascal.ps1 run
+irm https://raw.githubusercontent.com/tina4stack/tina4pascal/main/scripts/install.ps1 | iex
 ```
 
-You get a native window showing **Hello World!** with the logo. Then build for
-any target:
+```sh
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/tina4stack/tina4pascal/main/scripts/install.sh | sh
+```
 
-```powershell
-..\tools\tina4pascal.ps1 build win64      # Windows .exe
-..\tools\tina4pascal.ps1 build linux      # via WSL
-..\tools\tina4pascal.ps1 setup android    # one-time: NDK + FPC Android cross
-..\tools\tina4pascal.ps1 build android    # → signed APK (arm64 + armv7 + x86_64)
+That puts `tina4pascal` on your PATH. FPC is fetched on your first `init`, so a
+clean machine is ready in about two minutes.
+
+## Quick start
+
+Install (above), then one command:
+
+```sh
+tina4pascal init hello
+```
+
+It scaffolds the project, fetches FPC if you don't have it, builds, and opens a
+native window showing **Hello World!** with the logo — your first app in about
+two minutes, same command on every OS. No FPC flags, nothing to install by hand.
+
+Then keep going:
+
+```sh
+cd hello
+tina4pascal run             # rebuild & run after you edit src/templates + src/routes
+tina4pascal build android   # ship an APK (arm64 + armv7 + x86_64), signed
+tina4pascal doctor          # see the whole toolchain
 ```
 
 ## Toolsets
