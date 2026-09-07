@@ -57,6 +57,18 @@ type
     function SetHex(hex: LongWord): TColor;
   end;
 
+  { an RGBA pixel buffer — three.Texture / CanvasTexture / VideoTexture live here.
+    v0.3 has a built-in 5x7 font so labels work without an OS font engine. }
+  TTexture = class
+    Width, Height: Integer;
+    Data: array of Byte;                             // RGBA, top-down
+    constructor Create(w, h: Integer);
+    procedure Fill(r, g, b, a: Byte);
+    procedure SetPixel(x, y: Integer; r, g, b, a: Byte);
+    procedure DrawText(const s: string; px, py, scale: Integer; r, g, b, a: Byte);
+    procedure SetRGBA(src: PByte);                   // upload a frame (VideoTexture)
+  end;
+
   TObject3D = class
     Position, Rotation, Scale: TVector3;             // rotation = Euler XYZ radians
     Children: TList;
@@ -169,6 +181,18 @@ type
   end;
   TLineSegments = class(TLine);                            // vertex pairs
 
+  TSpriteMaterial = class(TMaterial)
+    Map: TTexture;                                         // nil = solid Color
+    SizeAttenuation: Boolean;                             // true: shrink with distance
+    constructor Create(amap: TTexture = nil; acolor: LongWord = $ffffff);
+  end;
+
+  { a camera-facing billboard — name tags, node labels, icons }
+  TSprite = class(TObject3D)
+    Material: TSpriteMaterial;
+    constructor Create(amaterial: TSpriteMaterial);
+  end;
+
   TLight = class(TObject3D)
     Color: TColor;
     Intensity: Single;
@@ -225,6 +249,11 @@ function Mat4Compose(const pos, rotEuler, scl: TV3): TMat4;
 function Mat4TransformPoint(const mat: TMat4; const p: TV3): TV3;
 function Mat4TransformDir(const mat: TMat4; const d: TV3): TV3;
 function Mat4Invert(const a: TMat4): TMat4;
+
+{ convenience: a label texture sized to the text, drawn in fg over bg }
+function MakeLabelTexture(const s: string; scale: Integer; fg, bg: LongWord; bgAlpha: Byte): TTexture;
+{ a Sprite showing that label — anchor above a world point }
+function MakeLabel(const s: string; scale: Integer; fg, bg: LongWord; bgAlpha: Byte): TSprite;
 
 implementation
 
@@ -381,6 +410,123 @@ constructor TColor.Create(hex: LongWord); begin SetHex(hex); end;
 constructor TColor.CreateRGB(ar, ag, ab: Single); begin r:=ar; g:=ag; b:=ab; end;
 function TColor.SetHex(hex: LongWord): TColor;
 begin r:=((hex shr 16) and $ff)/255; g:=((hex shr 8) and $ff)/255; b:=(hex and $ff)/255; Result:=Self; end;
+
+{ ---- built-in 5x7 bitmap font (uppercase, digits, a few symbols) ---- }
+type TGlyphDef = record ch: Char; rows: array[0..6] of string; end;
+const GLYPHS: array[0..40] of TGlyphDef = (
+  (ch:' '; rows:('00000','00000','00000','00000','00000','00000','00000')),
+  (ch:'A'; rows:('01110','10001','10001','11111','10001','10001','10001')),
+  (ch:'B'; rows:('11110','10001','10001','11110','10001','10001','11110')),
+  (ch:'C'; rows:('01110','10001','10000','10000','10000','10001','01110')),
+  (ch:'D'; rows:('11100','10010','10001','10001','10001','10010','11100')),
+  (ch:'E'; rows:('11111','10000','10000','11110','10000','10000','11111')),
+  (ch:'F'; rows:('11111','10000','10000','11110','10000','10000','10000')),
+  (ch:'G'; rows:('01110','10001','10000','10111','10001','10001','01111')),
+  (ch:'H'; rows:('10001','10001','10001','11111','10001','10001','10001')),
+  (ch:'I'; rows:('01110','00100','00100','00100','00100','00100','01110')),
+  (ch:'J'; rows:('00111','00010','00010','00010','00010','10010','01100')),
+  (ch:'K'; rows:('10001','10010','10100','11000','10100','10010','10001')),
+  (ch:'L'; rows:('10000','10000','10000','10000','10000','10000','11111')),
+  (ch:'M'; rows:('10001','11011','10101','10101','10001','10001','10001')),
+  (ch:'N'; rows:('10001','10001','11001','10101','10011','10001','10001')),
+  (ch:'O'; rows:('01110','10001','10001','10001','10001','10001','01110')),
+  (ch:'P'; rows:('11110','10001','10001','11110','10000','10000','10000')),
+  (ch:'Q'; rows:('01110','10001','10001','10001','10101','10010','01101')),
+  (ch:'R'; rows:('11110','10001','10001','11110','10100','10010','10001')),
+  (ch:'S'; rows:('01111','10000','10000','01110','00001','00001','11110')),
+  (ch:'T'; rows:('11111','00100','00100','00100','00100','00100','00100')),
+  (ch:'U'; rows:('10001','10001','10001','10001','10001','10001','01110')),
+  (ch:'V'; rows:('10001','10001','10001','10001','10001','01010','00100')),
+  (ch:'W'; rows:('10001','10001','10001','10101','10101','11011','10001')),
+  (ch:'X'; rows:('10001','10001','01010','00100','01010','10001','10001')),
+  (ch:'Y'; rows:('10001','10001','01010','00100','00100','00100','00100')),
+  (ch:'Z'; rows:('11111','00001','00010','00100','01000','10000','11111')),
+  (ch:'0'; rows:('01110','10001','10011','10101','11001','10001','01110')),
+  (ch:'1'; rows:('00100','01100','00100','00100','00100','00100','01110')),
+  (ch:'2'; rows:('01110','10001','00001','00010','00100','01000','11111')),
+  (ch:'3'; rows:('11111','00010','00100','00010','00001','10001','01110')),
+  (ch:'4'; rows:('00010','00110','01010','10010','11111','00010','00010')),
+  (ch:'5'; rows:('11111','10000','11110','00001','00001','10001','01110')),
+  (ch:'6'; rows:('00110','01000','10000','11110','10001','10001','01110')),
+  (ch:'7'; rows:('11111','00001','00010','00100','01000','01000','01000')),
+  (ch:'8'; rows:('01110','10001','10001','01110','10001','10001','01110')),
+  (ch:'9'; rows:('01110','10001','10001','01111','00001','00010','01100')),
+  (ch:'-'; rows:('00000','00000','00000','11111','00000','00000','00000')),
+  (ch:':'; rows:('00000','00100','00100','00000','00100','00100','00000')),
+  (ch:'.'; rows:('00000','00000','00000','00000','00000','00100','00100')),
+  (ch:'#'; rows:('01010','11111','01010','01010','11111','01010','00000'))
+);
+
+function GlyphIndex(ch: Char): Integer;
+var i: Integer;
+begin
+  Result:=-1;
+  for i:=0 to High(GLYPHS) do if GLYPHS[i].ch=ch then Exit(i);
+end;
+
+{ ---- TTexture ---- }
+constructor TTexture.Create(w, h: Integer);
+begin Width:=w; Height:=h; SetLength(Data, w*h*4); Fill(0,0,0,0); end;
+
+procedure TTexture.Fill(r, g, b, a: Byte);
+var i: Integer;
+begin for i:=0 to Width*Height-1 do begin Data[i*4]:=r; Data[i*4+1]:=g; Data[i*4+2]:=b; Data[i*4+3]:=a; end; end;
+
+procedure TTexture.SetPixel(x, y: Integer; r, g, b, a: Byte);
+var i: Integer;
+begin
+  if (x<0) or (y<0) or (x>=Width) or (y>=Height) then Exit;
+  i:=(y*Width+x)*4; Data[i]:=r; Data[i+1]:=g; Data[i+2]:=b; Data[i+3]:=a;
+end;
+
+procedure TTexture.DrawText(const s: string; px, py, scale: Integer; r, g, b, a: Byte);
+var i, gi, rr, cc, sx, sy, cx: Integer; ch: Char; rowstr: string;
+begin
+  cx:=px;
+  for i:=1 to System.Length(s) do
+  begin
+    ch:=UpCase(s[i]); gi:=GlyphIndex(ch);
+    if gi>=0 then
+      for rr:=0 to 6 do
+      begin
+        rowstr:=GLYPHS[gi].rows[rr];
+        for cc:=0 to 4 do
+          if rowstr[cc+1]='1' then
+            for sy:=0 to scale-1 do for sx:=0 to scale-1 do
+              SetPixel(cx+cc*scale+sx, py+rr*scale+sy, r,g,b,a);
+      end;
+    cx:=cx+6*scale;                                  // 5px glyph + 1px gap
+  end;
+end;
+
+procedure TTexture.SetRGBA(src: PByte);
+begin if src<>nil then Move(src^, Data[0], Width*Height*4); end;
+
+function MakeLabelTexture(const s: string; scale: Integer; fg, bg: LongWord; bgAlpha: Byte): TTexture;
+var w, h, pad: Integer;
+begin
+  pad:=2*scale;
+  w:=System.Length(s)*6*scale + pad*2; if w<1 then w:=1;
+  h:=7*scale + pad*2;
+  Result:=TTexture.Create(w, h);
+  Result.Fill((bg shr 16) and $ff, (bg shr 8) and $ff, bg and $ff, bgAlpha);
+  Result.DrawText(s, pad, pad, scale, (fg shr 16) and $ff, (fg shr 8) and $ff, fg and $ff, 255);
+end;
+
+function MakeLabel(const s: string; scale: Integer; fg, bg: LongWord; bgAlpha: Byte): TSprite;
+var tex: TTexture; asp: Single;
+begin
+  tex:=MakeLabelTexture(s, scale, fg, bg, bgAlpha);
+  Result:=TSprite.Create(TSpriteMaterial.Create(tex));
+  asp:=tex.Width/tex.Height;
+  Result.Scale.SetXYZ(0.7*asp, 0.7, 1);              // sensible default world size
+end;
+
+constructor TSpriteMaterial.Create(amap: TTexture; acolor: LongWord);
+begin inherited Create(acolor); Map:=amap; SizeAttenuation:=True; end;
+
+constructor TSprite.Create(amaterial: TSpriteMaterial);
+begin inherited Create; Material:=amaterial; end;
 
 { ============================ TObject3D ============================ }
 
@@ -766,6 +912,9 @@ var
       worldM, mvp: TMat4; base: TColor; unlit: Boolean;
       wp: array[0..2] of TV3; wn: array[0..2] of TV3; sp: array[0..2] of TV3; col: array[0..2] of TV3;
       lc: TV3; a, bb: TV3;
+      spr: TSprite; sm: TSpriteMaterial; stex: TTexture;
+      wc, vpos, clip: TV3; cxf, cyf, depth, sw, pxu, pyu, hw, hh, uu, vv: Single;
+      ix0, iy0, ix1, iy1, xx, yy, txx, tyy, di, ti: Integer; sr, sg, sb, sat: Single;
     function ToScreen(const clip: TV3): TV3;
     begin Result:=V3((clip.x*0.5+0.5)*FW, (1-(clip.y*0.5+0.5))*FH, clip.z); end;
   begin
@@ -816,6 +965,51 @@ var
             bb:=ToScreen(Mat4TransformPoint(mvp, lg.Pos[k+1]));
             RasterLine(a, bb, lc.x, lc.y, lc.z, ln.Material.LineWidth);
           end;
+      end;
+    end
+    else if o is TSprite then
+    begin
+      { camera-facing billboard: project the centre, size by distance, draw a
+        screen-aligned textured quad with per-texel alpha, depth-tested. }
+      spr:=TSprite(o); sm:=spr.Material;
+      if sm<>nil then
+      begin
+        wc:=V3(worldM.m[12], worldM.m[13], worldM.m[14]);
+        vpos:=Mat4TransformPoint(camera.ViewMatrix, wc); sw:=-vpos.z;
+        if sw>0.05 then
+        begin
+          clip:=Mat4TransformPoint(vp, wc);
+          cxf:=(clip.x*0.5+0.5)*FW; cyf:=(1-(clip.y*0.5+0.5))*FH; depth:=clip.z;
+          pxu:=camera.ProjectionMatrix.m[0]*FW*0.5/sw;
+          pyu:=camera.ProjectionMatrix.m[5]*FH*0.5/sw;
+          hw:=spr.Scale.x*0.5*pxu; hh:=spr.Scale.y*0.5*pyu;
+          if hw<0.5 then hw:=0.5; if hh<0.5 then hh:=0.5;
+          ix0:=Trunc(cxf-hw); ix1:=Trunc(cxf+hw); iy0:=Trunc(cyf-hh); iy1:=Trunc(cyf+hh);
+          stex:=sm.Map;
+          for yy:=iy0 to iy1 do
+            for xx:=ix0 to ix1 do
+            begin
+              if (xx<0) or (yy<0) or (xx>=FW) or (yy>=FH) then Continue;
+              di:=yy*FW+xx;
+              if depth>=FZ[di] then Continue;              // occluded by geometry
+              if stex<>nil then
+              begin
+                uu:=(xx-(cxf-hw))/(2*hw); vv:=(yy-(cyf-hh))/(2*hh);
+                txx:=Trunc(uu*stex.Width); tyy:=Trunc(vv*stex.Height);
+                if (txx<0) or (tyy<0) or (txx>=stex.Width) or (tyy>=stex.Height) then Continue;
+                ti:=(tyy*stex.Width+txx)*4;
+                sat:=stex.Data[ti+3]/255;
+                if sat<=0.003 then Continue;
+                sr:=stex.Data[ti]*sm.Color.r; sg:=stex.Data[ti+1]*sm.Color.g; sb:=stex.Data[ti+2]*sm.Color.b;
+              end
+              else begin sat:=1; sr:=sm.Color.r*255; sg:=sm.Color.g*255; sb:=sm.Color.b*255; end;
+              Pixels[di*4+0]:=ClampB((sr*sat + Pixels[di*4+0]*(1-sat))/255);
+              Pixels[di*4+1]:=ClampB((sg*sat + Pixels[di*4+1]*(1-sat))/255);
+              Pixels[di*4+2]:=ClampB((sb*sat + Pixels[di*4+2]*(1-sat))/255);
+              Pixels[di*4+3]:=255;
+              if sat>0.5 then FZ[di]:=depth;
+            end;
+        end;
       end;
     end;
     for k:=0 to o.Children.Count-1 do RenderObject(TObject3D(o.Children[k]));
