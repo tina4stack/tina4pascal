@@ -1857,6 +1857,27 @@ begin
     GEmbeds[n].ResultSel := c.GetAttribute('result');  // element to fill with the decode
     GEmbeds[n].Flags := 0;
     if c.HasAttribute('torch') then GEmbeds[n].Flags := GEmbeds[n].Flags or 1;
+  end
+  else if (Box.Tag <> nil) and
+          (SameText(Box.Tag.TagName, 'scene') or SameText(Box.Tag.TagName, 'model')) then
+  begin
+    { A 3D scene: the core only lays out the box and reports it. A shell that has
+      the loadable 3D plugin (Tina43DProxy → libtina43d) renders the scene as a
+      base layer and composites the HTML overlay on top; without the plugin the
+      box is simply empty. `src` = a glTF/scene URL. No engine code is linked
+      into the core — this is a placeholder embed, like <barcode-scanner>. }
+    c := Box.Tag;
+    n := Length(GEmbeds); SetLength(GEmbeds, n + 1);
+    GEmbeds[n].Src := c.GetAttribute('src');
+    GEmbeds[n].Poster := c.GetAttribute('poster');    // still image before the plugin loads
+    GEmbeds[n].X := Box.X;
+    GEmbeds[n].Y := Box.Y - GScrollY;
+    GEmbeds[n].W := Box.W;
+    GEmbeds[n].H := Box.H;
+    GEmbeds[n].Kind := 3;
+    GEmbeds[n].Formats := ''; GEmbeds[n].OnScan := ''; GEmbeds[n].ResultSel := '';
+    GEmbeds[n].Flags := 0;
+    if c.HasAttribute('controls') then GEmbeds[n].Flags := GEmbeds[n].Flags or 1;  // walk/orbit input
   end;
   for b in Box.Children do CollectEmbeds(b);
 end;
