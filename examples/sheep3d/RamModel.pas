@@ -30,6 +30,9 @@ begin
   muzzleMat:=TMeshStandardMaterial.Create($c9a09c);
   hoofMat  :=TMeshStandardMaterial.Create($2f2a26);
   hornMat  :=TMeshStandardMaterial.Create($caa877);
+  { closed shapes — cull back faces (~half the fill), keeps 2x AA fast }
+  fleeceMat.Side:=msFront; faceMat.Side:=msFront; legMat.Side:=msFront;
+  muzzleMat.Side:=msFront; hoofMat.Side:=msFront; hornMat.Side:=msFront;
 end;
 
 function Pv(const nm: string; x, y, z: Single): TGroup;
