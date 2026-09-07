@@ -66,6 +66,11 @@ type
     { A soft (blurred) drop shadow for a rounded rect — CSS box-shadow. The base
       class draws a hard-edged rect so simple backends still show a shadow. }
     procedure FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color); virtual;
+    { CSS box-shadow with `inset`: a shadow cast INWARD from the box edges (offset
+      DX,DY; blurred; grown inward by Spread), clipped to the rounded box. Painted
+      after the background, under the border. Default: no-op — inset shadows simply
+      don't show on backends that can't blur (a safe degrade). }
+    procedure FillInsetShadow(X, Y, W, H, Radius, DX, DY, Blur, Spread: Single; Color: TTina4Color); virtual;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); virtual; abstract;
     { Stroke a connected polyline (device coords) with ROUND joins + caps — used
       by the canvas/Lottie path stroker so curved outlines are smooth. The base
@@ -585,6 +590,11 @@ procedure TTina4Canvas.FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: T
 begin
   // base fallback: a hard-edged shadow rect (no blur)
   FillRoundRect(X, Y, W, H, Radius, Color);
+end;
+
+procedure TTina4Canvas.FillInsetShadow(X, Y, W, H, Radius, DX, DY, Blur, Spread: Single; Color: TTina4Color);
+begin
+  // base fallback: no inset shadow (needs a blur the base canvas can't do)
 end;
 
 { Decode a WebP (local file or data: URI) to the base RGBA store, converting the

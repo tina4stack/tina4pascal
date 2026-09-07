@@ -4388,6 +4388,14 @@ begin
   // tiled per background-repeat, and clipped to the box.
   if (not Hidden) and (st.BackgroundImage <> '') and (Box.W > 0) and (Box.H > 0) then
     PaintBackgroundImage(Canvas, Box, st, y);
+  // inset box-shadow: cast inward from the edges, over the background, under the
+  // border/content (CSS paint order).
+  if (not Hidden) and st.BoxShadow.Active and st.BoxShadow.Inset
+     and (Box.W > 0) and (Box.H > 0) then
+    Canvas.FillInsetShadow(Box.X, y, Box.W, Box.H, mcr,
+      st.BoxShadow.OffsetX, st.BoxShadow.OffsetY,
+      st.BoxShadow.BlurRadius, st.BoxShadow.SpreadRadius,
+      ScaleAlpha(st.BoxShadow.Color, op));
   // <canvas>: hand a Tina4Canvas2D (origin at the box top-left, clipped to it) to
   // the Pascal painter registered for this canvas id — the no-JS canvas.
   if (not Hidden) and (Box.Tag <> nil) and SameText(Box.Tag.TagName, 'canvas') then

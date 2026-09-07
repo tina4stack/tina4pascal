@@ -51,6 +51,7 @@ type
     procedure FillRadialGradient(X, Y, W, H, Radius: Single;
       const Colors: array of TTina4Color; const Positions: array of Single); override;
     procedure FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color); override;
+    procedure FillInsetShadow(X, Y, W, H, Radius, DX, DY, Blur, Spread: Single; Color: TTina4Color); override;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); override;
     procedure StrokePolyline(const Pts: TTina4PointArray; Width: Single;
       Color: TTina4Color; Closed: Boolean); override;
@@ -675,6 +676,37 @@ begin
   path := NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius(
     NSMakeRect(X - OFF, Y, W, H), Radius, Radius);
   path.fill;
+  NSGraphicsContext.currentContext.restoreGraphicsState;
+end;
+
+procedure TCocoaCanvas.FillInsetShadow(X, Y, W, H, Radius, DX, DY, Blur, Spread: Single; Color: TTina4Color);
+var clip, frame, hole: NSBezierPath; sh: NSShadow; ir, iw, ih: Single;
+begin
+  if Radius > W / 2 then Radius := W / 2;
+  if Radius > H / 2 then Radius := H / 2;
+  iw := W - 2 * Spread; ih := H - 2 * Spread;
+  if (iw <= 0) or (ih <= 0) then Exit;   // spread swallows the box → all shadow (rare); skip
+  NSGraphicsContext.currentContext.saveGraphicsState;
+  // clip to the element's rounded rect — the inset shadow only shows inside it
+  clip := NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius(NSMakeRect(X, Y, W, H), Radius, Radius);
+  clip.addClip;
+  sh := NSShadow(NSShadow.alloc.init).autorelease;
+  sh.setShadowBlurRadius(Blur * 1.6);
+  sh.setShadowOffset(NSMakeSize(0, 0));
+  sh.setShadowColor(NSColorOf(Color));
+  sh.set_;
+  NSColorOf(Color).setFill;
+  // frame = big outer rect MINUS the box (offset by DX,DY, inset by Spread), even-odd.
+  // The solid frame hugs the box edges; its blur bleeds INWARD, and the clip keeps
+  // only that inward bleed — a CSS inset shadow.
+  frame := NSBezierPath.bezierPath;
+  frame.appendBezierPathWithRect(NSMakeRect(X - W, Y - H, W * 3, H * 3));
+  ir := Radius - Spread; if ir < 0 then ir := 0;
+  hole := NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius(
+    NSMakeRect(X + DX + Spread, Y + DY + Spread, iw, ih), ir, ir);
+  frame.appendBezierPath(hole);
+  frame.setWindingRule(NSEvenOddWindingRule);
+  frame.fill;
   NSGraphicsContext.currentContext.restoreGraphicsState;
 end;
 
