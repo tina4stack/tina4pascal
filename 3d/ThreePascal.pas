@@ -300,6 +300,8 @@ type
     Pixels: array of Byte;                                 // RGBA output, FW*FH*4
     constructor Create(width, height: Integer; samples: Integer = 2);
     procedure SetSize(width, height: Integer);
+    procedure SetSamples(n: Integer);                      // 1 = fast, 2+ = anti-aliased
+    property Samples: Integer read FSS;
     procedure Render(scene: TScene; camera: TCamera);
     { 2D overlay pass — draw the HUD on top of the 3D (the HTML layer's role) }
     procedure FillRectPx(x, y, w, h: Integer; r, g, b: Byte; a: Single);
@@ -1060,6 +1062,12 @@ begin
   SetLength(Pixels,FW*FH*4); SetLength(FWK,FSW*FSH*4); SetLength(FZ,FSW*FSH);
 end;
 
+procedure TWebGLRenderer.SetSamples(n: Integer);
+begin
+  if n<1 then n:=1; if n>4 then n:=4;
+  if n=FSS then Exit; FSS:=n; SetSize(FW, FH);
+end;
+
 { box-filter the supersampled buffer down into the output — anti-aliasing }
 procedure TWebGLRenderer.Downsample;
 var ox, oy, sx, sy, si, oi, a0, a1, a2, n: Integer;
@@ -1246,9 +1254,9 @@ var
     for k:=0 to o.Children.Count-1 do CollectLights(TObject3D(o.Children[k]));
   end;
 
-  procedure RenderObject(o: TObject3D);
+  procedure RenderObject(o: TObject3D; const parentW: TMat4);
   var k, ii: Integer; mesh: TMesh; im: TInstancedMesh; ln: TLine; lg: TLineGeometry;
-      worldM, mvp: TMat4; base: TColor;
+      worldM, mvp, localM: TMat4; base: TColor;
       lc: TV3; a, bb: TV3;
       spr: TSprite; sm: TSpriteMaterial; stex: TTexture;
       wc, vpos, clip: TV3; cxf, cyf, depth, sw, pxu, pyu, hw, hh, uu, vv: Single;
@@ -1314,7 +1322,10 @@ var
     end;
   begin
     if not o.Visible then Exit;
-    worldM:=o.WorldMatrix; mvp:=Mat4Multiply(vp, worldM);
+    { thread the parent world matrix down — compute each local once, no O(depth)
+      re-walk of the ancestor chain per object }
+    localM:=Mat4Compose(o.Position.V, o.Rotation.V, o.Scale.V);
+    worldM:=Mat4Multiply(parentW, localM); mvp:=Mat4Multiply(vp, worldM);
     if o is TMesh then
     begin
       mesh:=TMesh(o); EmitMesh(mesh.Geometry, mesh.Material, worldM);
@@ -1396,7 +1407,7 @@ var
         end;
       end;
     end;
-    for k:=0 to o.Children.Count-1 do RenderObject(TObject3D(o.Children[k]));
+    for k:=0 to o.Children.Count-1 do RenderObject(TObject3D(o.Children[k]), worldM);
   end;
 
 begin
@@ -1411,7 +1422,7 @@ begin
   ambient:=V3(0,0,0); SetLength(dirs,0); SetLength(dcols,0);
   SetLength(plpos,0); SetLength(plcol,0); SetLength(plrange,0);
   CollectLights(scene);
-  RenderObject(scene);
+  RenderObject(scene, Mat4Identity);
   Downsample;                                    // resolve supersampled → Pixels (AA)
 end;
 

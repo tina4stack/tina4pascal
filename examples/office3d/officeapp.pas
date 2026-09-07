@@ -1,13 +1,17 @@
 program officeapp;
 
 { Walk the office in first person — pure-software ThreePascal render blitted into
-  a Cocoa window. WASD to move, arrow keys to look, Esc to quit. No logins, no
-  video — just the space. }
+  a Cocoa window. Mouse looks (pointer locked to centre), WASD moves, X toggles
+  anti-aliasing, Esc quits. No logins, no video. }
 
 {$mode delphi}{$H+}
 {$modeswitch objectivec1}
 
 uses CocoaAll, SysUtils, Math, ThreePascal, OfficeScene;
+
+{$linkframework CoreGraphics}
+type TCGPoint = record x, y: Double; end;
+function CGAssociateMouseAndMouseCursorPosition(connected: LongInt): LongInt; cdecl; external;
 
 const W = 900; H = 600;
 
@@ -16,6 +20,10 @@ var
   gPX: Single = 0; gPY: Single = 1.55; gPZ: Single = 8.0;
   gYaw: Single = 0; gPitch: Single = -0.05;
   gKeys: array[0..127] of Boolean;
+  gLocked: Boolean = False;
+
+procedure Lock;   begin if gLocked then Exit; NSCursor.hide; CGAssociateMouseAndMouseCursorPosition(0); gLocked:=True; end;
+procedure Unlock; begin if not gLocked then Exit; CGAssociateMouseAndMouseCursorPosition(1); NSCursor.unhide; gLocked:=False; end;
 
 type
   TOfficeView = objcclass(NSView)
@@ -24,6 +32,8 @@ type
     procedure drawRect(dirty: NSRect); override;
     procedure keyDown(e: NSEvent); override;
     procedure keyUp(e: NSEvent); override;
+    procedure mouseMoved(e: NSEvent); override;
+    procedure mouseDown(e: NSEvent); override;
   end;
   TTicker = objcclass(NSObject)
     procedure tick(t: NSTimer); message 'tick:';
@@ -31,6 +41,7 @@ type
   TAppDelegate = objcclass(NSObject, NSApplicationDelegateProtocol)
     function applicationShouldTerminateAfterLastWindowClosed(sender: NSApplication): ObjCBOOL;
       message 'applicationShouldTerminateAfterLastWindowClosed:';
+    procedure applicationWillTerminate(n: NSNotification); message 'applicationWillTerminate:';
   end;
 
 var gView: TOfficeView = nil;
@@ -66,9 +77,23 @@ begin
   if im<>nil then begin im.drawInRect_fromRect_operation_fraction(bounds, NSZeroRect, NSCompositeSourceOver, 1.0); im.release; end;
 end;
 
+procedure TOfficeView.mouseDown(e: NSEvent); begin Lock; end;   // click to capture the mouse
+
+procedure TOfficeView.mouseMoved(e: NSEvent);
+const SENS = 0.0026;
+begin
+  if not gLocked then Exit;
+  gYaw   := gYaw + e.deltaX*SENS;
+  gPitch := gPitch - e.deltaY*SENS;
+  if gPitch> 1.2 then gPitch:= 1.2; if gPitch<-1.2 then gPitch:=-1.2;
+end;
+
 procedure TOfficeView.keyDown(e: NSEvent);
 begin
-  if e.keyCode = 53 then NSApp.terminate(nil);        // Esc
+  case e.keyCode of
+    53: begin Unlock; NSApp.terminate(nil); end;    // Esc
+    7:  if gRend.Samples=1 then gRend.SetSamples(2) else gRend.SetSamples(1);   // X: toggle AA
+  end;
   if e.keyCode < 128 then gKeys[e.keyCode] := True;
 end;
 procedure TOfficeView.keyUp(e: NSEvent);
@@ -77,14 +102,13 @@ begin if e.keyCode < 128 then gKeys[e.keyCode] := False; end;
 procedure TTicker.tick(t: NSTimer);
 var spd, rot, fx, fz, rx, rz, tx, ty, tz: Single;
 begin
-  spd:=0.11; rot:=0.035;
-  if gKeys[123] then gYaw:=gYaw - rot;                 // left
-  if gKeys[124] then gYaw:=gYaw + rot;                 // right
-  if gKeys[126] then gPitch:=gPitch + rot;             // up
-  if gKeys[125] then gPitch:=gPitch - rot;             // down
+  spd:=0.11; rot:=0.03;
+  if gKeys[123] then gYaw:=gYaw - rot;                 // arrow-key look (fallback)
+  if gKeys[124] then gYaw:=gYaw + rot;
+  if gKeys[126] then gPitch:=gPitch + rot;
+  if gKeys[125] then gPitch:=gPitch - rot;
   if gPitch> 1.2 then gPitch:= 1.2; if gPitch<-1.2 then gPitch:=-1.2;
-  fx:=Sin(gYaw); fz:=-Cos(gYaw);                       // forward (horizontal)
-  rx:=Cos(gYaw); rz:=Sin(gYaw);                        // right
+  fx:=Sin(gYaw); fz:=-Cos(gYaw); rx:=Cos(gYaw); rz:=Sin(gYaw);
   if gKeys[13] then begin gPX:=gPX+fx*spd; gPZ:=gPZ+fz*spd; end;   // W
   if gKeys[1]  then begin gPX:=gPX-fx*spd; gPZ:=gPZ-fz*spd; end;   // S
   if gKeys[0]  then begin gPX:=gPX-rx*spd; gPZ:=gPZ-rz*spd; end;   // A
@@ -96,16 +120,20 @@ begin
   gCam.Position.SetXYZ(gPX, gPY, gPZ); gCam.LookAt(tx, ty, tz);
   gRend.Render(gScene, gCam);
 
-  { HUD }
   gRend.FillRectPx(W div 2 - 7, H div 2 - 1, 14, 2, 255,255,255, 0.7);
   gRend.FillRectPx(W div 2 - 1, H div 2 - 7, 2, 14, 255,255,255, 0.7);
   gRend.FillRectPx(0, 0, W, 30, 14,15,31, 0.66);
-  gRend.DrawTextPx(14, 9, 'TINA4 OFFICE - WASD MOVE - ARROWS LOOK - ESC QUIT', 2, 236,236,251);
+  if gLocked then
+    gRend.DrawTextPx(14, 9, 'TINA4 OFFICE - MOUSE LOOK - WASD MOVE - X AA - ESC QUIT', 2, 236,236,251)
+  else
+    gRend.DrawTextPx(14, 9, 'CLICK TO CAPTURE MOUSE - WASD MOVE - ARROWS LOOK', 2, 255,210,60);
   if gView<>nil then gView.setNeedsDisplay_(True);
 end;
 
 function TAppDelegate.applicationShouldTerminateAfterLastWindowClosed(sender: NSApplication): ObjCBOOL;
 begin Result := True; end;
+procedure TAppDelegate.applicationWillTerminate(n: NSNotification);
+begin Unlock; end;
 
 var
   pool: NSAutoreleasePool; win: NSWindow; rect: NSRect;
@@ -117,7 +145,7 @@ begin
   gScene:=TScene.Create; gScene.Background.SetHex($0e0f1f);
   gScene.Fog:=TFog.Create($0e0f1f, 22, 46);
   gCam:=TPerspectiveCamera.Create(60, W/H, 0.05, 100);
-  gRend:=TWebGLRenderer.Create(W, H, 2);                // 2x AA
+  gRend:=TWebGLRenderer.Create(W, H, 1);               // 1x for a smooth walk; X toggles AA
 
   amb:=TAmbientLight.Create($ffffff, 0.6); gScene.Add(amb);
   sun:=TDirectionalLight.Create($fff4cf, 0.55); sun.Position.SetXYZ(6,12,4); gScene.Add(sun);
@@ -132,12 +160,13 @@ begin
   win:=NSWindow.alloc.initWithContentRect_styleMask_backing_defer(rect,
     NSTitledWindowMask or NSClosableWindowMask or NSMiniaturizableWindowMask, NSBackingStoreBuffered, False);
   win.setTitle(NSSTR('Tina4 3D — Walkable Office'));
-  win.center;
+  win.center; win.setAcceptsMouseMovedEvents(True);
   gView:=TOfficeView.alloc.initWithFrame(rect);
   win.setContentView(gView);
   win.makeFirstResponder(gView);
   win.makeKeyAndOrderFront(nil);
   NSApp.activateIgnoringOtherApps(True);
+  Lock;                                                 // capture the mouse on launch
 
   ticker:=TTicker.alloc.init;
   NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(1/30, ticker, objcselector('tick:'), nil, True);
