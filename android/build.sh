@@ -28,7 +28,7 @@ for abi in $ABIS; do
   mkdir -p "$out"
   echo "compiling libtina4.so ($abi)…"
   # shellcheck disable=SC2086
-  fpc -Mdelphi $flags -O2 -Xs -Fu"$SRC" -FE"$work" -FU"$work" \
+  fpc -Mdelphi $flags -O2 -Xs -Fu"$SRC" -Fu"$HERE/../3d" -Fu"$HERE/../examples/sheep3d" -FE"$work" -FU"$work" \
       -o"$out/libtina4.so" "$HERE/jni/tina4jni.pas" \
       2>&1 | grep -Ei "error|fatal" && { echo "BUILD FAILED ($abi)"; exit 1; } || true
   [ -f "$out/libtina4.so" ] || { echo "BUILD FAILED ($abi): no .so"; exit 1; }

@@ -34,6 +34,10 @@ public class Tina4View extends View implements Runnable {
 
     private native void nativeSetHtml(String html);
     private native void nativePaint(Canvas canvas, int w, int h, float density);
+    private native void nativeSheepPaint(Canvas canvas, int w, int h, float density); // ThreePascal demo: walking ram
+    // ThreePascal 3D demo: when true onDraw renders the walking ram (pure-software
+    // 3D) instead of the HTML page, self-invalidating each vsync for animation.
+    public static final boolean SHEEP_DEMO = true;
     private native int  nativeTouch(int action, float x, float y);
     private native int  nativeTick();
     private native int  nativeAnimActive();   // 1 if last paint has live animation
@@ -147,6 +151,11 @@ public class Tina4View extends View implements Runnable {
     @Override
     protected void onDraw(Canvas canvas) {
         int w = getWidth(), h = getHeight();
+        if (SHEEP_DEMO) {                        // ThreePascal walking-ram demo
+            nativeSheepPaint(canvas, w, h, density);
+            postInvalidateOnAnimation();         // next vsync (~60fps) — continuous walk
+            return;
+        }
         long t0 = SystemClock.uptimeMillis();
         nativePaint(canvas, w, h, density);      // hardware-canvas path
         // pace the next anim frame to the cost of this one, so a slow paint always
