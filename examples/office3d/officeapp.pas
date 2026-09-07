@@ -11,7 +11,15 @@ uses CocoaAll, SysUtils, Math, ThreePascal, OfficeScene;
 
 {$linkframework CoreGraphics}
 type TCGPoint = record x, y: Double; end;
+     CGImageRef = Pointer; CGColorSpaceRef = Pointer; CGDataProviderRef = Pointer;
 function CGAssociateMouseAndMouseCursorPosition(connected: LongInt): LongInt; cdecl; external;
+function CGColorSpaceCreateDeviceRGB: CGColorSpaceRef; cdecl; external;
+function CGDataProviderCreateWithData(a,b:Pointer;c:NativeUInt;d:Pointer):CGDataProviderRef; cdecl; external;
+function CGImageCreate(w,h,bpc,bpp,bpr:NativeUInt; sp:CGColorSpaceRef; bi:LongWord;
+  pr:CGDataProviderRef; dec_:Pointer; interp:LongBool; intent:LongInt):CGImageRef; cdecl; external;
+procedure CGImageRelease(i:CGImageRef); cdecl; external;
+procedure CGColorSpaceRelease(s:CGColorSpaceRef); cdecl; external;
+procedure CGDataProviderRelease(p:CGDataProviderRef); cdecl; external;
 
 const W = 900; H = 600;
 
@@ -47,36 +55,30 @@ type
 
 var gView: TOfficeView = nil;
 
-function FrameBMP: TBytes;
-var w,h,rowsize,pad,datasize,off,row,col,i,si: Integer;
+{ wrap the raw RGBA buffer as a CGImage (no copy, no encode/decode) — the window
+  server composites it on the GPU when set as the layer's contents. }
+function MakeCGImage: CGImageRef;
+var cs: CGColorSpaceRef; pr: CGDataProviderRef;
 begin
-  w:=gRend.Width; h:=gRend.Height; rowsize:=w*3; pad:=(4-(rowsize mod 4)) mod 4;
-  datasize:=(rowsize+pad)*h; SetLength(Result, 54+datasize); FillChar(Result[0], 54, 0);
-  Result[0]:=$42; Result[1]:=$4D; i:=54+datasize; Move(i,Result[2],4);
-  i:=54; Move(i,Result[10],4); i:=40; Move(i,Result[14],4);
-  Move(w,Result[18],4); Move(h,Result[22],4); Result[26]:=1; Result[28]:=24; Move(datasize,Result[34],4);
-  off:=54;
-  for row:=h-1 downto 0 do
-  begin
-    for col:=0 to w-1 do
-    begin si:=(row*w+col)*4;
-      Result[off]:=gRend.Pixels[si+2]; Result[off+1]:=gRend.Pixels[si+1]; Result[off+2]:=gRend.Pixels[si+0]; off:=off+3; end;
-    for col:=1 to pad do begin Result[off]:=0; Inc(off); end;
-  end;
+  cs:=CGColorSpaceCreateDeviceRGB;
+  pr:=CGDataProviderCreateWithData(nil, @gRend.Pixels[0], gRend.Width*gRend.Height*4, nil);
+  Result:=CGImageCreate(gRend.Width, gRend.Height, 8, 32, gRend.Width*4, cs, 1 {PremultipliedLast},
+                        pr, nil, False, 0);
+  CGColorSpaceRelease(cs); CGDataProviderRelease(pr);
+end;
+
+procedure Present;
+var img: CGImageRef;
+begin
+  if (gView=nil) or (gView.layer=nil) or (System.Length(gRend.Pixels)=0) then Exit;
+  img:=MakeCGImage;
+  gView.layer.setContents(id(img));               // GPU-composited display
+  if img<>nil then CGImageRelease(img);
 end;
 
 function TOfficeView.isFlipped: ObjCBOOL; begin Result := False; end;
 function TOfficeView.acceptsFirstResponder: ObjCBOOL; begin Result := True; end;
-
-procedure TOfficeView.drawRect(dirty: NSRect);
-var bmp: TBytes; d: NSData; im: NSImage;
-begin
-  if System.Length(gRend.Pixels)=0 then Exit;
-  bmp:=FrameBMP;
-  d:=NSData.dataWithBytes_length(@bmp[0], System.Length(bmp));
-  im:=NSImage(NSImage.alloc.initWithData(d));
-  if im<>nil then begin im.drawInRect_fromRect_operation_fraction(bounds, NSZeroRect, NSCompositeSourceOver, 1.0); im.release; end;
-end;
+procedure TOfficeView.drawRect(dirty: NSRect); begin end;   // layer-backed; content set via Present
 
 procedure TOfficeView.mouseDown(e: NSEvent); begin Lock; end;   // click to capture the mouse
 
@@ -133,7 +135,7 @@ begin
     gRend.DrawTextPx(14, 9, 'CLICK TO CAPTURE MOUSE - WASD MOVE - ARROWS LOOK', 2, 255,210,60);
   gRend.FillRectPx(W-118, 0, 118, 30, 14,15,31, 0.66);
   gRend.DrawTextPx(W-108, 9, 'FPS ' + IntToStr(Round(gFPS)) + '  ' + IntToStr(dt) + 'MS', 2, 79,209,139);
-  if gView<>nil then gView.setNeedsDisplay_(True);
+  Present;
 end;
 
 function TAppDelegate.applicationShouldTerminateAfterLastWindowClosed(sender: NSApplication): ObjCBOOL;
@@ -168,6 +170,7 @@ begin
   win.setTitle(NSSTR('Tina4 3D — Walkable Office'));
   win.center; win.setAcceptsMouseMovedEvents(True);
   gView:=TOfficeView.alloc.initWithFrame(rect);
+  gView.setWantsLayer(True);                        // layer-backed → GPU-composited blit
   win.setContentView(gView);
   win.makeFirstResponder(gView);
   win.makeKeyAndOrderFront(nil);
@@ -175,7 +178,7 @@ begin
   Lock;                                                 // capture the mouse on launch
 
   ticker:=TTicker.alloc.init;
-  NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(1/30, ticker, objcselector('tick:'), nil, True);
+  NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(1/60, ticker, objcselector('tick:'), nil, True);
   pool.drain;
   NSApp.run;
 end.
