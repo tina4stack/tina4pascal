@@ -115,17 +115,41 @@ function Ensure-Fpc {
   $fpc = Find-Fpc
   if ($fpc) { return $fpc }
   Write-Host "FPC not found - downloading Free Pascal 3.2.2 (one-time)..." -ForegroundColor Cyan
-  $url = 'https://sourceforge.net/projects/freepascal/files/Win32/3.2.2/fpc-3.2.2.i386-win32.exe/download'
   $inst = Join-Path $env:TEMP 'fpc-3.2.2-setup.exe'
-  try {
-    Invoke-WebRequest -Uri $url -OutFile $inst -UseBasicParsing
-    Write-Host "Installing to C:\FPC\3.2.2 (silent)..."
-    Start-Process -FilePath $inst -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/DIR=C:\FPC\3.2.2','/NORESTART' -Wait
-  } catch {
-    Write-Host "Automatic install failed: $($_.Exception.Message)" -ForegroundColor Yellow
+  # SourceForge serves an HTML interstitial to non-browser clients (which then
+  # gets saved as a "corrupt exe"), so send a browser User-Agent, try the direct
+  # mirror first, and VALIDATE the file is a real PE installer (MZ header + full
+  # size) before running it. Never execute a partial/HTML download.
+  $urls = @(
+    'https://downloads.sourceforge.net/project/freepascal/Win32/3.2.2/fpc-3.2.2.i386-win32.exe',
+    'https://sourceforge.net/projects/freepascal/files/Win32/3.2.2/fpc-3.2.2.i386-win32.exe/download'
+  )
+  $valid = $false
+  foreach ($url in $urls) {
+    try {
+      Remove-Item $inst -Force -ErrorAction SilentlyContinue
+      $prev = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+      Invoke-WebRequest -Uri $url -OutFile $inst -UseBasicParsing -MaximumRedirection 10 `
+        -Headers @{ 'User-Agent' = 'Mozilla/5.0' }
+      $ProgressPreference = $prev
+    } catch {
+      Write-Host "  download failed ($url): $($_.Exception.Message)" -ForegroundColor DarkYellow
+      continue
+    }
+    if (-not (Test-Path $inst)) { continue }
+    $len = (Get-Item $inst).Length
+    $sig = New-Object byte[] 2
+    $fh = [System.IO.File]::OpenRead($inst); [void]$fh.Read($sig, 0, 2); $fh.Close()
+    if (($len -gt 20MB) -and ($sig[0] -eq 0x4D) -and ($sig[1] -eq 0x5A)) { $valid = $true; break }
+    Write-Host "  got $([math]::Round($len/1MB,1)) MB but not a valid installer (SourceForge interstitial?); trying next mirror" -ForegroundColor DarkYellow
+  }
+  if (-not $valid) {
+    Write-Host "Automatic install failed: could not fetch a valid FPC installer." -ForegroundColor Yellow
     Write-Host "Install FPC 3.2.2 manually from https://www.freepascal.org/download.html, then re-run." -ForegroundColor Yellow
     return $null
   }
+  Write-Host "Installing to C:\FPC\3.2.2 (silent)..."
+  Start-Process -FilePath $inst -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/DIR=C:\FPC\3.2.2','/NORESTART' -Wait
   return Find-Fpc
 }
 

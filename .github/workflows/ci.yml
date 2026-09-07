@@ -38,17 +38,25 @@ jobs:
         shell: bash
         run: bash tools/tina4pascal test
 
-  windows-cleanbox:
-    name: clean-box (windows-latest)
+  windows-build:
+    name: build (windows-latest)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      # No FPC pre-installed: this proves the newcomer path — the CLI downloads
-      # and silently installs FPC on first use, then scaffolds + builds an app.
-      - name: Scaffold + build (auto-installs FPC)
+      # FPC from a reliable source (Lazarus bundles FPC 3.2.2). The CLI's own
+      # SourceForge auto-install is a user convenience but SourceForge rate-limits
+      # CI runners, so we don't gate CI on it — Ensure-Fpc just finds this FPC.
+      - name: Install Free Pascal
+        uses: gcarreno/setup-lazarus@v3.3.1
+        with:
+          lazarus-version: "3.0"
+
+      - name: Scaffold + build an app
         shell: pwsh
-        run: tools\tina4pascal.ps1 init smoketest norun
+        run: |
+          fpc -iV
+          tools\tina4pascal.ps1 init smoketest norun
 
       - name: Verify the app built
         shell: pwsh
