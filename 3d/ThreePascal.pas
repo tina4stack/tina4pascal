@@ -124,9 +124,11 @@ type
     Pos: array of TV3;
     Normals: array of TV3;
     UV: array of TV2;                                      // len 0 = untextured
+    BCx, BCy, BCz, BR: Single; BHasBounds: Boolean;        // bounding sphere (frustum cull)
     procedure PushTri(const a, b, c: TV3);                 // flat: one face normal
     procedure PushTriN(const a, b, c, na, nb, nc: TV3);    // smooth: per-vertex normals
     procedure PushUV(const a, b, c: TV2);                  // append 3 texcoords
+    procedure EnsureBounds;                                // compute the bounding sphere once
   end;
 
   TBoxGeometry = class(TBufferGeometry)
@@ -705,6 +707,33 @@ begin
   i:=System.Length(UV); SetLength(UV,i+3); UV[i]:=a; UV[i+1]:=b; UV[i+2]:=c;
 end;
 
+procedure TBufferGeometry.EnsureBounds;
+var i: Integer; mnx,mny,mnz,mxx,mxy,mxz,dx,dy,dz,d: Single;
+begin
+  if BHasBounds then Exit; BHasBounds:=True;
+  if System.Length(Pos)=0 then begin BCx:=0; BCy:=0; BCz:=0; BR:=0; Exit; end;
+  mnx:=Pos[0].x; mny:=Pos[0].y; mnz:=Pos[0].z; mxx:=mnx; mxy:=mny; mxz:=mnz;
+  for i:=1 to High(Pos) do
+  begin
+    if Pos[i].x<mnx then mnx:=Pos[i].x; if Pos[i].x>mxx then mxx:=Pos[i].x;
+    if Pos[i].y<mny then mny:=Pos[i].y; if Pos[i].y>mxy then mxy:=Pos[i].y;
+    if Pos[i].z<mnz then mnz:=Pos[i].z; if Pos[i].z>mxz then mxz:=Pos[i].z;
+  end;
+  BCx:=(mnx+mxx)/2; BCy:=(mny+mxy)/2; BCz:=(mnz+mxz)/2; BR:=0;
+  for i:=0 to High(Pos) do
+  begin dx:=Pos[i].x-BCx; dy:=Pos[i].y-BCy; dz:=Pos[i].z-BCz; d:=dx*dx+dy*dy+dz*dz; if d>BR then BR:=d; end;
+  BR:=Sqrt(BR);
+end;
+
+function MaxScaleOf(const m: TMat4): Single;
+var s1, s2: Single;
+begin
+  Result:=Sqrt(m.m[0]*m.m[0]+m.m[1]*m.m[1]+m.m[2]*m.m[2]);
+  s1:=Sqrt(m.m[4]*m.m[4]+m.m[5]*m.m[5]+m.m[6]*m.m[6]);
+  s2:=Sqrt(m.m[8]*m.m[8]+m.m[9]*m.m[9]+m.m[10]*m.m[10]);
+  if s1>Result then Result:=s1; if s2>Result then Result:=s2;
+end;
+
 constructor TBoxGeometry.Create(w, h, d: Single);
 var hx, hy, hz: Single;
   procedure Quad(const a,b,c,dd: TV3);
@@ -1196,6 +1225,20 @@ var
   dirs, dcols: array of TV3;                 // directional: world dir + colour*intensity
   plpos, plcol: array of TV3; plrange: array of Single;  // point lights
   bg: TColor; camPos: TV3;
+  fp: array[0..5,0..3] of Single;            // 6 frustum planes (normalized)
+
+  function SphereInFrustum(cx, cy, cz, r: Single): Boolean;
+  var k: Integer;
+  begin
+    for k:=0 to 5 do
+      if fp[k,0]*cx + fp[k,1]*cy + fp[k,2]*cz + fp[k,3] < -r then Exit(False);
+    Result:=True;
+  end;
+
+  procedure SetP(idx: Integer; a, b, c, d: Single);
+  var l: Single;
+  begin l:=Sqrt(a*a+b*b+c*c); if l<1e-9 then l:=1;
+    fp[idx,0]:=a/l; fp[idx,1]:=b/l; fp[idx,2]:=c/l; fp[idx,3]:=d/l; end;
 
   function Fogged(const col: TV3; const worldPos: TV3): TV3;
   var d, f: Single;
@@ -1256,7 +1299,7 @@ var
 
   procedure RenderObject(o: TObject3D; const parentW: TMat4);
   var k, ii: Integer; mesh: TMesh; im: TInstancedMesh; ln: TLine; lg: TLineGeometry;
-      worldM, mvp, localM: TMat4; base: TColor;
+      worldM, mvp, localM, iw: TMat4; base: TColor; g: TBufferGeometry; bc: TV3; rr: Single;
       lc: TV3; a, bb: TV3;
       spr: TSprite; sm: TSpriteMaterial; stex: TTexture;
       wc, vpos, clip: TV3; cxf, cyf, depth, sw, pxu, pyu, hw, hh, uu, vv: Single;
@@ -1328,13 +1371,25 @@ var
     worldM:=Mat4Multiply(parentW, localM); mvp:=Mat4Multiply(vp, worldM);
     if o is TMesh then
     begin
-      mesh:=TMesh(o); EmitMesh(mesh.Geometry, mesh.Material, worldM);
+      mesh:=TMesh(o); g:=mesh.Geometry;
+      if g<>nil then
+      begin
+        g.EnsureBounds;
+        bc:=Mat4TransformPoint(worldM, V3(g.BCx,g.BCy,g.BCz)); rr:=g.BR*MaxScaleOf(worldM);
+        if SphereInFrustum(bc.x,bc.y,bc.z,rr) then EmitMesh(g, mesh.Material, worldM);
+      end;
     end
     else if o is TInstancedMesh then
     begin
       im:=TInstancedMesh(o);
+      if im.Geometry<>nil then im.Geometry.EnsureBounds;
       for ii:=0 to im.Count-1 do
-        EmitMesh(im.Geometry, im.Material, Mat4Multiply(worldM, im.Matrices[ii]));
+      begin
+        iw:=Mat4Multiply(worldM, im.Matrices[ii]);
+        bc:=Mat4TransformPoint(iw, V3(im.Geometry.BCx,im.Geometry.BCy,im.Geometry.BCz));
+        rr:=im.Geometry.BR*MaxScaleOf(iw);
+        if SphereInFrustum(bc.x,bc.y,bc.z,rr) then EmitMesh(im.Geometry, im.Material, iw);
+      end;
     end
     else if o is TLine then
     begin
@@ -1418,6 +1473,13 @@ begin
     FWK[i*4+2]:=ClampB(bg.b); FWK[i*4+3]:=255; FZ[i]:=1e30;
   end;
   vp:=Mat4Multiply(camera.ProjectionMatrix, camera.ViewMatrix);
+  { frustum planes from vp (column-major m[col*4+row]) — Gribb–Hartmann }
+  SetP(0, vp.m[3]+vp.m[0], vp.m[7]+vp.m[4], vp.m[11]+vp.m[8],  vp.m[15]+vp.m[12]);  // left
+  SetP(1, vp.m[3]-vp.m[0], vp.m[7]-vp.m[4], vp.m[11]-vp.m[8],  vp.m[15]-vp.m[12]);  // right
+  SetP(2, vp.m[3]+vp.m[1], vp.m[7]+vp.m[5], vp.m[11]+vp.m[9],  vp.m[15]+vp.m[13]);  // bottom
+  SetP(3, vp.m[3]-vp.m[1], vp.m[7]-vp.m[5], vp.m[11]-vp.m[9],  vp.m[15]-vp.m[13]);  // top
+  SetP(4, vp.m[3]+vp.m[2], vp.m[7]+vp.m[6], vp.m[11]+vp.m[10], vp.m[15]+vp.m[14]);  // near
+  SetP(5, vp.m[3]-vp.m[2], vp.m[7]-vp.m[6], vp.m[11]-vp.m[10], vp.m[15]-vp.m[14]);  // far
   camPos:=camera.Position.V;
   ambient:=V3(0,0,0); SetLength(dirs,0); SetLength(dcols,0);
   SetLength(plpos,0); SetLength(plcol,0); SetLength(plrange,0);

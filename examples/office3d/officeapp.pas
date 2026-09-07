@@ -21,6 +21,7 @@ var
   gYaw: Single = 0; gPitch: Single = -0.05;
   gKeys: array[0..127] of Boolean;
   gLocked: Boolean = False;
+  gFPS: Single = 0;
 
 procedure Lock;   begin if gLocked then Exit; NSCursor.hide; CGAssociateMouseAndMouseCursorPosition(0); gLocked:=True; end;
 procedure Unlock; begin if not gLocked then Exit; CGAssociateMouseAndMouseCursorPosition(1); NSCursor.unhide; gLocked:=False; end;
@@ -100,7 +101,7 @@ procedure TOfficeView.keyUp(e: NSEvent);
 begin if e.keyCode < 128 then gKeys[e.keyCode] := False; end;
 
 procedure TTicker.tick(t: NSTimer);
-var spd, rot, fx, fz, rx, rz, tx, ty, tz: Single;
+var spd, rot, fx, fz, rx, rz, tx, ty, tz: Single; t0: QWord; dt: QWord;
 begin
   spd:=0.11; rot:=0.03;
   if gKeys[123] then gYaw:=gYaw - rot;                 // arrow-key look (fallback)
@@ -118,7 +119,10 @@ begin
 
   tx:=gPX + Sin(gYaw)*Cos(gPitch); ty:=gPY + Sin(gPitch); tz:=gPZ - Cos(gYaw)*Cos(gPitch);
   gCam.Position.SetXYZ(gPX, gPY, gPZ); gCam.LookAt(tx, ty, tz);
+  t0:=GetTickCount64;
   gRend.Render(gScene, gCam);
+  dt:=GetTickCount64 - t0; if dt<1 then dt:=1;
+  gFPS:=gFPS*0.85 + (1000.0/dt)*0.15;             // render-capacity fps (smoothed)
 
   gRend.FillRectPx(W div 2 - 7, H div 2 - 1, 14, 2, 255,255,255, 0.7);
   gRend.FillRectPx(W div 2 - 1, H div 2 - 7, 2, 14, 255,255,255, 0.7);
@@ -127,6 +131,8 @@ begin
     gRend.DrawTextPx(14, 9, 'TINA4 OFFICE - MOUSE LOOK - WASD MOVE - X AA - ESC QUIT', 2, 236,236,251)
   else
     gRend.DrawTextPx(14, 9, 'CLICK TO CAPTURE MOUSE - WASD MOVE - ARROWS LOOK', 2, 255,210,60);
+  gRend.FillRectPx(W-118, 0, 118, 30, 14,15,31, 0.66);
+  gRend.DrawTextPx(W-108, 9, 'FPS ' + IntToStr(Round(gFPS)) + '  ' + IntToStr(dt) + 'MS', 2, 79,209,139);
   if gView<>nil then gView.setNeedsDisplay_(True);
 end;
 
