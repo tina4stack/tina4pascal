@@ -29,7 +29,8 @@ uses SysUtils, Classes, Math;
 
 type
   TV3 = record x, y, z: Single; end;
-  TMat4 = record m: array[0..15] of Single; end;   // column-major, like three/GL
+  TV2 = record u, v: Single; end;                   // texture coord
+  TMat4 = record m: array[0..15] of Single; end;    // column-major, like three/GL
 
   TVector3 = class
     x, y, z: Single;
@@ -118,12 +119,14 @@ type
 
   TGroup = class(TObject3D);
 
-  { non-indexed triangle soup: position + (possibly smooth) normal per vertex }
+  { non-indexed triangle soup: position + normal (+ optional UV) per vertex }
   TBufferGeometry = class
     Pos: array of TV3;
     Normals: array of TV3;
+    UV: array of TV2;                                      // len 0 = untextured
     procedure PushTri(const a, b, c: TV3);                 // flat: one face normal
     procedure PushTriN(const a, b, c, na, nb, nc: TV3);    // smooth: per-vertex normals
+    procedure PushUV(const a, b, c: TV2);                  // append 3 texcoords
   end;
 
   TBoxGeometry = class(TBufferGeometry)
@@ -152,6 +155,7 @@ type
 
   TMaterial = class
     Color: TColor;
+    Map: TTexture;                                         // nil = untextured
     Wireframe: Boolean;
     Opacity: Single;
     constructor Create(acolor: LongWord = $ffffff);
@@ -239,6 +243,8 @@ type
     FZ: array of Single;
     procedure PlotDepth(px, py: Integer; z, r, g, b: Single);
     procedure RasterTri(const a, b, c, ca, cb, cc: TV3);   // screen x/y/ndc-z + per-vertex RGB
+    procedure RasterTriTex(const a, b, c: TV3; const ta, tb, tc: TV2;
+                           const la, lb, lc: TV3; tex: TTexture);   // textured + per-vertex light
     procedure RasterLine(const a, b: TV3; r, g, b2: Single; w: Integer);
   public
     Pixels: array of Byte;                                 // RGBA, FW*FH*4
@@ -251,6 +257,7 @@ type
   end;
 
 function V3(x, y, z: Single): TV3;
+function MkUV(u, v: Single): TV2;
 function Mat4Identity: TMat4;
 function Mat4Multiply(const a, b: TMat4): TMat4;
 function Mat4Perspective(fovYdeg, aspect, near, far: Single): TMat4;
@@ -268,9 +275,12 @@ function MakeLabel(const s: string; scale: Integer; fg, bg: LongWord; bgAlpha: B
 
 implementation
 
+var GWhite: TColor = nil;                            // lazy white base for texture lighting
+
 { ============================ value math ============================ }
 
 function V3(x, y, z: Single): TV3; begin Result.x:=x; Result.y:=y; Result.z:=z; end;
+function MkUV(u, v: Single): TV2; begin Result.u:=u; Result.v:=v; end;
 function VSub(const a, b: TV3): TV3; begin Result:=V3(a.x-b.x,a.y-b.y,a.z-b.z); end;
 function VAdd(const a, b: TV3): TV3; begin Result:=V3(a.x+b.x,a.y+b.y,a.z+b.z); end;
 function VScale(const a: TV3; s: Single): TV3; begin Result:=V3(a.x*s,a.y*s,a.z*s); end;
@@ -633,9 +643,19 @@ begin
   Normals[i]:=na; Normals[i+1]:=nb; Normals[i+2]:=nc;
 end;
 
+procedure TBufferGeometry.PushUV(const a, b, c: TV2);
+var i: Integer;
+begin
+  i:=System.Length(UV); SetLength(UV,i+3); UV[i]:=a; UV[i+1]:=b; UV[i+2]:=c;
+end;
+
 constructor TBoxGeometry.Create(w, h, d: Single);
 var hx, hy, hz: Single;
-  procedure Quad(const a,b,c,dd: TV3); begin PushTri(a,b,c); PushTri(a,c,dd); end;
+  procedure Quad(const a,b,c,dd: TV3);
+  begin
+    PushTri(a,b,c);  PushUV(MkUV(0,1), MkUV(1,1), MkUV(1,0));
+    PushTri(a,c,dd); PushUV(MkUV(0,1), MkUV(1,0), MkUV(0,0));
+  end;
 begin
   inherited Create; hx:=w/2; hy:=h/2; hz:=d/2;
   Quad(V3(-hx,-hy,hz),V3(hx,-hy,hz),V3(hx,hy,hz),V3(-hx,hy,hz));
@@ -650,8 +670,8 @@ constructor TPlaneGeometry.Create(w, h: Single);
 var hx, hy: Single;
 begin
   inherited Create; hx:=w/2; hy:=h/2;
-  PushTri(V3(-hx,-hy,0),V3(hx,-hy,0),V3(hx,hy,0));
-  PushTri(V3(-hx,-hy,0),V3(hx,hy,0),V3(-hx,hy,0));
+  PushTri(V3(-hx,-hy,0),V3(hx,-hy,0),V3(hx,hy,0));   PushUV(MkUV(0,1),MkUV(1,1),MkUV(1,0));
+  PushTri(V3(-hx,-hy,0),V3(hx,hy,0),V3(-hx,hy,0));   PushUV(MkUV(0,1),MkUV(1,0),MkUV(0,0));
 end;
 
 constructor TSphereGeometry.Create(radius: Single; widthSeg, heightSeg: Integer);
@@ -710,7 +730,7 @@ var i: Integer; begin i:=System.Length(Pos); SetLength(Pos,i+1); Pos[i]:=p; end;
 { ============================ materials / objects / lights ============================ }
 
 constructor TMaterial.Create(acolor: LongWord);
-begin Color:=TColor.Create(acolor); Wireframe:=False; Opacity:=1; end;
+begin Color:=TColor.Create(acolor); Map:=nil; Wireframe:=False; Opacity:=1; end;
 constructor TMeshPhongMaterial.Create(acolor: LongWord);
 begin inherited Create(acolor); Shininess:=30; end;
 constructor TLineBasicMaterial.Create(acolor: LongWord);
@@ -851,6 +871,46 @@ begin
     end;
 end;
 
+{ textured Gouraud triangle: interpolate UV + per-vertex light, sample the map }
+procedure TWebGLRenderer.RasterTriTex(const a, b, c: TV3; const ta, tb, tc: TV2;
+                                      const la, lb, lc: TV3; tex: TTexture);
+var minx,maxx,miny,maxy,px,py,idx,txx,tyy,ti: Integer;
+    area,w0,w1,w2,z,uu,vv,cr,cg,cbl: Single;
+  function Edge(const p0,p1: TV3; x,y: Single): Single;
+  begin Result:=(x-p0.x)*(p1.y-p0.y)-(y-p0.y)*(p1.x-p0.x); end;
+begin
+  if tex=nil then Exit;
+  area:=Edge(a,b,c.x,c.y); if Abs(area)<1e-6 then Exit;
+  minx:=Trunc(Min(a.x,Min(b.x,c.x))); maxx:=Trunc(Max(a.x,Max(b.x,c.x)))+1;
+  miny:=Trunc(Min(a.y,Min(b.y,c.y))); maxy:=Trunc(Max(a.y,Max(b.y,c.y)))+1;
+  if minx<0 then minx:=0; if miny<0 then miny:=0;
+  if maxx>FW then maxx:=FW; if maxy>FH then maxy:=FH;
+  for py:=miny to maxy-1 do
+    for px:=minx to maxx-1 do
+    begin
+      w0:=Edge(b,c,px+0.5,py+0.5); w1:=Edge(c,a,px+0.5,py+0.5); w2:=Edge(a,b,px+0.5,py+0.5);
+      if ((w0>=0)and(w1>=0)and(w2>=0)) or ((w0<=0)and(w1<=0)and(w2<=0)) then
+      begin
+        w0:=w0/area; w1:=w1/area; w2:=w2/area;
+        z:=w0*a.z+w1*b.z+w2*c.z; idx:=py*FW+px;
+        if z<FZ[idx] then
+        begin
+          uu:=w0*ta.u+w1*tb.u+w2*tc.u; vv:=w0*ta.v+w1*tb.v+w2*tc.v;
+          txx:=Trunc(uu*tex.Width); tyy:=Trunc(vv*tex.Height);
+          if txx<0 then txx:=0; if tyy<0 then tyy:=0;
+          if txx>=tex.Width then txx:=tex.Width-1; if tyy>=tex.Height then tyy:=tex.Height-1;
+          ti:=(tyy*tex.Width+txx)*4;
+          cr:=w0*la.x+w1*lb.x+w2*lc.x; cg:=w0*la.y+w1*lb.y+w2*lc.y; cbl:=w0*la.z+w1*lb.z+w2*lc.z;
+          FZ[idx]:=z;
+          Pixels[idx*4+0]:=ClampB(tex.Data[ti+0]/255*cr);
+          Pixels[idx*4+1]:=ClampB(tex.Data[ti+1]/255*cg);
+          Pixels[idx*4+2]:=ClampB(tex.Data[ti+2]/255*cbl);
+          Pixels[idx*4+3]:=255;
+        end;
+      end;
+    end;
+end;
+
 procedure TWebGLRenderer.RasterLine(const a, b: TV3; r, g, b2: Single; w: Integer);
 var dx, dy, steps, i, ox, oy: Integer; x, y, z, sx, sy, sz: Single;
 begin
@@ -941,11 +1001,13 @@ var
     begin Result:=V3((clip.x*0.5+0.5)*FW, (1-(clip.y*0.5+0.5))*FH, clip.z); end;
     { shade + rasterize one geometry under a world transform (Mesh & InstancedMesh) }
     procedure EmitMesh(g: TBufferGeometry; mat: TMaterial; const world: TMat4);
-    var tri, j: Integer; ub: Boolean; bcol: TColor; m: TMat4;
-        wpp, wnn, spp, coll: array[0..2] of TV3;
+    var tri, j: Integer; ub, textured: Boolean; bcol: TColor; m: TMat4; lw: TV3;
+        wpp, wnn, spp, coll, litm: array[0..2] of TV3;
     begin
       if (g=nil) or (mat=nil) then Exit;
+      if GWhite=nil then GWhite:=TColor.Create($ffffff);
       bcol:=mat.Color; ub:=mat is TMeshBasicMaterial; m:=Mat4Multiply(vp, world);
+      textured:=(mat.Map<>nil) and (System.Length(g.UV)=System.Length(g.Pos)) and (System.Length(g.UV)>0);
       tri:=0;
       while tri+2<System.Length(g.Pos) do
       begin
@@ -953,10 +1015,20 @@ var
         begin
           wpp[j]:=Mat4TransformPoint(world, g.Pos[tri+j]);
           wnn[j]:=VNorm(Mat4TransformDir(world, g.Normals[tri+j]));
-          coll[j]:=ShadeVertex(wpp[j], wnn[j], bcol, ub);
           spp[j]:=ToScreen(Mat4TransformPoint(m, g.Pos[tri+j]));
+          if textured then
+          begin
+            lw:=ShadeVertex(wpp[j], wnn[j], GWhite, ub);    // lighting term (white base)
+            litm[j]:=V3(lw.x*bcol.r, lw.y*bcol.g, lw.z*bcol.b);
+          end
+          else
+            coll[j]:=ShadeVertex(wpp[j], wnn[j], bcol, ub);
         end;
-        RasterTri(spp[0],spp[1],spp[2], coll[0],coll[1],coll[2]);
+        if textured then
+          RasterTriTex(spp[0],spp[1],spp[2], g.UV[tri],g.UV[tri+1],g.UV[tri+2],
+                       litm[0],litm[1],litm[2], mat.Map)
+        else
+          RasterTri(spp[0],spp[1],spp[2], coll[0],coll[1],coll[2]);
         tri:=tri+3;
       end;
     end;
