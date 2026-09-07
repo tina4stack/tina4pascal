@@ -653,6 +653,7 @@ begin
 end;
 
 procedure TCocoaCanvas.FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color);
+const OFF = 100000;   // park the solid shape far off-screen; only its blur lands in view
 var
   sh: NSShadow;
   path: NSBezierPath;
@@ -661,15 +662,18 @@ begin
   if Radius > H / 2 then Radius := H / 2;
   NSGraphicsContext.currentContext.saveGraphicsState;
   sh := NSShadow(NSShadow.alloc.init).autorelease;
-  sh.setShadowBlurRadius(Blur);
-  sh.setShadowOffset(NSMakeSize(0, 0));   // offset already baked into X,Y
+  // CSS blur-radius ≈ 2σ; NSShadow's blurRadius runs tighter, so scale up to match a
+  // browser's Gaussian falloff (a 40px CSS blur feathers ~40px, not ~15px).
+  sh.setShadowBlurRadius(Blur * 1.6);
+  // Draw the rounded rect OFF-screen and offset its shadow back to (X,Y): this paints
+  // ONLY the blurred shadow, never the hard solid shape (which used to show as a sharp
+  // band wherever the element didn't cover it). X offset is flip-independent.
+  sh.setShadowOffset(NSMakeSize(OFF, 0));
   sh.setShadowColor(NSColorOf(Color));
   sh.set_;
-  // draw the shape in the shadow colour; NSShadow blurs what we paint. Painting
-  // slightly outside the visible area is fine — the blur is what shows.
   NSColorOf(Color).setFill;
   path := NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius(
-    NSMakeRect(X, Y, W, H), Radius, Radius);
+    NSMakeRect(X - OFF, Y, W, H), Radius, Radius);
   path.fill;
   NSGraphicsContext.currentContext.restoreGraphicsState;
 end;
