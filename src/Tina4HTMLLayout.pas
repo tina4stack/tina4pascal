@@ -73,6 +73,8 @@ type
     FSheet: TCSSStyleSheet;
     FBaseStyle: TComputedStyle;
     FViewportW: Single;            // for <picture>/srcset media + sizes eval
+    FContainingH: Single;          // containing block's definite content height, or -1
+                                   // (auto) — the % base for a child's height:NN%
     FFloats: array of TFloatBand;  // active float context (absolute coords)
     function FontStylesOf(const St: TComputedStyle): TTina4FontStyles;
     function LineHeightOf(const St: TComputedStyle): Single;
@@ -1372,7 +1374,7 @@ end;
 function TLayoutEngine.MakeInlineContainer(Tag: THTMLTag; const St: TComputedStyle;
   AvailW: Single): TLayoutBox;
 var
-  edgeL, edgeT, edgeR, edgeB, w, usedH, eh: Single;
+  edgeL, edgeT, edgeR, edgeB, w, usedH, eh, savedCH: Single;
 begin
   Result := TLayoutBox.Create;
   Result.Tag := Tag;
@@ -1387,11 +1389,21 @@ begin
   Result.W := Min(w, AvailW);
   // <lottie>/<canvas> are painted by the core; their children are data/fallback
   // (e.g. the inline Lottie JSON), never laid out as visible text.
+  // resolve this box's definite height first, expose it as the containing height
+  // so children resolve height:NN% against it (see LayoutBlock for the rationale)
+  eh := ResolveSize(St.ExplicitHeight, FContainingH);
+  savedCH := FContainingH;
+  if eh >= 0 then
+  begin
+    if SameText(St.BoxSizing, 'border-box') then FContainingH := Max(0, eh - edgeT - edgeB)
+    else FContainingH := eh;
+  end
+  else FContainingH := -1;
   if SameText(Tag.TagName, 'lottie') or SameText(Tag.TagName, 'canvas') then
     usedH := 0
   else
     LayoutChildren(Result, Tag, St, edgeL, edgeT, Result.W - edgeL - edgeR, usedH);
-  eh := ResolveSize(St.ExplicitHeight, 0);
+  FContainingH := savedCH;
   if eh >= 0 then
   begin
     if SameText(St.BoxSizing, 'border-box') then usedH := Max(0, eh - edgeT - edgeB)
@@ -3135,6 +3147,7 @@ var
   contentX, contentY, contentW, usedH: Single;
   edgeL, edgeT, edgeR, edgeB: Single;
   mL, mR, mT, mB, ew, eh, availInner, naturalH, mnw, mxw, mnh, mxh, relDX, relDY: Single;
+  savedCH: Single;
   autoL, autoR: Boolean;
   ov: string;
   liIdx: Integer;
@@ -3214,8 +3227,19 @@ begin
   contentY := box.Y + edgeT;
   contentW := box.W - edgeL - edgeR;
 
+  // Resolve THIS box's definite content height BEFORE laying out children, and
+  // expose it as the containing height so a child's height:NN% resolves against it
+  // (CSS: a % height needs a definite containing block; else it's auto).
+  eh := ResolveSize(st.ExplicitHeight, FContainingH);
+  savedCH := FContainingH;
+  if eh >= 0 then
+  begin
+    if SameText(st.BoxSizing, 'border-box') then FContainingH := Max(0, eh - edgeT - edgeB)
+    else FContainingH := eh;
+  end
+  else FContainingH := -1;
   LayoutChildren(box, Tag, st, contentX, contentY, contentW, usedH);
-  eh := ResolveSize(st.ExplicitHeight, 0);
+  FContainingH := savedCH;
   if eh >= 0 then
   begin
     naturalH := usedH;
@@ -3701,6 +3725,7 @@ begin
   FViewportW := ViewportW;
   SetLength(FFloats, 0);   // fresh float context per layout
   if ViewportH <= 0 then ViewportH := ViewportW * 0.66;   // rough default when unknown
+  FContainingH := ViewportH;   // the initial containing block (viewport) height for height:NN%
   SetCalcContext(ViewportW, ViewportH);   // vw/vh + reset deferred calc() table
   GAnimSheet := FSheet;                    // @keyframes lookup for paint-time animation
   body := FindBody(Root);
