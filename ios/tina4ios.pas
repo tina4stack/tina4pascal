@@ -14,9 +14,10 @@ library tina4ios;
 {$mode delphi}{$H+}
 
 uses
-  ctypes,
-  CGContext,
-  Tina4RenderBackend, Tina4ShellIOS, Tina4Interact, Tina4Canvas2D, Tina4Http, Tina4HttpIOS;
+  ctypes, Math,
+  CGContext, CGImage, CGColorSpace, CGDataProvider, CGGeometry,
+  Tina4RenderBackend, Tina4ShellIOS, Tina4Interact, Tina4Canvas2D, Tina4Http, Tina4HttpIOS,
+  ThreePascal, RamModel;
 
 var
   GCanvas: TIOSCanvas = nil;
@@ -51,6 +52,48 @@ begin
   HttpPump;                  // deliver completed HTTP responses on the main thread
   GCanvas.BeginFrame(CGContextRef(Ctx));
   TinaFrame(W, H, Density);
+end;
+
+{ ---- ThreePascal demo: the walking Merino ram, rendered in pure software and
+  blitted into the drawRect CGContext as a CGImage (the mobile twin of the macOS
+  example). The Obj-C view drives it with a per-frame display link. ---- }
+var
+  GSScene: TScene = nil; GSCam: TPerspectiveCamera; GSRend: TWebGLRenderer;
+  GSMixer: TAnimationMixer; GST: single = 0;
+
+procedure tina4_sheep_frame(Ctx: Pointer; W, H: cint; Density: single); cdecl;
+var cs: CGColorSpaceRef; pr: CGDataProviderRef; img: CGImageRef;
+    amb: TAmbientLight; sun: TDirectionalLight; floor: TMesh; sheep: TGroup;
+begin
+  if GSScene = nil then
+  begin
+    GSScene := TScene.Create; GSScene.Background.SetHex($0e0f1f);
+    GSCam := TPerspectiveCamera.Create(45, W/H, 0.05, 100);
+    GSRend := TWebGLRenderer.Create(W, H, 1); GSRend.EdgeAA := True;
+    amb := TAmbientLight.Create($ffffff, 0.55); GSScene.Add(amb);
+    sun := TDirectionalLight.Create($fff4cf, 0.8); sun.Position.SetXYZ(4, 9, 5); GSScene.Add(sun);
+    floor := TMesh.Create(TPlaneGeometry.Create(30, 30), TMeshStandardMaterial.Create($1b7a3a));
+    floor.Rotation.x := -Pi/2; GSScene.Add(floor);
+    sheep := BuildRam; GSScene.Add(sheep);
+    GSMixer := TAnimationMixer.Create(sheep); GSMixer.Play(RamWalkClip);
+  end
+  else if (GSRend.Width <> W) or (GSRend.Height <> H) then
+  begin GSRend.SetSize(W, H); GSCam.Aspect := W/H; GSCam.UpdateProjectionMatrix; end;
+
+  GST := GST + 1/60;
+  GSCam.Position.SetXYZ(Sin(GST*0.5)*2.9, 1.4, Cos(GST*0.5)*2.9); GSCam.LookAt(0, 0.72, 0);
+  GSMixer.Update(1/60);
+  GSRend.Render(GSScene, GSCam);
+
+  cs := CGColorSpaceCreateDeviceRGB;
+  pr := CGDataProviderCreateWithData(nil, @GSRend.Pixels[0], W*H*4, nil);
+  img := CGImageCreate(W, H, 8, 32, W*4, cs, kCGImageAlphaPremultipliedLast, pr, nil, 0, kCGRenderingIntentDefault);
+  CGContextSaveGState(CGContextRef(Ctx));
+  CGContextTranslateCTM(CGContextRef(Ctx), 0, H);        // flip: CG image is y-up, drawRect is y-down
+  CGContextScaleCTM(CGContextRef(Ctx), 1, -1);
+  CGContextDrawImage(CGContextRef(Ctx), CGRectMake(0, 0, W, H), img);
+  CGContextRestoreGState(CGContextRef(Ctx));
+  CGImageRelease(img); CGDataProviderRelease(pr); CGColorSpaceRelease(cs);
 end;
 
 { Repaint ONLY the last frame's animated region (a UIView's layer retains the rest
@@ -227,7 +270,7 @@ begin
 end;
 
 exports
-  tina4_set_html, tina4_set_asset_base, tina4_frame, tina4_frame_region, tina4_anim_region,
+  tina4_set_html, tina4_set_asset_base, tina4_frame, tina4_sheep_frame, tina4_frame_region, tina4_anim_region,
   tina4_touch, tina4_tick, tina4_anim_active, tina4_http_pending,
   tina4_wants_keyboard, tina4_blur, tina4_blink_caret, tina4_key,
   tina4_focus_kind, tina4_focus_next, tina4_set_file, tina4_set_photo,

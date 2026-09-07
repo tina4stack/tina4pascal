@@ -24,7 +24,7 @@ echo "compiling Pascal for arm64 iOS…"
 # -Cn: compile only, skip FPC's own link (the app links); it still writes the
 # linkfiles*.res listing every object we must archive.
 fpc -Mdelphi -Tios -Paarch64 -O2 -Cn \
-    -FE"$WORK" -FU"$WORK" -Fu"$SRC" "$HERE/tina4ios.pas" \
+    -FE"$WORK" -FU"$WORK" -Fu"$SRC" -Fu"$HERE/../3d" -Fu"$HERE/../examples/sheep3d" "$HERE/tina4ios.pas" \
     2>&1 | grep -Ei "error|fatal" && { echo "COMPILE FAILED"; exit 1; } || true
 
 RES="$(ls "$WORK"/linkfiles*.res 2>/dev/null | head -1)"

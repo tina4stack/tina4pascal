@@ -11,6 +11,7 @@
 @property (strong, nonatomic) CADisplayLink *fling;
 @property (strong, nonatomic) NSTimer *caret;
 @property (strong, nonatomic) CADisplayLink *pump;   // redraws while HTTP is in flight
+@property (strong, nonatomic) CADisplayLink *sheepLink;  // ThreePascal demo: drives the walking ram every frame
 // native <barcode-scanner>: one AVCaptureSession with a metadata (QR/barcode)
 // output + a preview layer, positioned over the engine's scanner box each frame.
 @property (strong, nonatomic) AVCaptureSession *scanSession;
@@ -44,9 +45,16 @@
         // the engine paints the safe area; the status-bar / home-indicator strips
         // outside it show this colour — match the page background (--paper)
         self.backgroundColor = [UIColor colorWithRed:0.984 green:0.980 blue:0.969 alpha:1.0];
+        // ThreePascal demo: drive the walking ram continuously (the scene renders
+        // in pure software into the drawRect context, so we just need a steady
+        // vsync-paced setNeedsDisplay).
+        self.sheepLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(sheepTick)];
+        [self.sheepLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
     }
     return self;
 }
+
+- (void)sheepTick { [self setNeedsDisplay]; }
 
 - (void)loadHTML:(NSString *)html {
     // resolve a relative <img src="assets/…"> against the app bundle (where the
@@ -74,12 +82,7 @@
     // invalidated just the animated region) — not the whole view — repaint only
     // that region; the layer retains the rest. A full invalidate (input, scroll,
     // relayout) coalesces to ~the full bounds → full repaint.
-    BOOL full = (rect.size.width  >= self.bounds.size.width  - 1.0f) &&
-                (rect.size.height >= self.bounds.size.height - 1.0f);
-    if (!full && tina4_anim_region(NULL, NULL, NULL, NULL))
-        tina4_frame_region(ctx, w, h, 1.0f);
-    else
-        tina4_frame(ctx, w, h, 1.0f);
+    tina4_sheep_frame(ctx, w, h, 1.0f);   // ThreePascal demo: the walking ram
     CGContextRestoreGState(ctx);
     // overlay/position native <video> players over their poster boxes. Do this
     // OFF the drawRect pass — mutating the layer tree (addSublayer) inside
