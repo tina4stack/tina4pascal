@@ -158,6 +158,12 @@ function TinaEmbedPoster(Index: Integer): string;
 { Embed media kind: 0 = <video> (picture surface), 1 = <audio> (control bar).
   Lets a shell pick the right native player for the same rect/src/flags API. }
 function TinaEmbedKind(Index: Integer): Integer;
+{ Scanner (kind 2) only: the requested symbologies ("qr,ean13,…"). }
+function TinaEmbedFormats(Index: Integer): string;
+{ The shell reports a decoded barcode for scanner embed Index — the engine fires
+  that scanner's `onscan` action with the decoded Value (Format is advisory).
+  Returns True if an onscan handler was registered and invoked. }
+function TinaScanResult(Index: Integer; const Value, Format: string): Boolean;
 
 implementation
 
@@ -170,8 +176,11 @@ type
   TEmbedRec = record
     Src, Poster: string;
     X, Y, W, H: Single;
-    Flags: Integer;   // bit0 controls · bit1 autoplay · bit2 loop · bit3 muted
-    Kind: Integer;    // 0 = video · 1 = audio
+    Flags: Integer;   // video/audio: bit0 controls·1 autoplay·2 loop·3 muted.
+                      // scanner: bit0 torch.
+    Kind: Integer;    // 0 = video · 1 = audio · 2 = barcode-scanner
+    Formats: string;  // scanner: requested symbologies (e.g. "qr,ean13,code128")
+    OnScan: string;   // scanner: action to fire with the decoded value
   end;
 
 var
@@ -1827,6 +1836,25 @@ begin
     if c.HasAttribute('autoplay') then GEmbeds[n].Flags := GEmbeds[n].Flags or 2;
     if c.HasAttribute('loop')     then GEmbeds[n].Flags := GEmbeds[n].Flags or 4;
     if c.HasAttribute('muted')    then GEmbeds[n].Flags := GEmbeds[n].Flags or 8;
+    GEmbeds[n].Formats := ''; GEmbeds[n].OnScan := '';
+  end
+  else if (Box.Tag <> nil) and SameText(Box.Tag.TagName, 'barcode-scanner') then
+  begin
+    { A live camera scanner: the core lays out the placeholder box; a shell
+      overlays a camera preview + decoder over it (like a <video> overlay) and
+      calls TinaScanResult on a decode → fires `onscan`. }
+    c := Box.Tag;
+    n := Length(GEmbeds); SetLength(GEmbeds, n + 1);
+    GEmbeds[n].Src := ''; GEmbeds[n].Poster := '';
+    GEmbeds[n].X := Box.X;
+    GEmbeds[n].Y := Box.Y - GScrollY;
+    GEmbeds[n].W := Box.W;
+    GEmbeds[n].H := Box.H;
+    GEmbeds[n].Kind := 2;
+    GEmbeds[n].Formats := c.GetAttribute('formats');   // '' = any supported
+    GEmbeds[n].OnScan := c.GetAttribute('onscan');
+    GEmbeds[n].Flags := 0;
+    if c.HasAttribute('torch') then GEmbeds[n].Flags := GEmbeds[n].Flags or 1;
   end;
   for b in Box.Children do CollectEmbeds(b);
 end;
@@ -1870,6 +1898,22 @@ function TinaEmbedKind(Index: Integer): Integer;
 begin
   if (Index >= 0) and (Index < Length(GEmbeds)) then Result := GEmbeds[Index].Kind
   else Result := 0;
+end;
+
+function TinaEmbedFormats(Index: Integer): string;
+begin
+  if (Index >= 0) and (Index < Length(GEmbeds)) then Result := GEmbeds[Index].Formats
+  else Result := '';
+end;
+
+function TinaScanResult(Index: Integer; const Value, Format: string): Boolean;
+begin
+  Result := False;
+  if (Index < 0) or (Index >= Length(GEmbeds)) then Exit;
+  if GEmbeds[Index].Kind <> 2 then Exit;
+  if GEmbeds[Index].OnScan = '' then Exit;
+  Result := DispatchActionArgs(GEmbeds[Index].OnScan, Value);
+  if BuiltinsDirty then begin BuiltinsDirty := False; GLayoutDirty := True; end;
 end;
 
 finalization

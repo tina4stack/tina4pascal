@@ -27,6 +27,11 @@ procedure RegisterAction(const Name: string; Method: TTina4ActionMethod); overlo
   Returns True if a handler was found and invoked. }
 function DispatchAction(const Handler: string): Boolean;
 
+{ Dispatch a handler by NAME with an explicit Args string (no "(...)" parsing).
+  For programmatic events like a barcode scan, where the decoded value may
+  contain any characters and must not be parsed as call syntax. }
+function DispatchActionArgs(const Name, Args: string): Boolean;
+
 { Drop all registrations (e.g. when an app tears down). }
 procedure ClearActions;
 
@@ -104,6 +109,19 @@ begin
   end
   else
     if Assigned(Entries[i].Proc) then Entries[i].Proc(args);
+  Result := True;
+end;
+
+function DispatchActionArgs(const Name, Args: string): Boolean;
+var i: Integer;
+begin
+  Result := False;
+  i := IndexOfName(Trim(Name));
+  if i < 0 then Exit;
+  if Entries[i].IsMethod then
+  begin if Assigned(Entries[i].Method) then Entries[i].Method(Args); end
+  else
+    if Assigned(Entries[i].Proc) then Entries[i].Proc(Args);
   Result := True;
 end;
 
