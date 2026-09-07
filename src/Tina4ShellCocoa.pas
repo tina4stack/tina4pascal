@@ -70,6 +70,7 @@ type
     procedure Skew(AngleXDeg, AngleYDeg: Single); override;
     procedure TransformMatrix(A, B, C, D, E, F: Single); override;
     procedure ClipPolygon(const Pts: TTina4PointArray); override;
+    procedure ClipRoundRect(X, Y, W, H, Radius: Single); override;
     function BeginLayer(X, Y, W, H, Pad: Single): Integer; override;
     procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); override;
     procedure BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); override;
@@ -827,6 +828,14 @@ begin
   for i := 1 to High(Pts) do p.lineToPoint(NSMakePoint(Pts[i].X, Pts[i].Y));
   p.closePath;
   p.addClip; // intersects with the current clip; undone by RestoreState
+end;
+
+{ Rounded-rect clip. Self-saves like SetClip (paired with ClearClip's restore),
+  then intersects the current clip with the rounded-rect path. }
+procedure TCocoaCanvas.ClipRoundRect(X, Y, W, H, Radius: Single);
+begin
+  NSGraphicsContext.currentContext.saveGraphicsState;
+  ClipPolygon(RoundRectPolygon(X, Y, W, H, Radius));
 end;
 
 { ---- offscreen filter / blend compositing -------------------------------- }

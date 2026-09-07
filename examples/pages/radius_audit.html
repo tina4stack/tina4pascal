@@ -1,0 +1,49 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  body{margin:0;background:#e9ecf3;font:13px system-ui;padding:16px}
+  h2{font-size:12px;margin:14px 0 6px;color:#444}
+  .row{display:flex;gap:14px;flex-wrap:wrap}
+  .cell{width:150px}
+  .lbl{font-size:11px;color:#666;margin-top:4px}
+  /* 1 background-color + radius */
+  .bg{width:150px;height:90px;background:#2b41e6;border-radius:22px}
+  /* 2 per-corner radius */
+  .corners{width:150px;height:90px;background:#ff5aa0;border-radius:6px 30px 6px 30px}
+  /* 3 border + radius */
+  .bord{width:140px;height:80px;background:#fff;border:6px solid #15162e;border-radius:20px}
+  /* 4 img + radius (should clip the photo to the rounded rect) */
+  .img{width:150px;height:100px;border-radius:24px;object-fit:cover}
+  /* 5 background-image + radius */
+  .bgimg{width:150px;height:100px;border-radius:24px;
+         background:url('grad.png');background-size:cover}
+  /* 6 overflow:hidden children + radius (child must be clipped to the rounding) */
+  .clip{width:150px;height:100px;border-radius:24px;overflow:hidden}
+  .clip .fill{width:100%;height:100%;background:linear-gradient(135deg,#ffd23c,#2b41e6)}
+  /* 7 box-shadow + radius */
+  .shadow{width:140px;height:80px;background:#fff;border-radius:20px;
+          box-shadow:0 8px 22px rgba(43,65,230,.45)}
+  /* 8 pill */
+  .pill{width:150px;height:44px;background:#1a2aa8;border-radius:999px}
+  /* 9 circle img */
+  .circ{width:100px;height:100px;border-radius:50%;object-fit:cover}
+</style></head>
+<body>
+  <h2>1 bg-color · 2 per-corner · 3 border · 8 pill</h2>
+  <div class="row">
+    <div class="cell"><div class="bg"></div><div class="lbl">bg-color r22</div></div>
+    <div class="cell"><div class="corners"></div><div class="lbl">6/30/6/30</div></div>
+    <div class="cell"><div class="bord"></div><div class="lbl">border r20</div></div>
+    <div class="cell"><div class="pill"></div><div class="lbl">pill 999</div></div>
+  </div>
+  <h2>4 img · 9 circle img · 5 bg-image</h2>
+  <div class="row">
+    <div class="cell"><img class="img" src="photo.png"><div class="lbl">img r24</div></div>
+    <div class="cell"><img class="circ" src="photo.png"><div class="lbl">circle img</div></div>
+    <div class="cell"><div class="bgimg"></div><div class="lbl">bg-image r24</div></div>
+  </div>
+  <h2>6 overflow:hidden child · 7 box-shadow</h2>
+  <div class="row">
+    <div class="cell"><div class="clip"><div class="fill"></div></div><div class="lbl">overflow clip</div></div>
+    <div class="cell"><div class="shadow"></div><div class="lbl">shadow r20</div></div>
+  </div>
+</body></html>

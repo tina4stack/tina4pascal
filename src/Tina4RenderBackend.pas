@@ -98,6 +98,12 @@ type
       balanced by a SaveState/RestoreState pair. Default: no-op (no clipping —
       the element simply paints unclipped, a safe degrade). }
     procedure ClipPolygon(const Pts: TTina4PointArray); virtual;
+    { Clip subsequent drawing to a rounded rectangle (border-radius: images, the
+      background, and overflow:hidden subtrees). Self-saves like SetClip and is
+      balanced by ClearClip. Default: rectangular SetClip (a safe degrade — the
+      corners are square but content is still contained); backends that can clip
+      to a path override it for true rounded corners. }
+    procedure ClipRoundRect(X, Y, W, H, Radius: Single); virtual;
     { Transform stack for CSS transforms (rotate/scale). Default no-ops so
       simple/headless backends ignore them. Always balance Save/Restore. }
     procedure SaveState; virtual;
@@ -229,7 +235,49 @@ type
 procedure Tina4SetNotifyHandler(P: TTina4NotifyProc);
 procedure Tina4Notify(const Title, Body, Tag: string);
 
+{ Tessellate a rounded rectangle (border-box coords, y-down) to a closed polygon —
+  the shared builder for ClipRoundRect overrides. Radius is clamped to half the
+  shorter side (so 50% / 999px yield a pill or circle). }
+function RoundRectPolygon(X, Y, W, H, Radius: Single): TTina4PointArray;
+{ Per-corner variant (TL, TR, BR, BL) for asymmetric border-radius. }
+function RoundRectPolygon4(X, Y, W, H, R0, R1, R2, R3: Single): TTina4PointArray;
+
 implementation
+
+{ Per-corner rounded-rect → polygon. 6 segments per corner reads smooth at UI
+  sizes. Each radius is clamped so adjacent corners never overlap a side. }
+function RoundRectPolygon4(X, Y, W, H, R0, R1, R2, R3: Single): TTina4PointArray;
+const SEG = 6;
+var r, n: Integer; cr: array[0..3] of Single;
+  procedure Clamp(var a, b: Single; limit: Single);
+  var f: Single;
+  begin if (a + b > limit) and (a + b > 0) then begin f := limit / (a + b); a := a * f; b := b * f; end; end;
+  procedure Arc(cx, cy, rr, from, upto: Single);
+  var j: Integer; ang: Single;
+  begin
+    for j := 0 to SEG do
+    begin
+      ang := from + (upto - from) * (j / SEG);
+      Result[n].X := cx + rr * Cos(ang); Result[n].Y := cy + rr * Sin(ang); Inc(n);
+    end;
+  end;
+begin
+  cr[0] := R0; cr[1] := R1; cr[2] := R2; cr[3] := R3;
+  for r := 0 to 3 do if cr[r] < 0 then cr[r] := 0;
+  Clamp(cr[0], cr[1], W); Clamp(cr[3], cr[2], W);   // top / bottom edges
+  Clamp(cr[0], cr[3], H); Clamp(cr[1], cr[2], H);   // left / right edges
+  SetLength(Result, 4 * (SEG + 1)); n := 0;         // TL,TR,BR,BL; y-down → +sin downward
+  Arc(X + W - cr[1], Y + cr[1],     cr[1], -Pi/2, 0);       // top-right
+  Arc(X + W - cr[2], Y + H - cr[2], cr[2],  0,    Pi/2);    // bottom-right
+  Arc(X + cr[3],     Y + H - cr[3], cr[3],  Pi/2, Pi);      // bottom-left
+  Arc(X + cr[0],     Y + cr[0],     cr[0],  Pi,   3*Pi/2);  // top-left
+end;
+
+{ Rounded-rect → polygon (uniform radius). }
+function RoundRectPolygon(X, Y, W, H, Radius: Single): TTina4PointArray;
+begin
+  Result := RoundRectPolygon4(X, Y, W, H, Radius, Radius, Radius, Radius);
+end;
 
 var GNotifyHook: TTina4NotifyProc = nil;
 
@@ -645,6 +693,13 @@ procedure TTina4Canvas.Scale(SX, SY: Single); begin end;
 procedure TTina4Canvas.Skew(AngleXDeg, AngleYDeg: Single); begin end;
 procedure TTina4Canvas.TransformMatrix(A, B, C, D, E, F: Single); begin end;
 procedure TTina4Canvas.ClipPolygon(const Pts: TTina4PointArray); begin end;
+
+{ Default rounded-rect clip: rectangular SetClip. Content is contained (no escape);
+  the corners just aren't rounded on backends that don't override this. }
+procedure TTina4Canvas.ClipRoundRect(X, Y, W, H, Radius: Single);
+begin
+  SetClip(X, Y, W, H);
+end;
 function TTina4Canvas.BeginLayer(X, Y, W, H, Pad: Single): Integer; begin Result := -1; end;
 procedure TTina4Canvas.EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); begin end;
 procedure TTina4Canvas.BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); begin end;

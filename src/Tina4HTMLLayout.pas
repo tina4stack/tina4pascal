@@ -3988,6 +3988,44 @@ end;
   percentage sentinels), and background-repeat (default tile vs no-repeat).
   The image comes from the canvas's cached/async LoadImage; if it's not ready
   yet (handle < 0) nothing is drawn and the next relayout retries. }
+{ True when overflow (x or y) is hidden/clip — such a box establishes a clip for
+  its subtree even if nothing is scrollable. (auto/scroll go through the scroller
+  path and set Box.Scrollable.) }
+function ClipsOverflow(const st: TComputedStyle): Boolean;
+  function H(const s: string): Boolean;
+  begin Result := SameText(s, 'hidden') or SameText(s, 'clip'); end;
+begin
+  Result := H(st.Overflow) or H(st.OverflowX) or H(st.OverflowY);
+end;
+
+{ Resolve one corner's border-radius for a box bw×bh: a % (e.g. 50% → circle)
+  resolves against the box, a px value passes through. }
+function ResolvedCornerR(const st: TComputedStyle; i: Integer; bw, bh: Single): Single;
+begin
+  if st.BorderRadii[i] < 0 then Exit(0);              // unset
+  if st.BorderRadiiPct[i] then Result := st.BorderRadii[i] / 100 * Min(bw, bh)
+  else Result := st.BorderRadii[i];
+  if Result < 0 then Result := 0;
+end;
+
+{ The largest resolved corner radius (used for the uniform fast paths + clips). }
+function ResolvedMaxR(const st: TComputedStyle; bw, bh: Single): Single;
+var i: Integer; v: Single;
+begin
+  Result := 0;
+  for i := 0 to 3 do begin v := ResolvedCornerR(st, i, bw, bh); if v > Result then Result := v; end;
+end;
+
+{ True when all four resolved corners are equal (→ single-radius fast path). }
+function ResolvedUniformR(const st: TComputedStyle; bw, bh: Single): Boolean;
+var r0: Single;
+begin
+  r0 := ResolvedCornerR(st, 0, bw, bh);
+  Result := SameValue(r0, ResolvedCornerR(st, 1, bw, bh))
+        and SameValue(r0, ResolvedCornerR(st, 2, bw, bh))
+        and SameValue(r0, ResolvedCornerR(st, 3, bw, bh));
+end;
+
 procedure PaintBackgroundImage(Canvas: TTina4Canvas; Box: TLayoutBox;
   const st: TComputedStyle; y: Single);
 var
@@ -4022,7 +4060,7 @@ begin
   rep := LowerCase(Trim(st.BgRepeat));
   noRepeat := (rep = 'no-repeat') or (sz = 'cover') or (sz = 'contain');
 
-  Canvas.SetClip(Box.X, y, Box.W, Box.H);
+  Canvas.ClipRoundRect(Box.X, y, Box.W, Box.H, ResolvedMaxR(st, Box.W, Box.H));   // honour border-radius (incl %)
   if noRepeat then
     Canvas.DrawImage(h, Box.X + px, y + py, dw, dh)
   else
@@ -4072,6 +4110,7 @@ var
   lotF: Double;
   lotTotal, lotFrame, lotFit, lsc: Single;
   lpw, lph: Integer;
+  mcr: Single;   // resolved max border-radius (px; % resolved against this box)
 begin
   st := Box.Style;
   // CSS transition: ease transform/opacity/colours toward their computed value
@@ -4099,6 +4138,7 @@ begin
   if shifted then ShiftBoxTree(Box, tx, ty);
   try
   y := Box.Y - OffsetY;
+  mcr := ResolvedMaxR(st, Box.W, Box.H);   // border-radius resolved for THIS box (handles %)
   // Retained backing-store cull: on an animation-only frame the shell repaints
   // only the animated region — skip any box (and its subtree) wholly outside it,
   // so the far side of the page costs no draw calls. (Full frames leave this off.)
@@ -4168,8 +4208,8 @@ begin
   // solid bar and stop — no relayout, so the on-screen layout is unchanged.
   if GCaptureProtected and (not Hidden) and IsSensitive(Box) then
   begin
-    if st.MaxCornerRadius > 0 then
-      Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, st.MaxCornerRadius, TC_REDACT)
+    if mcr > 0 then
+      Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, mcr, TC_REDACT)
     else
       Canvas.FillRect(Box.X, y, Box.W, Box.H, TC_REDACT);
     Exit;
@@ -4188,7 +4228,15 @@ begin
   begin
     if Box.ImageHandle >= 0 then
     begin
-      Canvas.DrawImage(Box.ImageHandle, Box.X, y, Box.W, Box.H);
+      if mcr > 0 then
+      begin
+        // border-radius on <img>: clip the photo to the rounded box (50% → circle)
+        Canvas.ClipRoundRect(Box.X, y, Box.W, Box.H, mcr);
+        Canvas.DrawImage(Box.ImageHandle, Box.X, y, Box.W, Box.H);
+        Canvas.ClearClip;
+      end
+      else
+        Canvas.DrawImage(Box.ImageHandle, Box.X, y, Box.W, Box.H);
       Exit;
     end;
     Canvas.FillRect(Box.X, y, Box.W, Box.H, IMG_PLACEHOLDER_BG);
@@ -4261,15 +4309,15 @@ begin
         y + st.BoxShadow.OffsetY - st.BoxShadow.SpreadRadius,
         Box.W + 2 * st.BoxShadow.SpreadRadius,
         Box.H + 2 * st.BoxShadow.SpreadRadius,
-        st.MaxCornerRadius, st.BoxShadow.BlurRadius,
+        mcr, st.BoxShadow.BlurRadius,
         ScaleAlpha(st.BoxShadow.Color, op))
-    else if st.MaxCornerRadius > 0 then
+    else if mcr > 0 then
       Canvas.FillRoundRect(
         Box.X + st.BoxShadow.OffsetX - st.BoxShadow.SpreadRadius,
         y + st.BoxShadow.OffsetY - st.BoxShadow.SpreadRadius,
         Box.W + 2 * st.BoxShadow.SpreadRadius,
         Box.H + 2 * st.BoxShadow.SpreadRadius,
-        st.MaxCornerRadius, ScaleAlpha(st.BoxShadow.Color, op))
+        mcr, ScaleAlpha(st.BoxShadow.Color, op))
     else
       Canvas.FillRect(
         Box.X + st.BoxShadow.OffsetX - st.BoxShadow.SpreadRadius,
@@ -4292,17 +4340,22 @@ begin
       gpos[gi] := st.GradStopPos[gi];
     end;
     if st.BgGradientRadial then
-      Canvas.FillRadialGradient(Box.X, y, Box.W, Box.H, st.MaxCornerRadius, gcol, gpos)
+      Canvas.FillRadialGradient(Box.X, y, Box.W, Box.H, mcr, gcol, gpos)
     else
-      Canvas.FillLinearGradient(Box.X, y, Box.W, Box.H, st.MaxCornerRadius,
+      Canvas.FillLinearGradient(Box.X, y, Box.W, Box.H, mcr,
         st.BgGradientAngle, gcol, gpos);
   end
   else if (not Hidden) and ((bg shr 24) > 0) then
   begin
-    if st.MaxCornerRadius > 0 then
-      Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, st.MaxCornerRadius, bg)
+    if mcr <= 0 then
+      Canvas.FillRect(Box.X, y, Box.W, Box.H, bg)
+    else if ResolvedUniformR(st, Box.W, Box.H) then
+      Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, mcr, bg)
     else
-      Canvas.FillRect(Box.X, y, Box.W, Box.H, bg);
+      // per-corner radius (e.g. 6px 30px 6px 30px): fill the exact rounded polygon
+      Canvas.FillPolygon([RoundRectPolygon4(Box.X, y, Box.W, Box.H,
+        ResolvedCornerR(st, 0, Box.W, Box.H), ResolvedCornerR(st, 1, Box.W, Box.H),
+        ResolvedCornerR(st, 2, Box.W, Box.H), ResolvedCornerR(st, 3, Box.W, Box.H))], bg, False);
   end;
   // background-image: url() — loaded via the cached/async image path, sized by
   // background-size (cover/contain/auto), positioned by background-position,
@@ -4390,9 +4443,9 @@ begin
   if (not Hidden) and ((st.BorderWidths.Top > 0) or (st.BorderWidths.Right > 0) or
      (st.BorderWidths.Bottom > 0) or (st.BorderWidths.Left > 0)) then
   begin
-    if st.MaxCornerRadius > 0 then
+    if mcr > 0 then
       // rounded: uniform stroke (per-side / dashed on a rounded box is out of scope)
-      Canvas.StrokeRoundRect(Box.X, y, Box.W, Box.H, st.MaxCornerRadius,
+      Canvas.StrokeRoundRect(Box.X, y, Box.W, Box.H, mcr,
         st.BorderWidths.Top, bd)
     else
       // rectangular: each side with its own width, colour and style
@@ -4405,9 +4458,9 @@ begin
      and not SameText(st.OutlineStyle, 'none') then
   begin
     ox := st.OutlineOffset + st.OutlineWidth / 2;
-    if st.MaxCornerRadius > 0 then
+    if mcr > 0 then
       Canvas.StrokeRoundRect(Box.X - ox, y - ox, Box.W + 2 * ox, Box.H + 2 * ox,
-        st.MaxCornerRadius + ox, st.OutlineWidth, ScaleAlpha(st.OutlineColor, op))
+        mcr + ox, st.OutlineWidth, ScaleAlpha(st.OutlineColor, op))
     else
       Canvas.StrokeRect(Box.X - ox, y - ox, Box.W + 2 * ox, Box.H + 2 * ox,
         st.OutlineWidth, ScaleAlpha(st.OutlineColor, op));
@@ -4447,11 +4500,18 @@ begin
   sx := Box.ScrollLeft;
   didClip := Box.Scrollable or Box.ScrollableX
              or ((Box.MaxScroll > 0) and not Box.Scrollable)
-             or ((Box.MaxScrollX > 0) and not Box.ScrollableX);
+             or ((Box.MaxScrollX > 0) and not Box.ScrollableX)
+             // overflow:hidden/clip ALWAYS establishes a clip (CSS), even when nothing
+             // scrolls — otherwise an oversized child escapes its box (e.g. a
+             // width/height:100% background painting across the whole page).
+             or ClipsOverflow(st);
   if didClip then
   begin
-    Canvas.SetClip(Box.X + st.BorderWidths.Left, y + st.BorderWidths.Top,
-      Box.W - st.BorderWidths.Horz, Box.H - st.BorderWidths.Vert);
+    // honour border-radius on the clip: an overflow:hidden rounded box clips its
+    // subtree to the rounding (the inner radius, inset by the border width).
+    Canvas.ClipRoundRect(Box.X + st.BorderWidths.Left, y + st.BorderWidths.Top,
+      Box.W - st.BorderWidths.Horz, Box.H - st.BorderWidths.Vert,
+      Max(0, mcr - Max(st.BorderWidths.Left, st.BorderWidths.Top)));
     innerOfs := OffsetY + Box.ScrollTop;
   end;
 

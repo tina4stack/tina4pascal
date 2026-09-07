@@ -290,6 +290,7 @@ type
     BorderStyle: string;   // solid (default) / dashed / dotted / double
     BorderRadius: Single;
     BorderRadii: array[0..3] of Single;  // TL, TR, BR, BL — -1 means inherit from BorderRadius
+    BorderRadiiPct: array[0..3] of Boolean;  // that corner's radius is a % (resolve vs box at paint)
     ExplicitWidth: Single;
     ExplicitHeight: Single;
     AspectRatio: Single;   // width/height ratio (0 = none/auto)
@@ -2253,6 +2254,10 @@ begin
   Result.BorderRadii[1] := -1;
   Result.BorderRadii[2] := -1;
   Result.BorderRadii[3] := -1;
+  Result.BorderRadiiPct[0] := False;
+  Result.BorderRadiiPct[1] := False;
+  Result.BorderRadiiPct[2] := False;
+  Result.BorderRadiiPct[3] := False;
   Result.ExplicitWidth := -1;
   Result.ExplicitHeight := -1;
   Result.AspectRatio := 0;
@@ -2718,6 +2723,10 @@ begin
   Result.BorderRadii[1] := -1;
   Result.BorderRadii[2] := -1;
   Result.BorderRadii[3] := -1;
+  Result.BorderRadiiPct[0] := False;
+  Result.BorderRadiiPct[1] := False;
+  Result.BorderRadiiPct[2] := False;
+  Result.BorderRadiiPct[3] := False;
   Result.ExplicitWidth := -1;
   Result.ExplicitHeight := -1;
   Result.AspectRatio := 0;
@@ -3427,6 +3436,7 @@ var
   BParts, RParts, OvParts, SParts, OParts, FlexParts, TsParts, BgParts, GArgs, InsetParts, TfArgs: TStringArray;
   BP, BT, SP, ST, OP, OT, TsP, TsT, GArg, OvPart: string;
   R0, Ra, Rb, Rc, PL: Single;
+  RCorner: array of string; RI: Integer;   // border-radius per-corner source strings
   FParts: TStringArray;
   fi, slashp, fj, fTimeIdx: Integer;
   fLp, fSz, fLhs, fFam: string;
@@ -3670,47 +3680,28 @@ begin
   if Decls.TryGetValue('border-radius', Temp) and not ShouldSkip(Temp) then
   begin
     RParts := Temp.Trim.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    // Map the 1/2/3/4-value shorthand to a source string per corner (TL,TR,BR,BL),
+    // then parse each — recording whether it was a % (resolved against the box at
+    // paint) and storing a % as its positive magnitude (a raw negative still means
+    // "inherit"). ParseLength returns -pct for a percentage.
+    SetLength(RCorner, 4);
     case Length(RParts) of
-      1: begin
-           R0 := ParseLength(RParts[0], Style.FontSize);
-           Style.BorderRadius := R0;
-           Style.BorderRadii[0] := R0;
-           Style.BorderRadii[1] := R0;
-           Style.BorderRadii[2] := R0;
-           Style.BorderRadii[3] := R0;
-         end;
-      2: begin
-           // TL+BR | TR+BL
-           Ra := ParseLength(RParts[0], Style.FontSize);
-           Rb := ParseLength(RParts[1], Style.FontSize);
-           Style.BorderRadii[0] := Ra;
-           Style.BorderRadii[2] := Ra;
-           Style.BorderRadii[1] := Rb;
-           Style.BorderRadii[3] := Rb;
-           Style.BorderRadius := Ra;
-         end;
-      3: begin
-           // TL | TR+BL | BR
-           Ra := ParseLength(RParts[0], Style.FontSize);
-           Rb := ParseLength(RParts[1], Style.FontSize);
-           Rc := ParseLength(RParts[2], Style.FontSize);
-           Style.BorderRadii[0] := Ra;
-           Style.BorderRadii[1] := Rb;
-           Style.BorderRadii[3] := Rb;
-           Style.BorderRadii[2] := Rc;
-           Style.BorderRadius := Ra;
-         end;
+      1: begin RCorner[0]:=RParts[0]; RCorner[1]:=RParts[0]; RCorner[2]:=RParts[0]; RCorner[3]:=RParts[0]; end;
+      2: begin RCorner[0]:=RParts[0]; RCorner[2]:=RParts[0]; RCorner[1]:=RParts[1]; RCorner[3]:=RParts[1]; end;
+      3: begin RCorner[0]:=RParts[0]; RCorner[1]:=RParts[1]; RCorner[3]:=RParts[1]; RCorner[2]:=RParts[2]; end;
     else
       if Length(RParts) >= 4 then
-      begin
-        // TL | TR | BR | BL
-        Style.BorderRadii[0] := ParseLength(RParts[0], Style.FontSize);
-        Style.BorderRadii[1] := ParseLength(RParts[1], Style.FontSize);
-        Style.BorderRadii[2] := ParseLength(RParts[2], Style.FontSize);
-        Style.BorderRadii[3] := ParseLength(RParts[3], Style.FontSize);
-        Style.BorderRadius := Style.BorderRadii[0];
-      end;
+      begin RCorner[0]:=RParts[0]; RCorner[1]:=RParts[1]; RCorner[2]:=RParts[2]; RCorner[3]:=RParts[3]; end
+      else begin RCorner[0]:='0'; RCorner[1]:='0'; RCorner[2]:='0'; RCorner[3]:='0'; end;
     end;
+    for RI := 0 to 3 do
+    begin
+      Style.BorderRadiiPct[RI] := RCorner[RI].Trim.EndsWith('%');
+      R0 := ParseLength(RCorner[RI], Style.FontSize);
+      if Style.BorderRadiiPct[RI] then R0 := Abs(R0);   // % → positive magnitude
+      Style.BorderRadii[RI] := R0;
+    end;
+    Style.BorderRadius := Style.BorderRadii[0];
   end;
   if Decls.TryGetValue('border-top-left-radius', Temp) and not ShouldSkip(Temp) then
     Style.BorderRadii[0] := ParseLength(Temp, Style.FontSize);
