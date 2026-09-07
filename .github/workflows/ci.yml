@@ -28,9 +28,9 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y fpc
+            sudo apt-get update && sudo apt-get install -y fpc libzbar0
           else
-            brew install fpc
+            brew install fpc zbar
           fi
           fpc -iV
 
