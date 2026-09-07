@@ -298,7 +298,9 @@ type
                            const la, lb, lc: TV3; tex: TTexture);   // textured + per-vertex light
     procedure RasterLine(const a, b: TV3; r, g, b2: Single; w: Integer);
     procedure Downsample;                                  // FWK → Pixels (box filter, AA)
+    procedure FXAA;                                        // cheap post-process edge AA
   public
+    EdgeAA: Boolean;                                       // cheap edge AA at samples=1
     Pixels: array of Byte;                                 // RGBA output, FW*FH*4
     constructor Create(width, height: Integer; samples: Integer = 2);
     procedure SetSize(width, height: Integer);
@@ -1118,6 +1120,61 @@ begin
     end;
 end;
 
+{ FXAA — three.js's FXAAShader lineage: luma edge detect, then blend along the
+  edge direction. One post pass over the output; non-edge pixels are skipped. }
+procedure TWebGLRenderer.FXAA;
+const TMIN=10; SPAN=4.0;
+var src: array of Byte; lum: array of Byte; x, y, i, i4, p, n: Integer;
+    lM, lNW, lNE, lSW, lSE, lMin, lMax, contrast, thr, lbi: Integer;
+    dx, dy, dmin, rcp: Single;
+    ar,ag,ab, br,bg,bb, s1r,s1g,s1b, s2r,s2g,s2b, s3r,s3g,s3b, s4r,s4g,s4b: Single;
+  procedure Samp(fx, fy: Single; out r,g,b: Single);
+  var x0,y0,x1,y1,j00,j10,j01,j11: Integer; tx,ty,w00,w10,w01,w11: Single;
+  begin
+    if fx<0 then fx:=0; if fx>FW-1 then fx:=FW-1; if fy<0 then fy:=0; if fy>FH-1 then fy:=FH-1;
+    x0:=Trunc(fx); y0:=Trunc(fy); x1:=x0+1; if x1>FW-1 then x1:=FW-1; y1:=y0+1; if y1>FH-1 then y1:=FH-1;
+    tx:=fx-x0; ty:=fy-y0;
+    j00:=(y0*FW+x0)*4; j10:=(y0*FW+x1)*4; j01:=(y1*FW+x0)*4; j11:=(y1*FW+x1)*4;
+    w00:=(1-tx)*(1-ty); w10:=tx*(1-ty); w01:=(1-tx)*ty; w11:=tx*ty;
+    r:=src[j00]*w00+src[j10]*w10+src[j01]*w01+src[j11]*w11;
+    g:=src[j00+1]*w00+src[j10+1]*w10+src[j01+1]*w01+src[j11+1]*w11;
+    b:=src[j00+2]*w00+src[j10+2]*w10+src[j01+2]*w01+src[j11+2]*w11;
+  end;
+begin
+  n:=FW*FH; if n=0 then Exit; SetLength(src,n*4); Move(Pixels[0],src[0],n*4);
+  { one integer-luma pass; the edge loop then just reads it (no recompute) }
+  SetLength(lum,n);
+  for i:=0 to n-1 do lum[i]:=(77*src[i*4]+150*src[i*4+1]+29*src[i*4+2]) shr 8;
+  for y:=1 to FH-2 do
+  begin
+    p:=y*FW;
+    for x:=1 to FW-2 do
+    begin
+      i:=p+x;
+      lM:=lum[i]; lNW:=lum[i-FW-1]; lNE:=lum[i-FW+1]; lSW:=lum[i+FW-1]; lSE:=lum[i+FW+1];
+      lMin:=lM; if lNW<lMin then lMin:=lNW; if lNE<lMin then lMin:=lNE; if lSW<lMin then lMin:=lSW; if lSE<lMin then lMin:=lSE;
+      lMax:=lM; if lNW>lMax then lMax:=lNW; if lNE>lMax then lMax:=lNE; if lSW>lMax then lMax:=lSW; if lSE>lMax then lMax:=lSE;
+      contrast:=lMax-lMin; thr:=lMax shr 3; if thr<TMIN then thr:=TMIN;
+      if contrast<thr then Continue;                          // flat — leave sharp
+      dx:=-((lNW+lNE)-(lSW+lSE)); dy:=((lNW+lSW)-(lNE+lSE));   // edge direction
+      dmin:=(lNW+lNE+lSW+lSE)*0.03125; if dmin<2 then dmin:=2;
+      rcp:=1.0/(Min(Abs(dx),Abs(dy))+dmin); dx:=dx*rcp; dy:=dy*rcp;
+      if dx>SPAN then dx:=SPAN; if dx<-SPAN then dx:=-SPAN;
+      if dy>SPAN then dy:=SPAN; if dy<-SPAN then dy:=-SPAN;
+      Samp(x-dx*0.16667, y-dy*0.16667, s1r,s1g,s1b);
+      Samp(x+dx*0.16667, y+dy*0.16667, s2r,s2g,s2b);
+      ar:=0.5*(s1r+s2r); ag:=0.5*(s1g+s2g); ab:=0.5*(s1b+s2b);
+      Samp(x-dx*0.5, y-dy*0.5, s3r,s3g,s3b);
+      Samp(x+dx*0.5, y+dy*0.5, s4r,s4g,s4b);
+      br:=ar*0.5+0.25*(s3r+s4r); bg:=ag*0.5+0.25*(s3g+s4g); bb:=ab*0.5+0.25*(s3b+s4b);
+      lbi:=(77*Round(br)+150*Round(bg)+29*Round(bb)) shr 8;
+      i4:=i*4;
+      if (lbi<lMin) or (lbi>lMax) then begin Pixels[i4]:=Round(ar); Pixels[i4+1]:=Round(ag); Pixels[i4+2]:=Round(ab); end
+      else begin Pixels[i4]:=Round(br); Pixels[i4+1]:=Round(bg); Pixels[i4+2]:=Round(bb); end;
+    end;
+  end;
+end;
+
 function ClampB(v: Single): Byte;
 begin if v<0 then v:=0; if v>1 then v:=1; Result:=Round(v*255); end;
 
@@ -1498,7 +1555,8 @@ begin
   SetLength(plpos,0); SetLength(plcol,0); SetLength(plrange,0);
   CollectLights(scene);
   RenderObject(scene, Mat4Identity);
-  Downsample;                                    // resolve supersampled → Pixels (AA)
+  Downsample;                                    // resolve supersampled → Pixels
+  if EdgeAA and (FSS<=1) then FXAA;              // cheap post-process edge AA (three.js FXAA)
 end;
 
 procedure TWebGLRenderer.FillRectPx(x, y, w, h: Integer; r, g, b: Byte; a: Single);

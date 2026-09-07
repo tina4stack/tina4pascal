@@ -28,7 +28,8 @@ end;
 begin
   scene := TScene.Create; scene.Background.SetHex($0e0f1f);
   camera := TPerspectiveCamera.Create(45, W/H, 0.05, 100);
-  renderer := TWebGLRenderer.Create(W, H, 2);                      // 2x AA (ram is light)
+  renderer := TWebGLRenderer.Create(W, H, 1);                      // 1x + cheap FXAA edge AA
+  renderer.EdgeAA := True;
 
   amb := TAmbientLight.Create($ffffff, 0.55); scene.Add(amb);
   sun := TDirectionalLight.Create($fff4cf, 0.8); sun.Position.SetXYZ(4, 9, 5); scene.Add(sun);
