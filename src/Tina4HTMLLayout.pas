@@ -4136,6 +4136,7 @@ var
   lotTotal, lotFrame, lotFit, lsc: Single;
   lpw, lph: Integer;
   mcr: Single;   // resolved max border-radius (px; % resolved against this box)
+  olStyle: string; olw, olx, oly, olrw, olrh: Single;   // dashed/dotted/double outline edges
 begin
   st := Box.Style;
   // CSS transition: ease transform/opacity/colours toward their computed value
@@ -4477,18 +4478,36 @@ begin
       PaintBorders(Canvas, Box, st, y, op);
   end;
   // outline: a stroke OUTSIDE the border box, offset by outline-offset. Sits in
-  // the margin, doesn't affect layout. (dashed/dotted fall back to solid.)
+  // the margin, doesn't affect layout.
   if (not Hidden) and (st.OutlineWidth > 0)
      and ((st.OutlineColor shr 24) > 0)
      and not SameText(st.OutlineStyle, 'none') then
   begin
-    ox := st.OutlineOffset + st.OutlineWidth / 2;
-    if mcr > 0 then
-      Canvas.StrokeRoundRect(Box.X - ox, y - ox, Box.W + 2 * ox, Box.H + 2 * ox,
-        mcr + ox, st.OutlineWidth, ScaleAlpha(st.OutlineColor, op))
+    olStyle := LowerCase(st.OutlineStyle);
+    if (mcr <= 0) and ((olStyle = 'dashed') or (olStyle = 'dotted') or (olStyle = 'double')) then
+    begin
+      // rectangular non-solid outline: draw the 4 edges as styled bars (reusing the
+      // border edge painter). Rounded dashed/dotted is out of scope → falls to solid.
+      olw := st.OutlineWidth;
+      olx := Box.X - st.OutlineOffset - olw;
+      oly := y - st.OutlineOffset - olw;
+      olrw := Box.W + 2 * (st.OutlineOffset + olw);
+      olrh := Box.H + 2 * (st.OutlineOffset + olw);
+      PaintBorderEdge(Canvas, olx, oly, olrw, olw, True, olStyle, ScaleAlpha(st.OutlineColor, op));                // top
+      PaintBorderEdge(Canvas, olx, oly + olrh - olw, olrw, olw, True, olStyle, ScaleAlpha(st.OutlineColor, op));   // bottom
+      PaintBorderEdge(Canvas, olx, oly, olw, olrh, False, olStyle, ScaleAlpha(st.OutlineColor, op));              // left
+      PaintBorderEdge(Canvas, olx + olrw - olw, oly, olw, olrh, False, olStyle, ScaleAlpha(st.OutlineColor, op)); // right
+    end
     else
-      Canvas.StrokeRect(Box.X - ox, y - ox, Box.W + 2 * ox, Box.H + 2 * ox,
-        st.OutlineWidth, ScaleAlpha(st.OutlineColor, op));
+    begin
+      ox := st.OutlineOffset + st.OutlineWidth / 2;
+      if mcr > 0 then
+        Canvas.StrokeRoundRect(Box.X - ox, y - ox, Box.W + 2 * ox, Box.H + 2 * ox,
+          mcr + ox, st.OutlineWidth, ScaleAlpha(st.OutlineColor, op))
+      else
+        Canvas.StrokeRect(Box.X - ox, y - ox, Box.W + 2 * ox, Box.H + 2 * ox,
+          st.OutlineWidth, ScaleAlpha(st.OutlineColor, op));
+    end;
   end;
   // list-style-image marker: a small image box sized to the font, outdented to
   // the left of the content (or in the reserved inside gap).

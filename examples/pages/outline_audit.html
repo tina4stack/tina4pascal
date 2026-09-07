@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  body{margin:0;background:#eef1f6;font:12px system-ui;padding:22px}
+  h2{font-size:11px;margin:22px 0 12px;color:#555;text-transform:uppercase;letter-spacing:.04em}
+  .row{display:flex;gap:40px;flex-wrap:wrap}
+  .cell{width:120px}
+  .lbl{font-size:10px;color:#777;margin-top:10px}
+  .box{width:120px;height:64px;background:#fff}
+  /* 1 solid outline */          .o1{outline:3px solid #2b41e6}
+  /* 2 outline-offset */         .o2{outline:3px solid #2b41e6;outline-offset:6px}
+  /* 3 dashed */                 .o3{outline:3px dashed #d63884}
+  /* 4 dotted */                 .o4{outline:3px dotted #15162e}
+  /* 5 outline on rounded box */ .o5{border-radius:14px;outline:3px solid #2b41e6;outline-offset:4px}
+  /* 6 thick outline */          .o6{outline:6px solid #ffb020}
+  /* 7 outline + border */       .o7{border:3px solid #15162e;outline:3px solid #ff5aa0;outline-offset:3px}
+  /* 8 double */                 .o8{outline:6px double #2b41e6}
+  /* 9 negative offset (inside) */.o9{outline:3px solid #d63884;outline-offset:-8px}
+</style></head>
+<body>
+  <h2>solid · offset · dashed · dotted</h2>
+  <div class="row">
+    <div class="cell"><div class="box o1"></div><div class="lbl">3px solid</div></div>
+    <div class="cell"><div class="box o2"></div><div class="lbl">offset 6</div></div>
+    <div class="cell"><div class="box o3"></div><div class="lbl">dashed</div></div>
+    <div class="cell"><div class="box o4"></div><div class="lbl">dotted</div></div>
+  </div>
+  <h2>rounded · thick · outline+border · double · inner</h2>
+  <div class="row">
+    <div class="cell"><div class="box o5"></div><div class="lbl">rounded r14 off4</div></div>
+    <div class="cell"><div class="box o6"></div><div class="lbl">6px solid</div></div>
+    <div class="cell"><div class="box o7"></div><div class="lbl">border+outline</div></div>
+    <div class="cell"><div class="box o8"></div><div class="lbl">double</div></div>
+    <div class="cell"><div class="box o9"></div><div class="lbl">offset -8</div></div>
+  </div>
+</body></html>
