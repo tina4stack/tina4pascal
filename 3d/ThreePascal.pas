@@ -175,6 +175,7 @@ type
     Side: TMaterialSide;                                   // default double (no cull)
     Wireframe: Boolean;
     Opacity: Single;
+    Transparent: Boolean;                                  // three.Material.transparent — alpha-blend, no depth write
     constructor Create(acolor: LongWord = $ffffff);
   end;
   TMeshBasicMaterial = class(TMaterial);                   // unlit
@@ -292,6 +293,8 @@ type
     FSW, FSH, FSS: Integer;                                // supersampled size + factor
     FWK: array of Byte;                                    // 3D renders here (supersampled)
     FZ: array of Single;                                   // depth (supersampled)
+    FBlend: Boolean;                                       // current material is transparent
+    FBlendA: Single;                                       // its opacity (src alpha) for the blend
     procedure PlotDepth(px, py: Integer; z, r, g, b: Single);
     procedure RasterTri(const a, b, c, ca, cb, cc: TV3);   // screen x/y/ndc-z + per-vertex RGB
     procedure RasterTriTex(const a, b, c: TV3; const ta, tb, tc: TV2;
@@ -796,10 +799,11 @@ begin
     b0:=V3(radiusBottom*Cos(a0),-hy,radiusBottom*Sin(a0));
     b1:=V3(radiusBottom*Cos(a1),-hy,radiusBottom*Sin(a1));
     nt0:=VNorm(V3(Cos(a0),0,Sin(a0))); nt1:=VNorm(V3(Cos(a1),0,Sin(a1)));
-    { side (skip degenerate edge when a radius is 0, e.g. cone tip) }
-    if radiusTop>1e-6 then PushTriN(t0,b0,b1, nt0,nt0,nt1);
-    if radiusBottom>1e-6 then PushTriN(t0,b1,t1, nt0,nt1,nt1);
-    if (radiusTop<=1e-6) then PushTriN(t0,b0,b1, VNorm(VAdd(nt0,nt1)),nt0,nt1);
+    { side — wound CCW-outward (three.js convention) so material.side=FrontSide
+      culls the far half, not the near one (skip degenerate edge at a 0 radius) }
+    if radiusTop>1e-6 then PushTriN(t0,b1,b0, nt0,nt1,nt0);
+    if radiusBottom>1e-6 then PushTriN(t0,t1,b1, nt0,nt1,nt1);
+    if (radiusTop<=1e-6) then PushTriN(t0,b1,b0, VNorm(VAdd(nt0,nt1)),nt1,nt0);
     { caps (flat) }
     if radiusTop>1e-6 then PushTri(cT, t1, t0);
     if radiusBottom>1e-6 then PushTri(cB, b0, b1);
@@ -879,7 +883,7 @@ var i: Integer; begin i:=System.Length(Pos); SetLength(Pos,i+1); Pos[i]:=p; end;
 { ============================ materials / objects / lights ============================ }
 
 constructor TMaterial.Create(acolor: LongWord);
-begin Color:=TColor.Create(acolor); Map:=nil; Side:=msDouble; Wireframe:=False; Opacity:=1; end;
+begin Color:=TColor.Create(acolor); Map:=nil; Side:=msDouble; Wireframe:=False; Opacity:=1; Transparent:=False; end;
 constructor TMeshPhongMaterial.Create(acolor: LongWord);
 begin inherited Create(acolor); Shininess:=30; end;
 constructor TLineBasicMaterial.Create(acolor: LongWord);
@@ -1217,11 +1221,22 @@ begin
         n0:=w0*invA; n1:=w1*invA; n2:=w2*invA;
         z:=n0*a.z+n1*b.z+n2*c.z;
         if z<FZ[idx] then
-        begin FZ[idx]:=z;
-          FWK[idx*4+0]:=ClampB(n0*ca.x+n1*cb.x+n2*cc.x);
-          FWK[idx*4+1]:=ClampB(n0*ca.y+n1*cb.y+n2*cc.y);
-          FWK[idx*4+2]:=ClampB(n0*ca.z+n1*cb.z+n2*cc.z);
-          FWK[idx*4+3]:=255;
+        begin
+          if FBlend then
+          begin
+            { transparent: src·a + dst·(1-a), depth-TESTED but not written, so
+              stacked puffs blend and opaque geometry in front still occludes }
+            FWK[idx*4+0]:=ClampB((n0*ca.x+n1*cb.x+n2*cc.x)*FBlendA + FWK[idx*4+0]/255*(1-FBlendA));
+            FWK[idx*4+1]:=ClampB((n0*ca.y+n1*cb.y+n2*cc.y)*FBlendA + FWK[idx*4+1]/255*(1-FBlendA));
+            FWK[idx*4+2]:=ClampB((n0*ca.z+n1*cb.z+n2*cc.z)*FBlendA + FWK[idx*4+2]/255*(1-FBlendA));
+          end
+          else
+          begin FZ[idx]:=z;
+            FWK[idx*4+0]:=ClampB(n0*ca.x+n1*cb.x+n2*cc.x);
+            FWK[idx*4+1]:=ClampB(n0*ca.y+n1*cb.y+n2*cc.y);
+            FWK[idx*4+2]:=ClampB(n0*ca.z+n1*cb.z+n2*cc.z);
+            FWK[idx*4+3]:=255;
+          end;
         end;
       end;
       w0:=w0+A0; w1:=w1+A1; w2:=w2+A2; Inc(idx);
@@ -1296,6 +1311,7 @@ var
   plpos, plcol: array of TV3; plrange: array of Single;  // point lights
   bg: TColor; camPos: TV3;
   fp: array[0..5,0..3] of Single;            // 6 frustum planes (normalized)
+  passTransparent: Boolean;                  // two-pass: opaque first, then transparent
 
   function SphereInFrustum(cx, cy, cz, r: Single): Boolean;
   var k: Integer;
@@ -1389,6 +1405,8 @@ var
         geoN, centr: TV3; facing: Single; sa, sb, sc: TV3; va, vb, vc: TClipV;
     begin
       if (g=nil) or (mat=nil) then Exit;
+      if mat.Transparent <> passTransparent then Exit;   // this object belongs to the other pass
+      FBlend:=mat.Transparent; FBlendA:=mat.Opacity;     // RasterTri reads these
       if GWhite=nil then GWhite:=TColor.Create($ffffff);
       bcol:=mat.Color; ub:=mat is TMeshBasicMaterial; m:=Mat4Multiply(vp, world);
       textured:=(mat.Map<>nil) and (System.Length(g.UV)=System.Length(g.Pos)) and (System.Length(g.UV)>0);
@@ -1554,7 +1572,10 @@ begin
   ambient:=V3(0,0,0); SetLength(dirs,0); SetLength(dcols,0);
   SetLength(plpos,0); SetLength(plcol,0); SetLength(plrange,0);
   CollectLights(scene);
-  RenderObject(scene, Mat4Identity);
+  FBlend:=False;
+  passTransparent:=False; RenderObject(scene, Mat4Identity);   // opaque pass (writes depth)
+  passTransparent:=True;  RenderObject(scene, Mat4Identity);   // transparent pass (blends, depth-tested)
+  FBlend:=False;
   Downsample;                                    // resolve supersampled → Pixels
   if EdgeAA and (FSS<=1) then FXAA;              // cheap post-process edge AA (three.js FXAA)
 end;
