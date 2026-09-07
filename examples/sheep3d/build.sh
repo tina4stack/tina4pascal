@@ -5,7 +5,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 export PPC_CONFIG_PATH="${PPC_CONFIG_PATH:-$HOME/fpc/etc}"; export PATH="$HOME/fpc/bin:$PATH"
 OUT="${TMPDIR:-/tmp}/sheep3d"; mkdir -p "$OUT"
 # -ld_classic: macOS 26's new linker (ld-prime) asserts on FPC 3.2.2 Obj-C metadata.
-fpc -Mdelphi -Fu"$HERE/../../3d" -FE"$OUT" -FU"$OUT" -k-ld_classic "$HERE/sheepapp.pas"
+fpc -Mdelphi -Fu"$HERE/../../3d" -Fu"$HERE/../common" -FE"$OUT" -FU"$OUT" -k-ld_classic "$HERE/sheepapp.pas"
 APP="$OUT/Sheep3D.app"; rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS"
 cp "$OUT/sheepapp" "$APP/Contents/MacOS/sheepapp"
 cat > "$APP/Contents/Info.plist" <<PLIST

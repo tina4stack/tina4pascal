@@ -30,6 +30,10 @@ begin
   mPot   :=TMeshStandardMaterial.Create($8a5a34); mLeaf :=TMeshStandardMaterial.Create($3f9d54);
   mRecep :=TMeshStandardMaterial.Create($1d1e38); mSkin :=TMeshStandardMaterial.Create($ffd2a0);
   mBody  :=TMeshStandardMaterial.Create($ff5aa0);
+  { everything here is a closed box/cylinder — cull back faces (~half the fill) }
+  mDesk.Side:=msFront; mLeg.Side:=msFront; mScreen.Side:=msFront; mFrame.Side:=msFront;
+  mFloor.Side:=msFront; mWall.Side:=msFront; mGlass.Side:=msFront; mChair.Side:=msFront;
+  mPot.Side:=msFront; mLeaf.Side:=msFront; mRecep.Side:=msFront; mSkin.Side:=msFront; mBody.Side:=msFront;
 end;
 
 procedure Box(par: TObject3D; w,h,d,x,y,z: Single; m: TMaterial);

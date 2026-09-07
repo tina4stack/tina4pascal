@@ -1135,65 +1135,76 @@ end;
 
 { Gouraud triangle: a/b/c carry screen x,y and ndc z; ca/cb/cc are per-vertex RGB }
 procedure TWebGLRenderer.RasterTri(const a, b, c, ca, cb, cc: TV3);
-var minx, maxx, miny, maxy, px, py, idx: Integer; area, w0, w1, w2, z, iw: Single;
-  function Edge(const p0, p1: TV3; x, y: Single): Single;
-  begin Result:=(x-p0.x)*(p1.y-p0.y)-(y-p0.y)*(p1.x-p0.x); end;
+var minx, maxx, miny, maxy, px, py, idx: Integer;
+    area, invA, A0,B0,C0, A1,B1,C1, A2,B2,C2, w0,w1,w2, n0,n1,n2, z: Single;
 begin
-  area:=Edge(a,b,c.x,c.y); if Abs(area)<1e-6 then Exit;
+  { edge functions E_i = A_i*x + B_i*y + C_i — computed once, stepped per pixel }
+  A0:=c.y-b.y; B0:=b.x-c.x; C0:=-(A0*b.x+B0*b.y);
+  A1:=a.y-c.y; B1:=c.x-a.x; C1:=-(A1*c.x+B1*c.y);
+  A2:=b.y-a.y; B2:=a.x-b.x; C2:=-(A2*a.x+B2*a.y);
+  area:=A2*c.x+B2*c.y+C2; if Abs(area)<1e-6 then Exit; invA:=1/area;
   minx:=Trunc(Min(a.x,Min(b.x,c.x))); maxx:=Trunc(Max(a.x,Max(b.x,c.x)))+1;
   miny:=Trunc(Min(a.y,Min(b.y,c.y))); maxy:=Trunc(Max(a.y,Max(b.y,c.y)))+1;
   if minx<0 then minx:=0; if miny<0 then miny:=0;
   if maxx>FSW then maxx:=FSW; if maxy>FSH then maxy:=FSH;
   for py:=miny to maxy-1 do
+  begin
+    w0:=A0*(minx+0.5)+B0*(py+0.5)+C0;
+    w1:=A1*(minx+0.5)+B1*(py+0.5)+C1;
+    w2:=A2*(minx+0.5)+B2*(py+0.5)+C2;
+    idx:=py*FSW+minx;
     for px:=minx to maxx-1 do
     begin
-      w0:=Edge(b,c,px+0.5,py+0.5); w1:=Edge(c,a,px+0.5,py+0.5); w2:=Edge(a,b,px+0.5,py+0.5);
       if ((w0>=0)and(w1>=0)and(w2>=0)) or ((w0<=0)and(w1<=0)and(w2<=0)) then
       begin
-        w0:=w0/area; w1:=w1/area; w2:=w2/area;
-        z:=w0*a.z+w1*b.z+w2*c.z;
-        idx:=py*FSW+px;
+        n0:=w0*invA; n1:=w1*invA; n2:=w2*invA;
+        z:=n0*a.z+n1*b.z+n2*c.z;
         if z<FZ[idx] then
-        begin FZ[idx]:=z; iw:=1;
-          FWK[idx*4+0]:=ClampB(w0*ca.x+w1*cb.x+w2*cc.x);
-          FWK[idx*4+1]:=ClampB(w0*ca.y+w1*cb.y+w2*cc.y);
-          FWK[idx*4+2]:=ClampB(w0*ca.z+w1*cb.z+w2*cc.z);
+        begin FZ[idx]:=z;
+          FWK[idx*4+0]:=ClampB(n0*ca.x+n1*cb.x+n2*cc.x);
+          FWK[idx*4+1]:=ClampB(n0*ca.y+n1*cb.y+n2*cc.y);
+          FWK[idx*4+2]:=ClampB(n0*ca.z+n1*cb.z+n2*cc.z);
           FWK[idx*4+3]:=255;
         end;
       end;
+      w0:=w0+A0; w1:=w1+A1; w2:=w2+A2; Inc(idx);
     end;
+  end;
 end;
 
 { textured Gouraud triangle: interpolate UV + per-vertex light, sample the map }
 procedure TWebGLRenderer.RasterTriTex(const a, b, c: TV3; const ta, tb, tc: TV2;
                                       const la, lb, lc: TV3; tex: TTexture);
 var minx,maxx,miny,maxy,px,py,idx,txx,tyy,ti: Integer;
-    area,w0,w1,w2,z,uu,vv,cr,cg,cbl: Single;
-  function Edge(const p0,p1: TV3; x,y: Single): Single;
-  begin Result:=(x-p0.x)*(p1.y-p0.y)-(y-p0.y)*(p1.x-p0.x); end;
+    area,invA,A0,B0,C0,A1,B1,C1,A2,B2,C2,w0,w1,w2,n0,n1,n2,z,uu,vv,cr,cg,cbl: Single;
 begin
   if tex=nil then Exit;
-  area:=Edge(a,b,c.x,c.y); if Abs(area)<1e-6 then Exit;
+  A0:=c.y-b.y; B0:=b.x-c.x; C0:=-(A0*b.x+B0*b.y);
+  A1:=a.y-c.y; B1:=c.x-a.x; C1:=-(A1*c.x+B1*c.y);
+  A2:=b.y-a.y; B2:=a.x-b.x; C2:=-(A2*a.x+B2*a.y);
+  area:=A2*c.x+B2*c.y+C2; if Abs(area)<1e-6 then Exit; invA:=1/area;
   minx:=Trunc(Min(a.x,Min(b.x,c.x))); maxx:=Trunc(Max(a.x,Max(b.x,c.x)))+1;
   miny:=Trunc(Min(a.y,Min(b.y,c.y))); maxy:=Trunc(Max(a.y,Max(b.y,c.y)))+1;
   if minx<0 then minx:=0; if miny<0 then miny:=0;
   if maxx>FSW then maxx:=FSW; if maxy>FSH then maxy:=FSH;
   for py:=miny to maxy-1 do
+  begin
+    w0:=A0*(minx+0.5)+B0*(py+0.5)+C0; w1:=A1*(minx+0.5)+B1*(py+0.5)+C1; w2:=A2*(minx+0.5)+B2*(py+0.5)+C2;
+    idx:=py*FSW+minx;
     for px:=minx to maxx-1 do
     begin
-      w0:=Edge(b,c,px+0.5,py+0.5); w1:=Edge(c,a,px+0.5,py+0.5); w2:=Edge(a,b,px+0.5,py+0.5);
       if ((w0>=0)and(w1>=0)and(w2>=0)) or ((w0<=0)and(w1<=0)and(w2<=0)) then
       begin
-        w0:=w0/area; w1:=w1/area; w2:=w2/area;
-        z:=w0*a.z+w1*b.z+w2*c.z; idx:=py*FSW+px;
+        n0:=w0*invA; n1:=w1*invA; n2:=w2*invA;
+        z:=n0*a.z+n1*b.z+n2*c.z;
         if z<FZ[idx] then
         begin
-          uu:=w0*ta.u+w1*tb.u+w2*tc.u; vv:=w0*ta.v+w1*tb.v+w2*tc.v;
+          uu:=n0*ta.u+n1*tb.u+n2*tc.u; vv:=n0*ta.v+n1*tb.v+n2*tc.v;
           txx:=Trunc(uu*tex.Width); tyy:=Trunc(vv*tex.Height);
           if txx<0 then txx:=0; if tyy<0 then tyy:=0;
           if txx>=tex.Width then txx:=tex.Width-1; if tyy>=tex.Height then tyy:=tex.Height-1;
           ti:=(tyy*tex.Width+txx)*4;
-          cr:=w0*la.x+w1*lb.x+w2*lc.x; cg:=w0*la.y+w1*lb.y+w2*lc.y; cbl:=w0*la.z+w1*lb.z+w2*lc.z;
+          cr:=n0*la.x+n1*lb.x+n2*lc.x; cg:=n0*la.y+n1*lb.y+n2*lc.y; cbl:=n0*la.z+n1*lb.z+n2*lc.z;
           FZ[idx]:=z;
           FWK[idx*4+0]:=ClampB(tex.Data[ti+0]/255*cr);
           FWK[idx*4+1]:=ClampB(tex.Data[ti+1]/255*cg);
@@ -1201,7 +1212,9 @@ begin
           FWK[idx*4+3]:=255;
         end;
       end;
+      w0:=w0+A0; w1:=w1+A1; w2:=w2+A2; Inc(idx);
     end;
+  end;
 end;
 
 procedure TWebGLRenderer.RasterLine(const a, b: TV3; r, g, b2: Single; w: Integer);

@@ -4,7 +4,7 @@ set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 export PPC_CONFIG_PATH="${PPC_CONFIG_PATH:-$HOME/fpc/etc}"; export PATH="$HOME/fpc/bin:$PATH"
 OUT="${TMPDIR:-/tmp}/office3d"; mkdir -p "$OUT"
-fpc -Mdelphi -Fu"$HERE/../../3d" -FE"$OUT" -FU"$OUT" -k-ld_classic "$HERE/officeapp.pas"
+fpc -Mdelphi -Fu"$HERE/../../3d" -Fu"$HERE/../common" -FE"$OUT" -FU"$OUT" -k-ld_classic "$HERE/officeapp.pas"
 APP="$OUT/Office3D.app"; rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS"
 cp "$OUT/officeapp" "$APP/Contents/MacOS/officeapp"
 cat > "$APP/Contents/Info.plist" <<PLIST
