@@ -25,6 +25,7 @@ public class MainActivity extends Activity {
 
     private static final int REQ_PICK_FILE = 42;
     private static final int REQ_CAPTURE   = 43;
+    private static final int REQ_CAMERA    = 4711;   // Tina4Scanner.ensurePermission
     private Tina4View view;
 
     @Override
@@ -120,6 +121,18 @@ public class MainActivity extends Activity {
                 String path = saveBitmap((Bitmap) thumb);
                 if (path != null) view.onPhotoCaptured(path);
             }
+        }
+    }
+
+    /** The user answered the CAMERA permission dialog raised by the scanner. On a
+     *  grant, re-open the camera by hand — the scanner's surface is already live so
+     *  no further layout pass would re-trigger it. */
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_CAMERA && view != null
+                && grantResults.length > 0 && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            view.onCameraGranted();
         }
     }
 

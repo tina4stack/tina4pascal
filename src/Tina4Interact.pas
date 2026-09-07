@@ -181,6 +181,7 @@ type
     Kind: Integer;    // 0 = video · 1 = audio · 2 = barcode-scanner
     Formats: string;  // scanner: requested symbologies (e.g. "qr,ean13,code128")
     OnScan: string;   // scanner: action to fire with the decoded value
+    ResultSel: string;// scanner: `result="#id"` — element to fill with the decoded text
   end;
 
 var
@@ -1853,6 +1854,7 @@ begin
     GEmbeds[n].Kind := 2;
     GEmbeds[n].Formats := c.GetAttribute('formats');   // '' = any supported
     GEmbeds[n].OnScan := c.GetAttribute('onscan');
+    GEmbeds[n].ResultSel := c.GetAttribute('result');  // element to fill with the decode
     GEmbeds[n].Flags := 0;
     if c.HasAttribute('torch') then GEmbeds[n].Flags := GEmbeds[n].Flags or 1;
   end;
@@ -1907,12 +1909,22 @@ begin
 end;
 
 function TinaScanResult(Index: Integer; const Value, Format: string): Boolean;
+var sel: string; el: THTMLTag;
 begin
   Result := False;
   if (Index < 0) or (Index >= Length(GEmbeds)) then Exit;
   if GEmbeds[Index].Kind <> 2 then Exit;
-  if GEmbeds[Index].OnScan = '' then Exit;
-  Result := DispatchActionArgs(GEmbeds[Index].OnScan, Value);
+  // `result="#id"` — fill the named element with the decoded text (no app code needed)
+  sel := Trim(GEmbeds[Index].ResultSel);
+  if sel <> '' then
+  begin
+    if (Length(sel) > 0) and (sel[1] = '#') then Delete(sel, 1, 1);
+    el := FindById(GParser.Root, sel);
+    if el <> nil then begin SetElemText(el, Value); GLayoutDirty := True; Result := True; end;
+  end;
+  // fire the onscan action too, if any
+  if GEmbeds[Index].OnScan <> '' then
+    Result := DispatchActionArgs(GEmbeds[Index].OnScan, Value) or Result;
   if BuiltinsDirty then begin BuiltinsDirty := False; GLayoutDirty := True; end;
 end;
 

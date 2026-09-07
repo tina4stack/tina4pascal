@@ -77,13 +77,22 @@ function EnsureZbar: Boolean;
     {$ENDIF}{$ENDIF}
   end;
 
-var i: Integer; nm: TStringArray;
+var i: Integer; nm: TStringArray; appdir: string;
 begin
   if GTried then Exit(GOk);
   GTried := True;
   nm := Names;
-  for i := 0 to High(nm) do
-  begin GLib := LoadLibrary(nm[i]); if GLib <> 0 then Break; end;
+  { Prefer a copy bundled next to the executable — the packager drops one there,
+    so a user never has to install libzbar system-wide. The OS loader won't look
+    in the app dir for a bare soname (Linux/macOS), so we hand it the full path.
+    Falls back to the system soname when no bundled copy is present. }
+  appdir := ExtractFilePath(ParamStr(0));
+  if appdir <> '' then
+    for i := 0 to High(nm) do
+    begin GLib := LoadLibrary(appdir + nm[i]); if GLib <> 0 then Break; end;
+  if GLib = 0 then
+    for i := 0 to High(nm) do
+    begin GLib := LoadLibrary(nm[i]); if GLib <> 0 then Break; end;
   if GLib = 0 then Exit(False);
   zScannerCreate  := Tp_v(GetProcedureAddress(GLib, 'zbar_image_scanner_create'));
   zScannerDestroy := Tv_p(GetProcedureAddress(GLib, 'zbar_image_scanner_destroy'));

@@ -74,7 +74,8 @@ _resolve_android_ndk() {
   printf '%s' "${ANDROID_NDK:-/opt/homebrew/share/android-ndk}"
 }
 ANDROID_NDK="$(_resolve_android_ndk)"
-BT_VER="34.0.0"; PLATFORM_VER="android-34"
+# build-tools 35: 34's d8 NPEs dexing anonymous classes from JDK 24+ javac.
+BT_VER="35.0.0"; PLATFORM_VER="android-34"
 
 # iOS (physical device via Xcode + libimobiledevice/pymobiledevice3)
 IOS_DIR="$ROOT/ios"
@@ -386,12 +387,21 @@ proj_android_build() {
     rm -rf "$w"
   done
 
-  # 4. Java → dex
+  # 4. ZXing core (pure-Java barcode decoder for <barcode-scanner>) — cached once,
+  #    added to the javac classpath and dexed into the app (no Gradle/Maven needed).
+  ZXING_JAR="$TINA4_HOME/bin/zxing-core-3.5.3.jar"
+  if [ ! -f "$ZXING_JAR" ]; then
+    mkdir -p "$TINA4_HOME/bin"; say "${D}fetch zxing-core 3.5.3${Z}"
+    curl -fsSL "https://repo1.maven.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar" \
+      -o "$ZXING_JAR" || die "failed to download zxing core jar"
+  fi
+
+  # 5. Java → dex
   say "${D}javac + d8${Z}"
-  "$JAVAC" --release 17 -classpath "$ANDROID_JAR" -d "$aout/classes" \
+  "$JAVAC" --release 17 -classpath "$ANDROID_JAR:$ZXING_JAR" -d "$aout/classes" \
     $(find "$APPDIR/java" -name '*.java') || die "javac failed"
   "$BT/d8" --min-api "$minsdk" --lib "$ANDROID_JAR" --output "$aout" \
-    $(find "$aout/classes" -name '*.class') || die "d8 failed"
+    "$ZXING_JAR" $(find "$aout/classes" -name '*.class') || die "d8 failed"
 
   # 5. resources + manifest → applicationId renamed to the project's bundleId
   RES=""
@@ -767,7 +777,7 @@ EOF
   // into ~/.tina4 so a fresh clone reproduces the same build on any computer.
   "toolchain": {
     "fpc": "3.2.2",
-    "androidBuildTools": "34.0.0",
+    "androidBuildTools": "35.0.0",
     "androidPlatform": "android-34",
     "androidMinSdk": 21,
     "androidTargetSdk": 34

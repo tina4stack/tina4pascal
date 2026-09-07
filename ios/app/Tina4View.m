@@ -6,10 +6,19 @@
 
 @interface Tina4View () <UIImagePickerControllerDelegate,
                          UINavigationControllerDelegate,
-                         UIDocumentPickerDelegate>
+                         UIDocumentPickerDelegate,
+                         AVCaptureMetadataOutputObjectsDelegate>
 @property (strong, nonatomic) CADisplayLink *fling;
 @property (strong, nonatomic) NSTimer *caret;
 @property (strong, nonatomic) CADisplayLink *pump;   // redraws while HTTP is in flight
+// native <barcode-scanner>: one AVCaptureSession with a metadata (QR/barcode)
+// output + a preview layer, positioned over the engine's scanner box each frame.
+@property (strong, nonatomic) AVCaptureSession *scanSession;
+@property (strong, nonatomic) AVCaptureVideoPreviewLayer *scanPreview;
+@property (strong, nonatomic) UIView *scanView;
+@property (assign, nonatomic) int scanIndex;
+@property (assign, nonatomic) BOOL scanStarting;
+@property (assign, nonatomic) NSTimeInterval scanLastAt;
 // native <video> overlays, keyed by source URL. Each is a full AVPlayerViewController
 // (native play/pause/scrub/fullscreen controls), positioned over the engine's black
 // poster box each frame (see -syncVideos:).
@@ -75,7 +84,7 @@
     // overlay/position native <video> players over their poster boxes. Do this
     // OFF the drawRect pass — mutating the layer tree (addSublayer) inside
     // drawRect is unreliable — so hop to the next main-loop turn.
-    dispatch_async(dispatch_get_main_queue(), ^{ [self syncVideos:s]; });
+    dispatch_async(dispatch_get_main_queue(), ^{ [self syncVideos:s]; [self syncScanner:s]; });
     // keep animating on-screen time-driven content (<lottie>) without needing a
     // fling — the display link paces itself and -tick repaints only the animated
     // region (setNeedsDisplayInRect).
@@ -189,6 +198,131 @@
         [self.videoControllers removeObjectForKey:src];
         [self.videoFlags removeObjectForKey:src];
     }
+}
+
+// ---- native <barcode-scanner> (AVFoundation live scan) ----------------
+// The engine lays out the scanner as a black box (embed kind 2) and reports its
+// rect + requested symbologies. We run one AVCaptureSession with a metadata
+// output, show a live preview over the box, and on a decode call
+// tina4_scan_result(index, value, format) — the engine fires onscan + fills the
+// element named by result="#id". iOS does QR/EAN/Code128 natively (no zbar).
+
+- (AVMetadataObjectType)fmtName:(AVMetadataObjectType)t { return t; }
+
+- (NSArray<AVMetadataObjectType> *)metaTypesFor:(NSString *)formats
+                                       available:(NSArray<AVMetadataObjectType> *)avail {
+    NSString *f = [formats lowercaseString];
+    if (f.length == 0) return avail;                 // '' = every supported symbology
+    NSMutableArray *want = [NSMutableArray array];
+    void (^add)(NSString *, AVMetadataObjectType) = ^(NSString *key, AVMetadataObjectType t){
+        if ([f containsString:key] && [avail containsObject:t]) [want addObject:t];
+    };
+    add(@"qr",      AVMetadataObjectTypeQRCode);
+    add(@"ean13",   AVMetadataObjectTypeEAN13Code);
+    add(@"ean8",    AVMetadataObjectTypeEAN8Code);
+    add(@"code128", AVMetadataObjectTypeCode128Code);
+    add(@"code39",  AVMetadataObjectTypeCode39Code);
+    add(@"code93",  AVMetadataObjectTypeCode93Code);
+    add(@"upce",    AVMetadataObjectTypeUPCECode);
+    add(@"pdf417",  AVMetadataObjectTypePDF417Code);
+    add(@"aztec",   AVMetadataObjectTypeAztecCode);
+    add(@"datamatrix", AVMetadataObjectTypeDataMatrixCode);
+    return want.count ? want : avail;
+}
+
+- (void)setupScannerForIndex:(int)idx {
+    if (self.scanStarting || self.scanSession) return;
+    AVAuthorizationStatus st = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+    if (st == AVAuthorizationStatusNotDetermined) {
+        self.scanStarting = YES;
+        [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self.scanStarting = NO;
+                if (granted) { [self setNeedsDisplay]; }   // re-enter syncScanner with access
+            });
+        }];
+        return;
+    }
+    if (st != AVAuthorizationStatusAuthorized) return;      // denied — leave the black box
+
+    AVCaptureDevice *dev = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    if (!dev) return;
+    NSError *err = nil;
+    AVCaptureDeviceInput *in = [AVCaptureDeviceInput deviceInputWithDevice:dev error:&err];
+    if (!in) return;
+    AVCaptureSession *sess = [[AVCaptureSession alloc] init];
+    if ([sess canAddInput:in]) [sess addInput:in]; else return;
+    AVCaptureMetadataOutput *out = [[AVCaptureMetadataOutput alloc] init];
+    if ([sess canAddOutput:out]) [sess addOutput:out]; else return;
+    [out setMetadataObjectsDelegate:self queue:dispatch_get_main_queue()];
+    char fb[256] = {0}; tina4_embed_formats(idx, fb, (int)sizeof(fb));
+    out.metadataObjectTypes = [self metaTypesFor:[NSString stringWithUTF8String:fb]
+                                       available:out.availableMetadataObjectTypes];
+
+    AVCaptureVideoPreviewLayer *prev = [AVCaptureVideoPreviewLayer layerWithSession:sess];
+    prev.videoGravity = AVLayerVideoGravityResizeAspectFill;
+    UIView *v = [[UIView alloc] initWithFrame:CGRectZero];
+    v.backgroundColor = [UIColor blackColor];
+    v.clipsToBounds = YES;
+    [v.layer addSublayer:prev];
+    [self addSubview:v];
+    self.scanSession = sess; self.scanPreview = prev; self.scanView = v; self.scanIndex = idx;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ [sess startRunning]; });
+}
+
+- (void)applyTorch:(BOOL)on {
+    AVCaptureDevice *dev = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    if (!dev || !dev.hasTorch || !dev.isTorchAvailable) return;
+    if (dev.torchMode == (on ? AVCaptureTorchModeOn : AVCaptureTorchModeOff)) return;
+    if ([dev lockForConfiguration:NULL]) {
+        @try { dev.torchMode = on ? AVCaptureTorchModeOn : AVCaptureTorchModeOff; }
+        @catch (__unused id e) {}
+        [dev unlockForConfiguration];
+    }
+}
+
+- (void)teardownScanner {
+    if (!self.scanSession) return;
+    [self applyTorch:NO];
+    AVCaptureSession *sess = self.scanSession;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ [sess stopRunning]; });
+    [self.scanView removeFromSuperview];
+    self.scanView = nil; self.scanPreview = nil; self.scanSession = nil; self.scanIndex = -1;
+}
+
+- (void)syncScanner:(UIEdgeInsets)s {
+    int n = tina4_embed_count();
+    int found = -1; float x = 0, y = 0, w = 0, h = 0;
+    for (int i = 0; i < n; i++) {
+        if (tina4_embed_kind(i) == 2) { found = i; tina4_embed_rect(i, &x, &y, &w, &h); break; }
+    }
+    if (found < 0) { [self teardownScanner]; return; }
+    if (w <= 0 || h <= 0) return;
+    if (!self.scanSession) { [self setupScannerForIndex:found]; }
+    self.scanIndex = found;
+    if (!self.scanView) return;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    self.scanView.frame = CGRectMake(x + s.left, y + s.top, w, h);
+    self.scanPreview.frame = self.scanView.bounds;
+    [CATransaction commit];
+    [self applyTorch:(tina4_embed_flags(found) & 1) != 0];   // torch attribute → flash
+}
+
+- (void)captureOutput:(AVCaptureOutput *)output
+    didOutputMetadataObjects:(NSArray<__kindof AVMetadataObject *> *)objs
+              fromConnection:(AVCaptureConnection *)connection {
+    if (objs.count == 0) return;
+    AVMetadataMachineReadableCodeObject *m =
+        (AVMetadataMachineReadableCodeObject *)objs.firstObject;
+    if (![m isKindOfClass:[AVMetadataMachineReadableCodeObject class]]) return;
+    NSString *val = m.stringValue;
+    if (val.length == 0) return;
+    NSTimeInterval now = CACurrentMediaTime();
+    if (now - self.scanLastAt < 1.5) return;               // debounce repeated reads
+    self.scanLastAt = now;
+    tina4_scan_result(self.scanIndex, (char *)val.UTF8String, (char *)m.type.UTF8String);
+    [self setNeedsDisplay];                                 // relayout to show result="#id"
 }
 
 // ---- touch → engine ----------------------------------------------------

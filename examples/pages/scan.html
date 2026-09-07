@@ -2,32 +2,29 @@
 <html>
 <head>
 <style>
-  /* Tina4 identity — electric blue on a dark scanner ground. Responsive with a
-     flex column (header · camera · result); the viewfinder centres via
-     margin:auto inside the flex camera box, so it fits any screen. */
+  /* Tina4 identity — electric blue on a dark scanner ground. Flex column:
+     header · scanner · result. The <barcode-scanner> is itself the flex:1 box so
+     it gets a real height (the shell needs a non-zero rect to start the camera);
+     the shell overlays the live preview + a viewfinder over it. */
   body{ margin:0; color:#fff; background:#0e0f1f;
         font-family:"Gabarito","Hanken Grotesk",system-ui,sans-serif; }
-  .screen{ position:relative; display:flex; flex-direction:column; height:100vh; }
+  .screen{ display:flex; flex-direction:column; height:100vh; }
 
-  .bar{ position:relative; padding:18px 18px 14px; }
+  .bar{ padding:18px 18px 14px; }
   .bar h1{ margin:0; font-size:22px; font-weight:800; letter-spacing:-.02em; }
   .bar p{ margin:4px 0 0; font-size:13px; color:#a6a7c8; }
-  .torch{ position:absolute; top:16px; right:18px; width:92px; text-align:center;
-          background:#16172c; border:1px solid #2a2c4c; color:#fff;
-          border-radius:12px; padding:11px 0; font-size:14px; font-weight:600; }
 
-  /* camera area grows to fill; the shell overlays a live preview on
-     <barcode-scanner>, the viewfinder centres over it (margin:auto in flex). */
-  .cam{ flex:1; display:flex; position:relative; background:#000; }
-  barcode-scanner{ position:absolute; top:0; left:0; right:0; bottom:0;
-                   width:100%; height:100%; background:#000; }
-  .frame{ margin:auto; width:260px; height:260px;
-          border:4px solid #2b41e6; border-radius:24px; }
+  /* explicit height: a <barcode-scanner> is a replaced element (intrinsic 0 h),
+     so flex:1 won't stretch it — give it the viewport minus header + result. */
+  barcode-scanner{ display:block; width:100%; height:calc(100vh - 190px); background:#000; }
 
   .result{ margin:16px; padding:16px; background:#16172c;
            border:1px solid #2a2c4c; border-radius:16px; }
   .result .label{ font-size:12px; color:#a6a7c8; }
-  .result .value{ font-size:18px; font-weight:700; margin-top:3px; }
+  /* explicit bright colour — a dynamically-filled node must not fall back to
+     dark text on the dark card; break long codes/URLs. */
+  .result .value{ font-size:18px; font-weight:700; margin-top:3px;
+                  color:#ffffff; word-break:break-all; }
 </style>
 </head>
 <body>
@@ -36,16 +33,13 @@
   <div class="bar">
     <h1>Scan a code</h1>
     <p>Point the camera at a barcode or QR code</p>
-    <span class="torch" onclick="Scan:Torch">Torch</span>
   </div>
 
-  <!-- the scanner: a shell overlays a live camera preview + decoder here and
-       fires onscan with the decoded value. `formats` limits the symbologies,
-       `torch` requests the flashlight. -->
-  <div class="cam">
-    <barcode-scanner id="cam" formats="qr,ean13,code128" torch onscan="Scan:Result"></barcode-scanner>
-    <div class="frame"></div>
-  </div>
+  <!-- the scanner: the shell overlays a live camera preview + a viewfinder here.
+       On a decode the engine fills the element named by `result` and fires
+       `onscan`. `formats` limits the symbologies. -->
+  <barcode-scanner id="cam" formats="qr,ean13,code128"
+                   result="#value" onscan="Scan:Result"></barcode-scanner>
 
   <div class="result">
     <div class="label">Last scan</div>

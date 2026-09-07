@@ -6,7 +6,8 @@ set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ANDROID_SDK="${ANDROID_SDK:-/opt/homebrew/share/android-commandlinetools}"
-BT="$ANDROID_SDK/build-tools/34.0.0"
+# build-tools 35's d8 — 34's NPEs dexing anonymous classes emitted by JDK 24+.
+BT="$ANDROID_SDK/build-tools/35.0.0"
 ANDROID_JAR="$ANDROID_SDK/platforms/android-34/android.jar"
 JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home)}"; export JAVA_HOME
 
@@ -17,13 +18,24 @@ OUT="$HERE/out"; rm -rf "$OUT"; mkdir -p "$OUT/classes"
 ABIS="$(ls "$APPDIR/jniLibs" 2>/dev/null)"
 [ -n "$ABIS" ] || { echo "no jniLibs — run ./build.sh first"; exit 1; }
 
+# ZXing core (pure-Java barcode decoder for <barcode-scanner>) — cached once
+# next to the SDK, added to the javac classpath and dexed into the app. No
+# Gradle/Maven: d8 accepts the jar as an input alongside our .class files.
+ZXING_JAR="${ZXING_JAR:-$HERE/libs/zxing-core-3.5.3.jar}"
+if [ ! -f "$ZXING_JAR" ]; then
+  mkdir -p "$(dirname "$ZXING_JAR")"
+  echo "fetching zxing-core 3.5.3…"
+  curl -fsSL "https://repo1.maven.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar" \
+    -o "$ZXING_JAR" || { echo "failed to download zxing core jar"; exit 1; }
+fi
+
 echo "1/6 compiling Java…"
-"$JAVA_HOME/bin/javac" --release 17 -classpath "$ANDROID_JAR" \
+"$JAVA_HOME/bin/javac" --release 17 -classpath "$ANDROID_JAR:$ZXING_JAR" \
   -d "$OUT/classes" $(find "$APPDIR/java" -name '*.java')
 
 echo "2/6 dexing…"
 "$BT/d8" --min-api 21 --lib "$ANDROID_JAR" --output "$OUT" \
-  $(find "$OUT/classes" -name '*.class')
+  "$ZXING_JAR" $(find "$OUT/classes" -name '*.class')
 
 echo "3/6 compiling + linking resources + manifest…"
 # compile res/ (icons, colors) into a flat archive for the linker

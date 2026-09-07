@@ -205,13 +205,35 @@ begin
   end;
 end;
 
+{ scanner (kind 2): the requested symbologies, e.g. "qr,ean13,code128" (''=any). }
+function tina4_embed_formats(Index: cint; Buf: PAnsiChar; Cap: cint): cint; cdecl;
+var s: AnsiString;
+begin
+  s := TinaEmbedFormats(Index);
+  Result := Length(s);
+  if (Buf <> nil) and (Cap > 0) then
+  begin
+    if Result > Cap - 1 then Result := Cap - 1;
+    if Result > 0 then Move(s[1], Buf^, Result);
+    Buf[Result] := #0;
+  end;
+end;
+
+{ the shell reports a decoded barcode for scanner embed Index → engine fires its
+  onscan action + fills its result target. Returns 1 if handled. }
+function tina4_scan_result(Index: cint; Value, Format: PAnsiChar): cint; cdecl;
+begin
+  if TinaScanResult(Index, AnsiString(Value), AnsiString(Format)) then Result := 1 else Result := 0;
+end;
+
 exports
   tina4_set_html, tina4_set_asset_base, tina4_frame, tina4_frame_region, tina4_anim_region,
   tina4_touch, tina4_tick, tina4_anim_active, tina4_http_pending,
   tina4_wants_keyboard, tina4_blur, tina4_blink_caret, tina4_key,
   tina4_focus_kind, tina4_focus_next, tina4_set_file, tina4_set_photo,
   tina4_embed_count, tina4_embed_rect, tina4_embed_src,
-  tina4_embed_flags, tina4_embed_poster, tina4_embed_kind;
+  tina4_embed_flags, tina4_embed_poster, tina4_embed_kind,
+  tina4_embed_formats, tina4_scan_result;
 
 begin
 end.

@@ -186,7 +186,23 @@ end;
 function Java_com_tina4_pascal_Tina4View_nativeEmbedKind(Env: PJNIEnv;
   This: jobject; Index: jint): jint; cdecl;
 begin
-  Result := TinaEmbedKind(Index);   // 0 = video · 1 = audio
+  Result := TinaEmbedKind(Index);   // 0 = video · 1 = audio · 2 = barcode-scanner
+end;
+
+function Java_com_tina4_pascal_Tina4View_nativeEmbedFormats(Env: PJNIEnv;
+  This: jobject; Index: jint): jstring; cdecl;
+var s: AnsiString;
+begin
+  s := TinaEmbedFormats(Index);     // scanner symbologies ("qr,ean13,…")
+  Result := Env^.NewStringUTF(Env, PAnsiChar(s));
+end;
+
+{ Java reports a decoded barcode for scanner embed Index → engine fires onscan +
+  fills result="#id". Returns 1 if handled. }
+function Java_com_tina4_pascal_Tina4View_nativeScanResult(Env: PJNIEnv;
+  This: jobject; Index: jint; Value, Fmt: jstring): jint; cdecl;
+begin
+  if TinaScanResult(Index, JToStr(Env, Value), JToStr(Env, Fmt)) then Result := 1 else Result := 0;
 end;
 
 exports
@@ -209,6 +225,8 @@ exports
   Java_com_tina4_pascal_Tina4View_nativeEmbedSrc,
   Java_com_tina4_pascal_Tina4View_nativeEmbedFlags,
   Java_com_tina4_pascal_Tina4View_nativeEmbedKind,
+  Java_com_tina4_pascal_Tina4View_nativeEmbedFormats,
+  Java_com_tina4_pascal_Tina4View_nativeScanResult,
   Java_com_tina4_pascal_Http_nativeHttpResult,
   Java_com_tina4_pascal_ImageLoader_nativeImageReady,
   JNI_OnLoad;

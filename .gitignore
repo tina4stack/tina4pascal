@@ -29,6 +29,8 @@ __pycache__/
 
 # fetched caches
 csscache/
+# ZXing jar the Android build downloads on demand (barcode scanner)
+android/libs/
 
 # tina4pascal CLI build outputs
 /build/

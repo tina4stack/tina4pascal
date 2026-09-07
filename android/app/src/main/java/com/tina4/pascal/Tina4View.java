@@ -53,7 +53,9 @@ public class Tina4View extends View implements Runnable {
     private native float[] nativeEmbedRect(int index); // [x,y,w,h] in CSS px (scroll applied)
     private native String  nativeEmbedSrc(int index);  // the video source URL
     private native int     nativeEmbedFlags(int index);// 1 controls·2 autoplay·4 loop·8 muted
-    private native int     nativeEmbedKind(int index); // 0 = video · 1 = audio
+    private native int     nativeEmbedKind(int index); // 0 = video · 1 = audio · 2 = barcode-scanner
+    private native String  nativeEmbedFormats(int index);          // scanner symbologies
+    private native int     nativeScanResult(int index, String value, String format); // report a decode
 
     /** Called by MainActivity once the system file picker returns a name. */
     void onFilePicked(String name) { nativeSetFile(name); invalidate(); }
@@ -168,10 +170,54 @@ public class Tina4View extends View implements Runnable {
     private final Map<String, VideoView> videoViews = new HashMap<>();
     private final Runnable videoSync = new VideoSync(this);
 
+    // --- native <barcode-scanner> (Camera2 preview + ZXing) -----------------
+    private Tina4Scanner scanner;
+    private int scannerIndex = -1;
+
+    private void syncScanner() {
+        if (!(getParent() instanceof ViewGroup)) return;
+        ViewGroup parent = (ViewGroup) getParent();
+        int n = nativeEmbedCount();
+        int found = -1; float[] r = null;
+        for (int i = 0; i < n; i++) {
+            if (nativeEmbedKind(i) == 2) { found = i; r = nativeEmbedRect(i); break; }
+        }
+        if (found < 0 || r == null || r.length < 4 || r[2] <= 0 || r[3] <= 0) {
+            if (scanner != null) { parent.removeView(scanner.view); scanner.close(); scanner = null; scannerIndex = -1; }
+            return;
+        }
+        scannerIndex = found;
+        int x = Math.round(r[0] * density), y = Math.round(r[1] * density);
+        int w = Math.round(r[2] * density), h = Math.round(r[3] * density);
+        if (scanner == null) {
+            final int idx = found;
+            scanner = new Tina4Scanner(getContext(), nativeEmbedFormats(found), new Tina4Scanner.Callback() {
+                public void onScan(String value, String format) {
+                    nativeScanResult(scannerIndex, value, format);
+                    invalidate();   // relayout to show result="#id"
+                }
+            });
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, h);
+            lp.leftMargin = x; lp.topMargin = y;
+            parent.addView(scanner.view, lp);
+        } else {
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) scanner.view.getLayoutParams();
+            lp.width = w; lp.height = h; lp.leftMargin = x; lp.topMargin = y;
+            scanner.view.setLayoutParams(lp);
+        }
+        scanner.setTorch((nativeEmbedFlags(found) & 1) != 0);   // torch attribute → flash
+    }
+
+    /** MainActivity forwards the CAMERA grant here: the surface is already live,
+     *  so open() must be re-triggered by hand — no further layout pass will do it. */
+    public void onCameraGranted() {
+        if (scanner != null) scanner.retryOpen();
+    }
+
     private static final class VideoSync implements Runnable {
         private final Tina4View v;
         VideoSync(Tina4View v) { this.v = v; }
-        public void run() { v.syncVideos(); }
+        public void run() { v.syncVideos(); v.syncScanner(); }
     }
 
     // apply the <video> attributes once the media is prepared

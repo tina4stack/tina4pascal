@@ -39,6 +39,8 @@ void tina4_embed_rect(int index, float *x, float *y, float *w, float *h);
 int  tina4_embed_src(int index, char *buf, int cap);   // fills buf, returns length
 int  tina4_embed_flags(int index);                     // 1 controls·2 autoplay·4 loop·8 muted
 int  tina4_embed_poster(int index, char *buf, int cap);// poster URL ('' if none)
-int  tina4_embed_kind(int index);                      // 0 = video · 1 = audio
+int  tina4_embed_kind(int index);                      // 0 = video · 1 = audio · 2 = barcode-scanner
+int  tina4_embed_formats(int index, char *buf, int cap);// scanner symbologies ("qr,ean13,code128")
+int  tina4_scan_result(int index, char *value, char *format); // report a decode → fires onscan
 
 #endif
