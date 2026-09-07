@@ -237,6 +237,38 @@ type
     function IntersectObject(root: TObject3D; recursive: Boolean = True): TIntersection;
   end;
 
+  { ---- keyframe animation (three.AnimationClip / KeyframeTrack / AnimationMixer) ---- }
+  TTrackTarget = (ttPosition, ttRotation, ttScale);   // which Object3D vector the track drives
+
+  TKeyframeTrack = class
+    ObjName: string;                                  // target object by name
+    Target: TTrackTarget;
+    Times: array of Single;
+    Values: array of TV3;
+    constructor Create(const aobjName: string; atarget: TTrackTarget);
+    procedure AddKey(t: Single; const v: TV3);
+    function Sample(t: Single): TV3;                  // linear interpolation, clamped
+  end;
+
+  TAnimationClip = class
+    Name: string;
+    Duration: Single;
+    Tracks: TList;                                    // of TKeyframeTrack
+    constructor Create(const aname: string; aduration: Single);
+    function AddTrack(tr: TKeyframeTrack): TKeyframeTrack;
+  end;
+
+  TAnimationMixer = class
+    Root: TObject3D;
+    Clip: TAnimationClip;                             // v0.5: one active clip
+    Time: Single;
+    Loop: Boolean;
+    constructor Create(aroot: TObject3D);
+    procedure Play(aclip: TAnimationClip);            // three: clipAction(clip).play()
+    procedure Apply;                                  // sample tracks at Time → objects
+    procedure Update(dt: Single);                     // advance Time (loop) + Apply
+  end;
+
   TWebGLRenderer = class
   private
     FW, FH: Integer;
@@ -816,6 +848,83 @@ begin
   best.Hit:=False; best.Distance:=1e30; best.Obj:=nil; best.Point:=V3(0,0,0);
   Test(root);
   Result:=best;
+end;
+
+{ ============================ animation ============================ }
+
+constructor TKeyframeTrack.Create(const aobjName: string; atarget: TTrackTarget);
+begin ObjName:=aobjName; Target:=atarget; end;
+
+procedure TKeyframeTrack.AddKey(t: Single; const v: TV3);
+var i: Integer;
+begin
+  i:=System.Length(Times); SetLength(Times,i+1); SetLength(Values,i+1);
+  Times[i]:=t; Values[i]:=v;
+end;
+
+function TKeyframeTrack.Sample(t: Single): TV3;
+var n, i: Integer; f: Single;
+begin
+  n:=System.Length(Times);
+  if n=0 then begin Result:=V3(0,0,0); Exit; end;
+  if t<=Times[0] then begin Result:=Values[0]; Exit; end;
+  if t>=Times[n-1] then begin Result:=Values[n-1]; Exit; end;
+  for i:=0 to n-2 do
+    if (t>=Times[i]) and (t<=Times[i+1]) then
+    begin
+      f:=(t-Times[i])/(Times[i+1]-Times[i]);
+      Result:=V3(Values[i].x+(Values[i+1].x-Values[i].x)*f,
+                 Values[i].y+(Values[i+1].y-Values[i].y)*f,
+                 Values[i].z+(Values[i+1].z-Values[i].z)*f);
+      Exit;
+    end;
+  Result:=Values[n-1];
+end;
+
+constructor TAnimationClip.Create(const aname: string; aduration: Single);
+begin Name:=aname; Duration:=aduration; Tracks:=TList.Create; end;
+function TAnimationClip.AddTrack(tr: TKeyframeTrack): TKeyframeTrack;
+begin Tracks.Add(tr); Result:=tr; end;
+
+function FindObjByName(o: TObject3D; const n: string): TObject3D;
+var k: Integer;
+begin
+  Result:=nil;
+  if o=nil then Exit;
+  if o.Name=n then Exit(o);
+  for k:=0 to o.Children.Count-1 do
+  begin Result:=FindObjByName(TObject3D(o.Children[k]), n); if Result<>nil then Exit; end;
+end;
+
+constructor TAnimationMixer.Create(aroot: TObject3D);
+begin Root:=aroot; Clip:=nil; Time:=0; Loop:=True; end;
+procedure TAnimationMixer.Play(aclip: TAnimationClip);
+begin Clip:=aclip; Time:=0; end;
+
+procedure TAnimationMixer.Apply;
+var i: Integer; tr: TKeyframeTrack; obj: TObject3D; v: TV3;
+begin
+  if Clip=nil then Exit;
+  for i:=0 to Clip.Tracks.Count-1 do
+  begin
+    tr:=TKeyframeTrack(Clip.Tracks[i]);
+    obj:=FindObjByName(Root, tr.ObjName);
+    if obj=nil then Continue;
+    v:=tr.Sample(Time);
+    case tr.Target of
+      ttPosition: obj.Position.SetXYZ(v.x, v.y, v.z);
+      ttRotation: obj.Rotation.SetXYZ(v.x, v.y, v.z);
+      ttScale:    obj.Scale.SetXYZ(v.x, v.y, v.z);
+    end;
+  end;
+end;
+
+procedure TAnimationMixer.Update(dt: Single);
+begin
+  Time:=Time+dt;
+  if Loop and (Clip<>nil) and (Clip.Duration>0) then
+    while Time>Clip.Duration do Time:=Time-Clip.Duration;
+  Apply;
 end;
 
 { ============================ software renderer ============================ }
