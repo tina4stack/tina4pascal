@@ -314,6 +314,17 @@ asset ships a `.sha256`. The macOS build is GPG-signed rather than Apple-notariz
 so a browser download may be quarantined — verify it, then
 `xattr -dr com.apple.quarantine <binary>` to clear the Gatekeeper flag.
 
+### v1.0.3
+
+- **macOS notarization** — `release-macos.sh` now Developer-ID-codesigns (hardened
+  runtime) and notarizes the macOS binary when a notary credential is configured,
+  so downloads open without a Gatekeeper warning.
+- **Windows clean-box installer hardened** — the FPC auto-install validates the
+  download is a real installer (browser UA, direct mirror, PE-header + size check)
+  before running it, instead of ever executing a corrupt/partial file.
+- **CI** — the Windows job installs FPC reliably (no longer gated on SourceForge
+  rate-limiting CI runners); Linux/macOS/Windows all green.
+
 ### v1.0.2
 
 - **Bundled fonts on every platform** — drop `.ttf` files in a project's `fonts/`
