@@ -145,6 +145,15 @@ type
   TConeGeometry = class(TCylinderGeometry)
     constructor Create(radius: Single = 1; height: Single = 1; radialSeg: Integer = 16);
   end;
+  TCircleGeometry = class(TBufferGeometry)                 // XY plane, +Z normal
+    constructor Create(radius: Single = 1; segments: Integer = 24);
+  end;
+  TRingGeometry = class(TBufferGeometry)
+    constructor Create(innerR: Single = 0.5; outerR: Single = 1; segments: Integer = 24);
+  end;
+  TTorusGeometry = class(TBufferGeometry)
+    constructor Create(radius: Single = 1; tube: Single = 0.4; ringSeg: Integer = 16; tubeSeg: Integer = 24);
+  end;
 
   { line geometry: a flat list of vertices (LineSegments = pairs; Line = strip) }
   TLineGeometry = class
@@ -153,9 +162,12 @@ type
     procedure PushV(const p: TV3);
   end;
 
+  TMaterialSide = (msFront, msBack, msDouble);             // three.Material.side
+
   TMaterial = class
     Color: TColor;
     Map: TTexture;                                         // nil = untextured
+    Side: TMaterialSide;                                   // default double (no cull)
     Wireframe: Boolean;
     Opacity: Single;
     constructor Create(acolor: LongWord = $ffffff);
@@ -283,6 +295,10 @@ type
     constructor Create(width, height: Integer);
     procedure SetSize(width, height: Integer);
     procedure Render(scene: TScene; camera: TCamera);
+    { 2D overlay pass — draw the HUD on top of the 3D (the HTML layer's role) }
+    procedure FillRectPx(x, y, w, h: Integer; r, g, b: Byte; a: Single);
+    procedure StrokeRectPx(x, y, w, h, t: Integer; r, g, b: Byte; a: Single);
+    procedure DrawTextPx(x, y: Integer; const s: string; scale: Integer; r, g, b: Byte);
     procedure SaveBMP(const fn: string);
     property Width: Integer read FW;
     property Height: Integer read FH;
@@ -754,6 +770,50 @@ end;
 constructor TConeGeometry.Create(radius, height: Single; radialSeg: Integer);
 begin inherited Create(0, radius, height, radialSeg); end;
 
+constructor TCircleGeometry.Create(radius: Single; segments: Integer);
+var i: Integer; a0, a1: Single; n: TV3;
+begin
+  inherited Create; n:=V3(0,0,1);
+  for i:=0 to segments-1 do
+  begin
+    a0:=(i/segments)*2*Pi; a1:=((i+1)/segments)*2*Pi;
+    PushTriN(V3(0,0,0), V3(radius*Cos(a0),radius*Sin(a0),0), V3(radius*Cos(a1),radius*Sin(a1),0), n,n,n);
+    PushUV(MkUV(0.5,0.5), MkUV(0.5+0.5*Cos(a0),0.5-0.5*Sin(a0)), MkUV(0.5+0.5*Cos(a1),0.5-0.5*Sin(a1)));
+  end;
+end;
+
+constructor TRingGeometry.Create(innerR, outerR: Single; segments: Integer);
+var i: Integer; a0, a1: Single; n, i0, i1, o0, o1: TV3;
+begin
+  inherited Create; n:=V3(0,0,1);
+  for i:=0 to segments-1 do
+  begin
+    a0:=(i/segments)*2*Pi; a1:=((i+1)/segments)*2*Pi;
+    i0:=V3(innerR*Cos(a0),innerR*Sin(a0),0); i1:=V3(innerR*Cos(a1),innerR*Sin(a1),0);
+    o0:=V3(outerR*Cos(a0),outerR*Sin(a0),0); o1:=V3(outerR*Cos(a1),outerR*Sin(a1),0);
+    PushTriN(i0,o0,o1, n,n,n); PushUV(MkUV(0,0),MkUV(1,0),MkUV(1,1));
+    PushTriN(i0,o1,i1, n,n,n); PushUV(MkUV(0,0),MkUV(1,1),MkUV(0,1));
+  end;
+end;
+
+constructor TTorusGeometry.Create(radius, tube: Single; ringSeg, tubeSeg: Integer);
+var i, j: Integer; u0, u1, v0, v1: Single;
+  function TP(u, v: Single): TV3;
+  begin Result:=V3((radius+tube*Cos(v))*Cos(u), (radius+tube*Cos(v))*Sin(u), tube*Sin(v)); end;
+  function TN(u, v: Single): TV3;
+  begin Result:=VNorm(V3(Cos(v)*Cos(u), Cos(v)*Sin(u), Sin(v))); end;
+begin
+  inherited Create;
+  for i:=0 to ringSeg-1 do
+    for j:=0 to tubeSeg-1 do
+    begin
+      u0:=(i/ringSeg)*2*Pi; u1:=((i+1)/ringSeg)*2*Pi;
+      v0:=(j/tubeSeg)*2*Pi; v1:=((j+1)/tubeSeg)*2*Pi;
+      PushTriN(TP(u0,v0),TP(u1,v0),TP(u1,v1), TN(u0,v0),TN(u1,v0),TN(u1,v1));
+      PushTriN(TP(u0,v0),TP(u1,v1),TP(u0,v1), TN(u0,v0),TN(u1,v1),TN(u0,v1));
+    end;
+end;
+
 procedure TLineGeometry.Push(x, y, z: Single);
 var i: Integer; begin i:=System.Length(Pos); SetLength(Pos,i+1); Pos[i]:=V3(x,y,z); end;
 procedure TLineGeometry.PushV(const p: TV3);
@@ -762,7 +822,7 @@ var i: Integer; begin i:=System.Length(Pos); SetLength(Pos,i+1); Pos[i]:=p; end;
 { ============================ materials / objects / lights ============================ }
 
 constructor TMaterial.Create(acolor: LongWord);
-begin Color:=TColor.Create(acolor); Map:=nil; Wireframe:=False; Opacity:=1; end;
+begin Color:=TColor.Create(acolor); Map:=nil; Side:=msDouble; Wireframe:=False; Opacity:=1; end;
 constructor TMeshPhongMaterial.Create(acolor: LongWord);
 begin inherited Create(acolor); Shininess:=30; end;
 constructor TLineBasicMaterial.Create(acolor: LongWord);
@@ -925,6 +985,44 @@ begin
   if Loop and (Clip<>nil) and (Clip.Duration>0) then
     while Time>Clip.Duration do Time:=Time-Clip.Duration;
   Apply;
+end;
+
+{ ============================ near-plane clipping ============================ }
+
+type
+  TV4C = record x, y, z, w: Single; end;                  // homogeneous clip coord
+  TClipV = record c: TV4C; col: TV3; uv: TV2; end;        // + interpolated payload
+
+function Mat4Mul4(const m: TMat4; const p: TV3): TV4C;    // NO perspective divide
+begin
+  Result.x:=m.m[0]*p.x+m.m[4]*p.y+m.m[8]*p.z+m.m[12];
+  Result.y:=m.m[1]*p.x+m.m[5]*p.y+m.m[9]*p.z+m.m[13];
+  Result.z:=m.m[2]*p.x+m.m[6]*p.y+m.m[10]*p.z+m.m[14];
+  Result.w:=m.m[3]*p.x+m.m[7]*p.y+m.m[11]*p.z+m.m[15];
+end;
+
+function LerpClipV(const a, b: TClipV; t: Single): TClipV;
+begin
+  Result.c.x:=a.c.x+(b.c.x-a.c.x)*t; Result.c.y:=a.c.y+(b.c.y-a.c.y)*t;
+  Result.c.z:=a.c.z+(b.c.z-a.c.z)*t; Result.c.w:=a.c.w+(b.c.w-a.c.w)*t;
+  Result.col:=V3(a.col.x+(b.col.x-a.col.x)*t, a.col.y+(b.col.y-a.col.y)*t, a.col.z+(b.col.z-a.col.z)*t);
+  Result.uv.u:=a.uv.u+(b.uv.u-a.uv.u)*t; Result.uv.v:=a.uv.v+(b.uv.v-a.uv.v)*t;
+end;
+
+{ Sutherland–Hodgman against the near plane (z + w >= 0); 3 in, up to 4 out }
+procedure ClipNear(const inv: array of TClipV; out outv: array of TClipV; out outc: Integer);
+var i: Integer; cur, nxt: TClipV; dcur, dnxt, t: Single; insC, insN: Boolean;
+begin
+  outc:=0;
+  for i:=0 to 2 do
+  begin
+    cur:=inv[i]; nxt:=inv[(i+1) mod 3];
+    dcur:=cur.c.z+cur.c.w; dnxt:=nxt.c.z+nxt.c.w;
+    insC:=dcur>=0; insN:=dnxt>=0;
+    if insC then begin outv[outc]:=cur; Inc(outc); end;
+    if insC<>insN then
+    begin t:=dcur/(dcur-dnxt); outv[outc]:=LerpClipV(cur,nxt,t); Inc(outc); end;
+  end;
 end;
 
 { ============================ software renderer ============================ }
@@ -1109,9 +1207,16 @@ var
     function ToScreen(const clip: TV3): TV3;
     begin Result:=V3((clip.x*0.5+0.5)*FW, (1-(clip.y*0.5+0.5))*FH, clip.z); end;
     { shade + rasterize one geometry under a world transform (Mesh & InstancedMesh) }
+    function ToScreen4(const c: TV4C): TV3;
+    var iw: Single;
+    begin
+      if Abs(c.w)<1e-9 then iw:=1e9 else iw:=1/c.w;
+      Result:=V3((c.x*iw*0.5+0.5)*FW, (1-(c.y*iw*0.5+0.5))*FH, c.z*iw);
+    end;
     procedure EmitMesh(g: TBufferGeometry; mat: TMaterial; const world: TMat4);
-    var tri, j: Integer; ub, textured: Boolean; bcol: TColor; m: TMat4; lw: TV3;
-        wpp, wnn, spp, coll, litm: array[0..2] of TV3;
+    var tri, j, kf, nout: Integer; ub, textured: Boolean; bcol: TColor; m: TMat4; lw: TV3;
+        wpp, wnn: array[0..2] of TV3; inTri: array[0..2] of TClipV; outPoly: array[0..7] of TClipV;
+        geoN, centr: TV3; facing: Single; sa, sb, sc: TV3; va, vb, vc: TClipV;
     begin
       if (g=nil) or (mat=nil) then Exit;
       if GWhite=nil then GWhite:=TColor.Create($ffffff);
@@ -1124,20 +1229,37 @@ var
         begin
           wpp[j]:=Mat4TransformPoint(world, g.Pos[tri+j]);
           wnn[j]:=VNorm(Mat4TransformDir(world, g.Normals[tri+j]));
-          spp[j]:=ToScreen(Mat4TransformPoint(m, g.Pos[tri+j]));
+        end;
+        { backface cull (opt-in via material.Side; default double = no cull) }
+        if mat.Side<>msDouble then
+        begin
+          geoN:=VCross(VSub(wpp[1],wpp[0]), VSub(wpp[2],wpp[0]));
+          centr:=VScale(VAdd(VAdd(wpp[0],wpp[1]),wpp[2]), 1/3);
+          facing:=VDot(geoN, VSub(centr, camPos));
+          if (mat.Side=msFront) and (facing>0) then begin tri:=tri+3; Continue; end;
+          if (mat.Side=msBack)  and (facing<0) then begin tri:=tri+3; Continue; end;
+        end;
+        { build clip-space verts + payload }
+        for j:=0 to 2 do
+        begin
+          inTri[j].c:=Mat4Mul4(m, g.Pos[tri+j]);
           if textured then
           begin
-            lw:=ShadeVertex(wpp[j], wnn[j], GWhite, ub);    // lighting term (white base)
-            litm[j]:=V3(lw.x*bcol.r, lw.y*bcol.g, lw.z*bcol.b);
+            lw:=ShadeVertex(wpp[j], wnn[j], GWhite, ub);
+            inTri[j].col:=V3(lw.x*bcol.r, lw.y*bcol.g, lw.z*bcol.b);
+            inTri[j].uv:=g.UV[tri+j];
           end
-          else
-            coll[j]:=ShadeVertex(wpp[j], wnn[j], bcol, ub);
+          else begin inTri[j].col:=ShadeVertex(wpp[j], wnn[j], bcol, ub); inTri[j].uv:=MkUV(0,0); end;
         end;
-        if textured then
-          RasterTriTex(spp[0],spp[1],spp[2], g.UV[tri],g.UV[tri+1],g.UV[tri+2],
-                       litm[0],litm[1],litm[2], mat.Map)
-        else
-          RasterTri(spp[0],spp[1],spp[2], coll[0],coll[1],coll[2]);
+        ClipNear(inTri, outPoly, nout);
+        { fan-triangulate the clipped polygon }
+        for kf:=1 to nout-2 do
+        begin
+          va:=outPoly[0]; vb:=outPoly[kf]; vc:=outPoly[kf+1];
+          sa:=ToScreen4(va.c); sb:=ToScreen4(vb.c); sc:=ToScreen4(vc.c);
+          if textured then RasterTriTex(sa,sb,sc, va.uv,vb.uv,vc.uv, va.col,vb.col,vc.col, mat.Map)
+          else RasterTri(sa,sb,sc, va.col,vb.col,vc.col);
+        end;
         tri:=tri+3;
       end;
     end;
@@ -1241,6 +1363,51 @@ begin
   SetLength(plpos,0); SetLength(plcol,0); SetLength(plrange,0);
   CollectLights(scene);
   RenderObject(scene);
+end;
+
+procedure TWebGLRenderer.FillRectPx(x, y, w, h: Integer; r, g, b: Byte; a: Single);
+var px, py, idx: Integer;
+begin
+  for py:=y to y+h-1 do
+    for px:=x to x+w-1 do
+    begin
+      if (px<0) or (py<0) or (px>=FW) or (py>=FH) then Continue;
+      idx:=(py*FW+px)*4;
+      Pixels[idx+0]:=ClampB((r*a + Pixels[idx+0]*(1-a))/255);
+      Pixels[idx+1]:=ClampB((g*a + Pixels[idx+1]*(1-a))/255);
+      Pixels[idx+2]:=ClampB((b*a + Pixels[idx+2]*(1-a))/255);
+      Pixels[idx+3]:=255;
+    end;
+end;
+
+procedure TWebGLRenderer.StrokeRectPx(x, y, w, h, t: Integer; r, g, b: Byte; a: Single);
+begin
+  FillRectPx(x, y, w, t, r,g,b,a); FillRectPx(x, y+h-t, w, t, r,g,b,a);
+  FillRectPx(x, y, t, h, r,g,b,a); FillRectPx(x+w-t, y, t, h, r,g,b,a);
+end;
+
+procedure TWebGLRenderer.DrawTextPx(x, y: Integer; const s: string; scale: Integer; r, g, b: Byte);
+var i, gi, rr, cc, sx, sy, cx, px, py, idx: Integer; ch: Char; rowstr: string;
+begin
+  cx:=x;
+  for i:=1 to System.Length(s) do
+  begin
+    ch:=UpCase(s[i]); gi:=GlyphIndex(ch);
+    if gi>=0 then
+      for rr:=0 to 6 do
+      begin
+        rowstr:=GLYPHS[gi].rows[rr];
+        for cc:=0 to 4 do
+          if rowstr[cc+1]='1' then
+            for sy:=0 to scale-1 do for sx:=0 to scale-1 do
+            begin
+              px:=cx+cc*scale+sx; py:=y+rr*scale+sy;
+              if (px<0) or (py<0) or (px>=FW) or (py>=FH) then Continue;
+              idx:=(py*FW+px)*4; Pixels[idx]:=r; Pixels[idx+1]:=g; Pixels[idx+2]:=b; Pixels[idx+3]:=255;
+            end;
+      end;
+    cx:=cx+6*scale;
+  end;
 end;
 
 procedure TWebGLRenderer.SaveBMP(const fn: string);
