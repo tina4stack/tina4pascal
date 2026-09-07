@@ -174,6 +174,17 @@ type
     constructor Create(ageometry: TBufferGeometry; amaterial: TMaterial);
   end;
 
+  { one geometry drawn many times with per-instance transforms (three.InstancedMesh) }
+  TInstancedMesh = class(TObject3D)
+    Geometry: TBufferGeometry;
+    Material: TMaterial;
+    Count: Integer;
+    Matrices: array of TMat4;
+    constructor Create(ageometry: TBufferGeometry; amaterial: TMaterial; acount: Integer);
+    procedure SetMatrixAt(i: Integer; const m: TMat4);
+    procedure SetInstance(i: Integer; const pos, rotEuler, scl: TV3);
+  end;
+
   TLine = class(TObject3D)                                 // connected polyline
     Geometry: TLineGeometry;
     Material: TLineBasicMaterial;
@@ -707,6 +718,18 @@ begin inherited Create(acolor); LineWidth:=1; end;
 
 constructor TMesh.Create(ageometry: TBufferGeometry; amaterial: TMaterial);
 begin inherited Create; Geometry:=ageometry; Material:=amaterial; end;
+
+constructor TInstancedMesh.Create(ageometry: TBufferGeometry; amaterial: TMaterial; acount: Integer);
+var i: Integer;
+begin
+  inherited Create; Geometry:=ageometry; Material:=amaterial; Count:=acount;
+  SetLength(Matrices, acount);
+  for i:=0 to acount-1 do Matrices[i]:=Mat4Identity;
+end;
+procedure TInstancedMesh.SetMatrixAt(i: Integer; const m: TMat4);
+begin if (i>=0) and (i<Count) then Matrices[i]:=m; end;
+procedure TInstancedMesh.SetInstance(i: Integer; const pos, rotEuler, scl: TV3);
+begin if (i>=0) and (i<Count) then Matrices[i]:=Mat4Compose(pos, rotEuler, scl); end;
 constructor TLine.Create(ageometry: TLineGeometry; amaterial: TLineBasicMaterial);
 begin inherited Create; Geometry:=ageometry; Material:=amaterial; end;
 
@@ -908,38 +931,47 @@ var
   end;
 
   procedure RenderObject(o: TObject3D);
-  var k, tri: Integer; mesh: TMesh; ln: TLine; g: TBufferGeometry; lg: TLineGeometry;
-      worldM, mvp: TMat4; base: TColor; unlit: Boolean;
-      wp: array[0..2] of TV3; wn: array[0..2] of TV3; sp: array[0..2] of TV3; col: array[0..2] of TV3;
+  var k, ii: Integer; mesh: TMesh; im: TInstancedMesh; ln: TLine; lg: TLineGeometry;
+      worldM, mvp: TMat4; base: TColor;
       lc: TV3; a, bb: TV3;
       spr: TSprite; sm: TSpriteMaterial; stex: TTexture;
       wc, vpos, clip: TV3; cxf, cyf, depth, sw, pxu, pyu, hw, hh, uu, vv: Single;
       ix0, iy0, ix1, iy1, xx, yy, txx, tyy, di, ti: Integer; sr, sg, sb, sat: Single;
     function ToScreen(const clip: TV3): TV3;
     begin Result:=V3((clip.x*0.5+0.5)*FW, (1-(clip.y*0.5+0.5))*FH, clip.z); end;
+    { shade + rasterize one geometry under a world transform (Mesh & InstancedMesh) }
+    procedure EmitMesh(g: TBufferGeometry; mat: TMaterial; const world: TMat4);
+    var tri, j: Integer; ub: Boolean; bcol: TColor; m: TMat4;
+        wpp, wnn, spp, coll: array[0..2] of TV3;
+    begin
+      if (g=nil) or (mat=nil) then Exit;
+      bcol:=mat.Color; ub:=mat is TMeshBasicMaterial; m:=Mat4Multiply(vp, world);
+      tri:=0;
+      while tri+2<System.Length(g.Pos) do
+      begin
+        for j:=0 to 2 do
+        begin
+          wpp[j]:=Mat4TransformPoint(world, g.Pos[tri+j]);
+          wnn[j]:=VNorm(Mat4TransformDir(world, g.Normals[tri+j]));
+          coll[j]:=ShadeVertex(wpp[j], wnn[j], bcol, ub);
+          spp[j]:=ToScreen(Mat4TransformPoint(m, g.Pos[tri+j]));
+        end;
+        RasterTri(spp[0],spp[1],spp[2], coll[0],coll[1],coll[2]);
+        tri:=tri+3;
+      end;
+    end;
   begin
     if not o.Visible then Exit;
     worldM:=o.WorldMatrix; mvp:=Mat4Multiply(vp, worldM);
     if o is TMesh then
     begin
-      mesh:=TMesh(o); g:=mesh.Geometry;
-      if (g<>nil) and (mesh.Material<>nil) then
-      begin
-        base:=mesh.Material.Color; unlit:=mesh.Material is TMeshBasicMaterial;
-        tri:=0;
-        while tri+2<System.Length(g.Pos) do
-        begin
-          for k:=0 to 2 do
-          begin
-            wp[k]:=Mat4TransformPoint(worldM, g.Pos[tri+k]);
-            wn[k]:=VNorm(Mat4TransformDir(worldM, g.Normals[tri+k]));
-            col[k]:=ShadeVertex(wp[k], wn[k], base, unlit);
-            sp[k]:=ToScreen(Mat4TransformPoint(mvp, g.Pos[tri+k]));
-          end;
-          RasterTri(sp[0],sp[1],sp[2], col[0],col[1],col[2]);
-          tri:=tri+3;
-        end;
-      end;
+      mesh:=TMesh(o); EmitMesh(mesh.Geometry, mesh.Material, worldM);
+    end
+    else if o is TInstancedMesh then
+    begin
+      im:=TInstancedMesh(o);
+      for ii:=0 to im.Count-1 do
+        EmitMesh(im.Geometry, im.Material, Mat4Multiply(worldM, im.Matrices[ii]));
     end
     else if o is TLine then
     begin
