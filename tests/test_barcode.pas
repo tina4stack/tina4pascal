@@ -11,7 +11,7 @@ program test_barcode;
 
 {$mode delphi}{$H+}
 
-uses SysUtils, Tina4QR, Tina4Barcode;
+uses SysUtils, FPImage, FPWritePNG, Tina4QR, Tina4Barcode;
 
 var failed: Integer = 0;
 
@@ -42,6 +42,29 @@ begin
     end;
 end;
 
+{ Write a grayscale buffer to a PNG and decode the barcode back from the file. }
+procedure ScanFileRoundTrip(const Gray: TBytes; W, H: Integer; const Expect: string);
+var img: TFPMemoryImage; x, y: Integer; g: Word; c: TFPColor; fn, v, f: string;
+begin
+  img := TFPMemoryImage.Create(W, H);
+  try
+    for y := 0 to H - 1 do
+      for x := 0 to W - 1 do
+      begin
+        g := Word(Gray[y * W + x]) shl 8;                 // 8 → 16-bit channel
+        c.red := g; c.green := g; c.blue := g; c.alpha := $FFFF;
+        img.Colors[x, y] := c;
+      end;
+    fn := IncludeTrailingPathDelimiter(GetTempDir) + 'tina4_qr_roundtrip.png';
+    img.SaveToFile(fn);                                    // FPWritePNG (by extension)
+    Check(Tina4ScanImageFile(fn, v, f), 'decoded a barcode from the PNG file');
+    Check(v = Expect, 'file-decoded value matches the payload');
+    DeleteFile(fn);
+  finally
+    img.Free;
+  end;
+end;
+
 var
   m: TQRMatrix; gray: TBytes; w, h: Integer;
   value, fmt, payload: string;
@@ -64,6 +87,9 @@ begin
   WriteLn('  decoded: "', value, '"  format=', fmt);
   Check(value = payload, 'decoded value matches the exact payload');
   Check(Pos('QR', fmt) > 0, 'symbology reported as QR');
+
+  WriteLn('scan from an image FILE (Tina4ScanImageFile)');
+  ScanFileRoundTrip(gray, w, h, payload);
 
   WriteLn;
   if failed = 0 then begin WriteLn('ALL TESTS PASS'); Halt(0); end

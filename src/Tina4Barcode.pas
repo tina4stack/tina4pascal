@@ -24,9 +24,14 @@ function Tina4BarcodeAvailable: Boolean;
 function Tina4DecodeBarcode(Gray: PByte; W, H: Integer;
   out Value, Format: string): Boolean;
 
+{ Decode the first barcode in an image FILE (PNG/JPEG/BMP), grayscaling it first.
+  The desktop camera loop does the same per captured frame; this also lets a
+  barcode be read from a file or screenshot. }
+function Tina4ScanImageFile(const Path: string; out Value, Format: string): Boolean;
+
 implementation
 
-uses SysUtils, dynlibs, ctypes;
+uses SysUtils, dynlibs, ctypes, FPImage, FPReadPNG, FPReadJPEG, FPReadBMP;
 
 type
   Tp_v      = function: Pointer; cdecl;
@@ -142,6 +147,33 @@ begin
     zImageDestroy(img);
   finally
     zScannerDestroy(scanner);
+  end;
+end;
+
+function Tina4ScanImageFile(const Path: string; out Value, Format: string): Boolean;
+var
+  img: TFPMemoryImage; gray: TBytes; x, y, w, h: Integer; c: TFPColor;
+begin
+  Result := False; Value := ''; Format := '';
+  if not EnsureZbar then Exit;
+  if not FileExists(Path) then Exit;
+  img := TFPMemoryImage.Create(0, 0);
+  try
+    try img.LoadFromFile(Path);            // reader picked from the file's content
+    except Exit; end;
+    w := img.Width; h := img.Height;
+    if (w <= 0) or (h <= 0) then Exit;
+    SetLength(gray, w * h);
+    for y := 0 to h - 1 do
+      for x := 0 to w - 1 do
+      begin
+        c := img.Colors[x, y];             // 16-bit channels → Rec.601 luma → 8-bit
+        gray[y * w + x] := Byte((299 * (c.red shr 8) + 587 * (c.green shr 8)
+                                 + 114 * (c.blue shr 8)) div 1000);
+      end;
+    Result := Tina4DecodeBarcode(@gray[0], w, h, Value, Format);
+  finally
+    img.Free;
   end;
 end;
 
