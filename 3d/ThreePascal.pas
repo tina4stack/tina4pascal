@@ -44,6 +44,12 @@ type
     function V: TV3;
   end;
 
+  TVector2 = class
+    x, y: Single;
+    constructor Create(ax: Single = 0; ay: Single = 0);
+    function SetXY(ax, ay: Single): TVector2;
+  end;
+
   TColor = class
     r, g, b: Single;                                 // 0..1
     constructor Create(hex: LongWord = $ffffff);
@@ -178,6 +184,20 @@ type
     constructor Create(acolor: LongWord = $ffffff; aintensity: Single = 1; adistance: Single = 0);
   end;
 
+  { ---- picking (three.Raycaster) ---- }
+  TRay = record origin, direction: TV3; end;
+  TIntersection = record
+    Hit: Boolean; Distance: Single; Point: TV3; Obj: TObject3D;
+  end;
+
+  TRaycaster = class
+    Ray: TRay; Near, Far: Single;
+    constructor Create;
+    procedure SetRay(const origin, direction: TV3);
+    procedure SetFromCamera(ndcX, ndcY: Single; camera: TCamera);  // NDC coords in [-1,1]
+    function IntersectObject(root: TObject3D; recursive: Boolean = True): TIntersection;
+  end;
+
   TWebGLRenderer = class
   private
     FW, FH: Integer;
@@ -204,6 +224,7 @@ function Mat4LookAt(const eye, center, up: TV3): TMat4;
 function Mat4Compose(const pos, rotEuler, scl: TV3): TMat4;
 function Mat4TransformPoint(const mat: TMat4; const p: TV3): TV3;
 function Mat4TransformDir(const mat: TMat4; const d: TV3): TV3;
+function Mat4Invert(const a: TMat4): TMat4;
 
 implementation
 
@@ -298,6 +319,48 @@ begin
              mat.m[2]*d.x+mat.m[6]*d.y+mat.m[10]*d.z);
 end;
 
+{ general 4x4 inverse (cofactor method) — for unprojecting screen coords to rays }
+function Mat4Invert(const a: TMat4): TMat4;
+var inv: array[0..15] of Single; det: Single; i: Integer; m: array[0..15] of Single;
+begin
+  for i:=0 to 15 do m[i]:=a.m[i];
+  inv[0]:= m[5]*m[10]*m[15]-m[5]*m[11]*m[14]-m[9]*m[6]*m[15]+m[9]*m[7]*m[14]+m[13]*m[6]*m[11]-m[13]*m[7]*m[10];
+  inv[4]:=-m[4]*m[10]*m[15]+m[4]*m[11]*m[14]+m[8]*m[6]*m[15]-m[8]*m[7]*m[14]-m[12]*m[6]*m[11]+m[12]*m[7]*m[10];
+  inv[8]:= m[4]*m[9]*m[15]-m[4]*m[11]*m[13]-m[8]*m[5]*m[15]+m[8]*m[7]*m[13]+m[12]*m[5]*m[11]-m[12]*m[7]*m[9];
+  inv[12]:=-m[4]*m[9]*m[14]+m[4]*m[10]*m[13]+m[8]*m[5]*m[14]-m[8]*m[6]*m[13]-m[12]*m[5]*m[10]+m[12]*m[6]*m[9];
+  inv[1]:=-m[1]*m[10]*m[15]+m[1]*m[11]*m[14]+m[9]*m[2]*m[15]-m[9]*m[3]*m[14]-m[13]*m[2]*m[11]+m[13]*m[3]*m[10];
+  inv[5]:= m[0]*m[10]*m[15]-m[0]*m[11]*m[14]-m[8]*m[2]*m[15]+m[8]*m[3]*m[14]+m[12]*m[2]*m[11]-m[12]*m[3]*m[10];
+  inv[9]:=-m[0]*m[9]*m[15]+m[0]*m[11]*m[13]+m[8]*m[1]*m[15]-m[8]*m[3]*m[13]-m[12]*m[1]*m[11]+m[12]*m[3]*m[9];
+  inv[13]:= m[0]*m[9]*m[14]-m[0]*m[10]*m[13]-m[8]*m[1]*m[14]+m[8]*m[2]*m[13]+m[12]*m[1]*m[10]-m[12]*m[2]*m[9];
+  inv[2]:= m[1]*m[6]*m[15]-m[1]*m[7]*m[14]-m[5]*m[2]*m[15]+m[5]*m[3]*m[14]+m[13]*m[2]*m[7]-m[13]*m[3]*m[6];
+  inv[6]:=-m[0]*m[6]*m[15]+m[0]*m[7]*m[14]+m[4]*m[2]*m[15]-m[4]*m[3]*m[14]-m[12]*m[2]*m[7]+m[12]*m[3]*m[6];
+  inv[10]:= m[0]*m[5]*m[15]-m[0]*m[7]*m[13]-m[4]*m[1]*m[15]+m[4]*m[3]*m[13]+m[12]*m[1]*m[7]-m[12]*m[3]*m[5];
+  inv[14]:=-m[0]*m[5]*m[14]+m[0]*m[6]*m[13]+m[4]*m[1]*m[14]-m[4]*m[2]*m[13]-m[12]*m[1]*m[6]+m[12]*m[2]*m[5];
+  inv[3]:=-m[1]*m[6]*m[11]+m[1]*m[7]*m[10]+m[5]*m[2]*m[11]-m[5]*m[3]*m[10]-m[9]*m[2]*m[7]+m[9]*m[3]*m[6];
+  inv[7]:= m[0]*m[6]*m[11]-m[0]*m[7]*m[10]-m[4]*m[2]*m[11]+m[4]*m[3]*m[10]+m[8]*m[2]*m[7]-m[8]*m[3]*m[6];
+  inv[11]:=-m[0]*m[5]*m[11]+m[0]*m[7]*m[9]+m[4]*m[1]*m[11]-m[4]*m[3]*m[9]-m[8]*m[1]*m[7]+m[8]*m[3]*m[5];
+  inv[15]:= m[0]*m[5]*m[10]-m[0]*m[6]*m[9]-m[4]*m[1]*m[10]+m[4]*m[2]*m[9]+m[8]*m[1]*m[6]-m[8]*m[2]*m[5];
+  det:=m[0]*inv[0]+m[1]*inv[4]+m[2]*inv[8]+m[3]*inv[12];
+  if Abs(det)<1e-12 then begin Result:=Mat4Identity; Exit; end;
+  det:=1/det;
+  for i:=0 to 15 do Result.m[i]:=inv[i]*det;
+end;
+
+{ Möller–Trumbore: ray o+t·d vs triangle; returns t>eps on hit }
+function RayTri(const o, d, v0, v1, v2: TV3; out t: Single): Boolean;
+var e1, e2, p, q, tv: TV3; det, invDet, u, vp: Single;
+begin
+  Result:=False; t:=0;
+  e1:=VSub(v1,v0); e2:=VSub(v2,v0); p:=VCross(d,e2); det:=VDot(e1,p);
+  if Abs(det)<1e-8 then Exit;                         // parallel
+  invDet:=1/det; tv:=VSub(o,v0); u:=VDot(tv,p)*invDet;
+  if (u<0) or (u>1) then Exit;
+  q:=VCross(tv,e1); vp:=VDot(d,q)*invDet;
+  if (vp<0) or (u+vp>1) then Exit;
+  t:=VDot(e2,q)*invDet;
+  Result:=t>1e-5;
+end;
+
 { ============================ TVector3 / TColor ============================ }
 
 constructor TVector3.Create(ax, ay, az: Single); begin x:=ax; y:=ay; z:=az; end;
@@ -310,6 +373,9 @@ function TVector3.Length: Single; begin Result:=Sqrt(x*x+y*y+z*z); end;
 function TVector3.Normalize: TVector3;
 var l: Single; begin l:=Length; if l<1e-9 then l:=1; x:=x/l; y:=y/l; z:=z/l; Result:=Self; end;
 function TVector3.V: TV3; begin Result:=V3(x,y,z); end;
+
+constructor TVector2.Create(ax, ay: Single); begin x:=ax; y:=ay; end;
+function TVector2.SetXY(ax, ay: Single): TVector2; begin x:=ax; y:=ay; Result:=Self; end;
 
 constructor TColor.Create(hex: LongWord); begin SetHex(hex); end;
 constructor TColor.CreateRGB(ar, ag, ab: Single); begin r:=ar; g:=ag; b:=ab; end;
@@ -504,6 +570,64 @@ constructor TDirectionalLight.Create(acolor: LongWord; aintensity: Single);
 begin inherited Create; Color:=TColor.Create(acolor); Intensity:=aintensity; Position.SetXYZ(1,1,1); end;
 constructor TPointLight.Create(acolor: LongWord; aintensity: Single; adistance: Single);
 begin inherited Create; Color:=TColor.Create(acolor); Intensity:=aintensity; Distance:=adistance; end;
+
+{ ============================ raycaster (picking) ============================ }
+
+constructor TRaycaster.Create;
+begin Near:=0; Far:=1e30; Ray.origin:=V3(0,0,0); Ray.direction:=V3(0,0,-1); end;
+
+procedure TRaycaster.SetRay(const origin, direction: TV3);
+begin Ray.origin:=origin; Ray.direction:=VNorm(direction); end;
+
+procedure TRaycaster.SetFromCamera(ndcX, ndcY: Single; camera: TCamera);
+var vp, inv: TMat4; pNear, pFar: TV3;
+begin
+  vp:=Mat4Multiply(camera.ProjectionMatrix, camera.ViewMatrix);
+  inv:=Mat4Invert(vp);
+  pNear:=Mat4TransformPoint(inv, V3(ndcX, ndcY, -1));   // near plane
+  pFar :=Mat4TransformPoint(inv, V3(ndcX, ndcY,  1));   // far plane
+  Ray.origin:=camera.Position.V;
+  Ray.direction:=VNorm(VSub(pFar, pNear));
+end;
+
+function TRaycaster.IntersectObject(root: TObject3D; recursive: Boolean): TIntersection;
+var best: TIntersection;
+
+  procedure Test(o: TObject3D);
+  var k, tri: Integer; mesh: TMesh; g: TBufferGeometry; wm: TMat4;
+      a, b, c: TV3; t: Single;
+  begin
+    if not o.Visible then Exit;
+    if o is TMesh then
+    begin
+      mesh:=TMesh(o); g:=mesh.Geometry;
+      if g<>nil then
+      begin
+        wm:=o.WorldMatrix; tri:=0;
+        while tri+2<System.Length(g.Pos) do
+        begin
+          a:=Mat4TransformPoint(wm, g.Pos[tri]);
+          b:=Mat4TransformPoint(wm, g.Pos[tri+1]);
+          c:=Mat4TransformPoint(wm, g.Pos[tri+2]);
+          if RayTri(Ray.origin, Ray.direction, a, b, c, t) then
+            if (t>=Near) and (t<=Far) and (t<best.Distance) then
+            begin
+              best.Hit:=True; best.Distance:=t;
+              best.Point:=VAdd(Ray.origin, VScale(Ray.direction, t)); best.Obj:=o;
+            end;
+          tri:=tri+3;
+        end;
+      end;
+    end;
+    if recursive then
+      for k:=0 to o.Children.Count-1 do Test(TObject3D(o.Children[k]));
+  end;
+
+begin
+  best.Hit:=False; best.Distance:=1e30; best.Obj:=nil; best.Point:=V3(0,0,0);
+  Test(root);
+  Result:=best;
+end;
 
 { ============================ software renderer ============================ }
 
