@@ -154,6 +154,9 @@ type
   TTorusGeometry = class(TBufferGeometry)
     constructor Create(radius: Single = 1; tube: Single = 0.4; ringSeg: Integer = 16; tubeSeg: Integer = 24);
   end;
+  TIcosahedronGeometry = class(TBufferGeometry)           // 20 faces, flat-shaded
+    constructor Create(radius: Single = 1; detail: Integer = 0);
+  end;
 
   { line geometry: a flat list of vertices (LineSegments = pairs; Line = strip) }
   TLineGeometry = class
@@ -283,16 +286,19 @@ type
 
   TWebGLRenderer = class
   private
-    FW, FH: Integer;
-    FZ: array of Single;
+    FW, FH: Integer;                                       // output size
+    FSW, FSH, FSS: Integer;                                // supersampled size + factor
+    FWK: array of Byte;                                    // 3D renders here (supersampled)
+    FZ: array of Single;                                   // depth (supersampled)
     procedure PlotDepth(px, py: Integer; z, r, g, b: Single);
     procedure RasterTri(const a, b, c, ca, cb, cc: TV3);   // screen x/y/ndc-z + per-vertex RGB
     procedure RasterTriTex(const a, b, c: TV3; const ta, tb, tc: TV2;
                            const la, lb, lc: TV3; tex: TTexture);   // textured + per-vertex light
     procedure RasterLine(const a, b: TV3; r, g, b2: Single; w: Integer);
+    procedure Downsample;                                  // FWK → Pixels (box filter, AA)
   public
-    Pixels: array of Byte;                                 // RGBA, FW*FH*4
-    constructor Create(width, height: Integer);
+    Pixels: array of Byte;                                 // RGBA output, FW*FH*4
+    constructor Create(width, height: Integer; samples: Integer = 2);
     procedure SetSize(width, height: Integer);
     procedure Render(scene: TScene; camera: TCamera);
     { 2D overlay pass — draw the HUD on top of the 3D (the HTML layer's role) }
@@ -796,6 +802,24 @@ begin
   end;
 end;
 
+constructor TIcosahedronGeometry.Create(radius: Single; detail: Integer);
+const
+  gr = 1.618033988749895;
+  faces: array[0..19,0..2] of Integer =
+    ((0,11,5),(0,5,1),(0,1,7),(0,7,10),(0,10,11),
+     (1,5,9),(5,11,4),(11,10,2),(10,7,6),(7,1,8),
+     (3,9,4),(3,4,2),(3,2,6),(3,6,8),(3,8,9),
+     (4,9,5),(2,4,11),(6,2,10),(8,6,7),(9,8,1));
+var v: array[0..11] of TV3; i: Integer;
+  function NV(x, y, z: Single): TV3; begin Result:=VScale(VNorm(V3(x,y,z)), radius); end;
+begin
+  inherited Create;
+  v[0]:=NV(-1,gr,0); v[1]:=NV(1,gr,0); v[2]:=NV(-1,-gr,0); v[3]:=NV(1,-gr,0);
+  v[4]:=NV(0,-1,gr); v[5]:=NV(0,1,gr); v[6]:=NV(0,-1,-gr); v[7]:=NV(0,1,-gr);
+  v[8]:=NV(gr,0,-1); v[9]:=NV(gr,0,1); v[10]:=NV(-gr,0,-1); v[11]:=NV(-gr,0,1);
+  for i:=0 to 19 do PushTri(v[faces[i,0]], v[faces[i,1]], v[faces[i,2]]);
+end;
+
 constructor TTorusGeometry.Create(radius, tube: Single; ringSeg, tubeSeg: Integer);
 var i, j: Integer; u0, u1, v0, v1: Single;
   function TP(u, v: Single): TV3;
@@ -1027,10 +1051,35 @@ end;
 
 { ============================ software renderer ============================ }
 
-constructor TWebGLRenderer.Create(width, height: Integer);
-begin SetSize(width, height); end;
+constructor TWebGLRenderer.Create(width, height: Integer; samples: Integer);
+begin if samples<1 then samples:=1; if samples>4 then samples:=4; FSS:=samples; SetSize(width, height); end;
 procedure TWebGLRenderer.SetSize(width, height: Integer);
-begin FW:=width; FH:=height; SetLength(Pixels,FW*FH*4); SetLength(FZ,FW*FH); end;
+begin
+  if FSS<1 then FSS:=2;
+  FW:=width; FH:=height; FSW:=FW*FSS; FSH:=FH*FSS;
+  SetLength(Pixels,FW*FH*4); SetLength(FWK,FSW*FSH*4); SetLength(FZ,FSW*FSH);
+end;
+
+{ box-filter the supersampled buffer down into the output — anti-aliasing }
+procedure TWebGLRenderer.Downsample;
+var ox, oy, sx, sy, si, oi, a0, a1, a2, n: Integer;
+begin
+  if FSS<=1 then begin if System.Length(FWK)>0 then Move(FWK[0], Pixels[0], FW*FH*4); Exit; end;
+  n:=FSS*FSS;
+  for oy:=0 to FH-1 do
+    for ox:=0 to FW-1 do
+    begin
+      a0:=0; a1:=0; a2:=0;
+      for sy:=0 to FSS-1 do
+        for sx:=0 to FSS-1 do
+        begin
+          si:=(((oy*FSS+sy)*FSW)+(ox*FSS+sx))*4;
+          Inc(a0, FWK[si+0]); Inc(a1, FWK[si+1]); Inc(a2, FWK[si+2]);
+        end;
+      oi:=(oy*FW+ox)*4;
+      Pixels[oi+0]:=a0 div n; Pixels[oi+1]:=a1 div n; Pixels[oi+2]:=a2 div n; Pixels[oi+3]:=255;
+    end;
+end;
 
 function ClampB(v: Single): Byte;
 begin if v<0 then v:=0; if v>1 then v:=1; Result:=Round(v*255); end;
@@ -1038,12 +1087,12 @@ begin if v<0 then v:=0; if v>1 then v:=1; Result:=Round(v*255); end;
 procedure TWebGLRenderer.PlotDepth(px, py: Integer; z, r, g, b: Single);
 var idx: Integer;
 begin
-  if (px<0) or (py<0) or (px>=FW) or (py>=FH) then Exit;
-  idx:=py*FW+px;
+  if (px<0) or (py<0) or (px>=FSW) or (py>=FSH) then Exit;
+  idx:=py*FSW+px;
   if z<FZ[idx] then
   begin FZ[idx]:=z;
-    Pixels[idx*4+0]:=ClampB(r); Pixels[idx*4+1]:=ClampB(g);
-    Pixels[idx*4+2]:=ClampB(b); Pixels[idx*4+3]:=255;
+    FWK[idx*4+0]:=ClampB(r); FWK[idx*4+1]:=ClampB(g);
+    FWK[idx*4+2]:=ClampB(b); FWK[idx*4+3]:=255;
   end;
 end;
 
@@ -1057,7 +1106,7 @@ begin
   minx:=Trunc(Min(a.x,Min(b.x,c.x))); maxx:=Trunc(Max(a.x,Max(b.x,c.x)))+1;
   miny:=Trunc(Min(a.y,Min(b.y,c.y))); maxy:=Trunc(Max(a.y,Max(b.y,c.y)))+1;
   if minx<0 then minx:=0; if miny<0 then miny:=0;
-  if maxx>FW then maxx:=FW; if maxy>FH then maxy:=FH;
+  if maxx>FSW then maxx:=FSW; if maxy>FSH then maxy:=FSH;
   for py:=miny to maxy-1 do
     for px:=minx to maxx-1 do
     begin
@@ -1066,13 +1115,13 @@ begin
       begin
         w0:=w0/area; w1:=w1/area; w2:=w2/area;
         z:=w0*a.z+w1*b.z+w2*c.z;
-        idx:=py*FW+px;
+        idx:=py*FSW+px;
         if z<FZ[idx] then
         begin FZ[idx]:=z; iw:=1;
-          Pixels[idx*4+0]:=ClampB(w0*ca.x+w1*cb.x+w2*cc.x);
-          Pixels[idx*4+1]:=ClampB(w0*ca.y+w1*cb.y+w2*cc.y);
-          Pixels[idx*4+2]:=ClampB(w0*ca.z+w1*cb.z+w2*cc.z);
-          Pixels[idx*4+3]:=255;
+          FWK[idx*4+0]:=ClampB(w0*ca.x+w1*cb.x+w2*cc.x);
+          FWK[idx*4+1]:=ClampB(w0*ca.y+w1*cb.y+w2*cc.y);
+          FWK[idx*4+2]:=ClampB(w0*ca.z+w1*cb.z+w2*cc.z);
+          FWK[idx*4+3]:=255;
         end;
       end;
     end;
@@ -1091,7 +1140,7 @@ begin
   minx:=Trunc(Min(a.x,Min(b.x,c.x))); maxx:=Trunc(Max(a.x,Max(b.x,c.x)))+1;
   miny:=Trunc(Min(a.y,Min(b.y,c.y))); maxy:=Trunc(Max(a.y,Max(b.y,c.y)))+1;
   if minx<0 then minx:=0; if miny<0 then miny:=0;
-  if maxx>FW then maxx:=FW; if maxy>FH then maxy:=FH;
+  if maxx>FSW then maxx:=FSW; if maxy>FSH then maxy:=FSH;
   for py:=miny to maxy-1 do
     for px:=minx to maxx-1 do
     begin
@@ -1099,7 +1148,7 @@ begin
       if ((w0>=0)and(w1>=0)and(w2>=0)) or ((w0<=0)and(w1<=0)and(w2<=0)) then
       begin
         w0:=w0/area; w1:=w1/area; w2:=w2/area;
-        z:=w0*a.z+w1*b.z+w2*c.z; idx:=py*FW+px;
+        z:=w0*a.z+w1*b.z+w2*c.z; idx:=py*FSW+px;
         if z<FZ[idx] then
         begin
           uu:=w0*ta.u+w1*tb.u+w2*tc.u; vv:=w0*ta.v+w1*tb.v+w2*tc.v;
@@ -1109,10 +1158,10 @@ begin
           ti:=(tyy*tex.Width+txx)*4;
           cr:=w0*la.x+w1*lb.x+w2*lc.x; cg:=w0*la.y+w1*lb.y+w2*lc.y; cbl:=w0*la.z+w1*lb.z+w2*lc.z;
           FZ[idx]:=z;
-          Pixels[idx*4+0]:=ClampB(tex.Data[ti+0]/255*cr);
-          Pixels[idx*4+1]:=ClampB(tex.Data[ti+1]/255*cg);
-          Pixels[idx*4+2]:=ClampB(tex.Data[ti+2]/255*cbl);
-          Pixels[idx*4+3]:=255;
+          FWK[idx*4+0]:=ClampB(tex.Data[ti+0]/255*cr);
+          FWK[idx*4+1]:=ClampB(tex.Data[ti+1]/255*cg);
+          FWK[idx*4+2]:=ClampB(tex.Data[ti+2]/255*cbl);
+          FWK[idx*4+3]:=255;
         end;
       end;
     end;
@@ -1205,13 +1254,13 @@ var
       wc, vpos, clip: TV3; cxf, cyf, depth, sw, pxu, pyu, hw, hh, uu, vv: Single;
       ix0, iy0, ix1, iy1, xx, yy, txx, tyy, di, ti: Integer; sr, sg, sb, sat: Single;
     function ToScreen(const clip: TV3): TV3;
-    begin Result:=V3((clip.x*0.5+0.5)*FW, (1-(clip.y*0.5+0.5))*FH, clip.z); end;
+    begin Result:=V3((clip.x*0.5+0.5)*FSW, (1-(clip.y*0.5+0.5))*FSH, clip.z); end;
     { shade + rasterize one geometry under a world transform (Mesh & InstancedMesh) }
     function ToScreen4(const c: TV4C): TV3;
     var iw: Single;
     begin
       if Abs(c.w)<1e-9 then iw:=1e9 else iw:=1/c.w;
-      Result:=V3((c.x*iw*0.5+0.5)*FW, (1-(c.y*iw*0.5+0.5))*FH, c.z*iw);
+      Result:=V3((c.x*iw*0.5+0.5)*FSW, (1-(c.y*iw*0.5+0.5))*FSH, c.z*iw);
     end;
     procedure EmitMesh(g: TBufferGeometry; mat: TMaterial; const world: TMat4);
     var tri, j, kf, nout: Integer; ub, textured: Boolean; bcol: TColor; m: TMat4; lw: TV3;
@@ -1314,9 +1363,9 @@ var
         if sw>0.05 then
         begin
           clip:=Mat4TransformPoint(vp, wc);
-          cxf:=(clip.x*0.5+0.5)*FW; cyf:=(1-(clip.y*0.5+0.5))*FH; depth:=clip.z;
-          pxu:=camera.ProjectionMatrix.m[0]*FW*0.5/sw;
-          pyu:=camera.ProjectionMatrix.m[5]*FH*0.5/sw;
+          cxf:=(clip.x*0.5+0.5)*FSW; cyf:=(1-(clip.y*0.5+0.5))*FSH; depth:=clip.z;
+          pxu:=camera.ProjectionMatrix.m[0]*FSW*0.5/sw;
+          pyu:=camera.ProjectionMatrix.m[5]*FSH*0.5/sw;
           hw:=spr.Scale.x*0.5*pxu; hh:=spr.Scale.y*0.5*pyu;
           if hw<0.5 then hw:=0.5; if hh<0.5 then hh:=0.5;
           ix0:=Trunc(cxf-hw); ix1:=Trunc(cxf+hw); iy0:=Trunc(cyf-hh); iy1:=Trunc(cyf+hh);
@@ -1324,8 +1373,8 @@ var
           for yy:=iy0 to iy1 do
             for xx:=ix0 to ix1 do
             begin
-              if (xx<0) or (yy<0) or (xx>=FW) or (yy>=FH) then Continue;
-              di:=yy*FW+xx;
+              if (xx<0) or (yy<0) or (xx>=FSW) or (yy>=FSH) then Continue;
+              di:=yy*FSW+xx;
               if depth>=FZ[di] then Continue;              // occluded by geometry
               if stex<>nil then
               begin
@@ -1338,10 +1387,10 @@ var
                 sr:=stex.Data[ti]*sm.Color.r; sg:=stex.Data[ti+1]*sm.Color.g; sb:=stex.Data[ti+2]*sm.Color.b;
               end
               else begin sat:=1; sr:=sm.Color.r*255; sg:=sm.Color.g*255; sb:=sm.Color.b*255; end;
-              Pixels[di*4+0]:=ClampB((sr*sat + Pixels[di*4+0]*(1-sat))/255);
-              Pixels[di*4+1]:=ClampB((sg*sat + Pixels[di*4+1]*(1-sat))/255);
-              Pixels[di*4+2]:=ClampB((sb*sat + Pixels[di*4+2]*(1-sat))/255);
-              Pixels[di*4+3]:=255;
+              FWK[di*4+0]:=ClampB((sr*sat + FWK[di*4+0]*(1-sat))/255);
+              FWK[di*4+1]:=ClampB((sg*sat + FWK[di*4+1]*(1-sat))/255);
+              FWK[di*4+2]:=ClampB((sb*sat + FWK[di*4+2]*(1-sat))/255);
+              FWK[di*4+3]:=255;
               if sat>0.5 then FZ[di]:=depth;
             end;
         end;
@@ -1352,10 +1401,10 @@ var
 
 begin
   bg:=scene.Background;
-  for i:=0 to FW*FH-1 do
+  for i:=0 to FSW*FSH-1 do
   begin
-    Pixels[i*4+0]:=ClampB(bg.r); Pixels[i*4+1]:=ClampB(bg.g);
-    Pixels[i*4+2]:=ClampB(bg.b); Pixels[i*4+3]:=255; FZ[i]:=1e30;
+    FWK[i*4+0]:=ClampB(bg.r); FWK[i*4+1]:=ClampB(bg.g);
+    FWK[i*4+2]:=ClampB(bg.b); FWK[i*4+3]:=255; FZ[i]:=1e30;
   end;
   vp:=Mat4Multiply(camera.ProjectionMatrix, camera.ViewMatrix);
   camPos:=camera.Position.V;
@@ -1363,6 +1412,7 @@ begin
   SetLength(plpos,0); SetLength(plcol,0); SetLength(plrange,0);
   CollectLights(scene);
   RenderObject(scene);
+  Downsample;                                    // resolve supersampled → Pixels (AA)
 end;
 
 procedure TWebGLRenderer.FillRectPx(x, y, w, h: Integer; r, g, b: Byte; a: Single);
