@@ -46,7 +46,22 @@ implementation
 uses CocoaAll, SysUtils, Math, MacBlit;
 
 {$linkframework CoreGraphics}
+{$linkframework QuartzCore}
 function CGAssociateMouseAndMouseCursorPosition(connected: LongInt): LongInt; cdecl; external;
+
+{ CADisplayLink (macOS 14+) isn't in FPC's CocoaAll — bind the bits we need.
+  preferredFrameRateRange is what actually REQUESTS 120 Hz on a ProMotion panel
+  (a CVDisplayLink only follows the current, adaptive refresh, so it stays 60). }
+type
+  CAFrameRateRange = record minimum, maximum, preferred: single; end;
+  CADisplayLink = objcclass external (NSObject)
+    procedure addToRunLoop_forMode(rl: NSRunLoop; mode: NSString); message 'addToRunLoop:forMode:';
+    procedure setPreferredFrameRateRange(r: CAFrameRateRange); message 'setPreferredFrameRateRange:';
+    procedure invalidate; message 'invalidate';
+  end;
+  NSViewDisplayLink = objccategory external (NSView)
+    function displayLinkWithTarget_selector(target: id; sel: SEL): CADisplayLink; message 'displayLinkWithTarget:selector:';
+  end;
 
 var
   gRend: TWebGLRenderer; gPending: TRAFProc = nil;
@@ -70,7 +85,10 @@ type
     procedure mouseMoved(e: NSEvent); override;
     procedure mouseDown(e: NSEvent); override;
   end;
-  T3DTicker = objcclass(NSObject) procedure tick(t: NSTimer); message 'tick:'; end;
+  T3DTicker = objcclass(NSObject)
+    procedure tick(t: NSTimer); message 'tick:';           // NSTimer fallback (no CADisplayLink)
+    procedure frame(sender: id); message 'frame:';         // CADisplayLink callback (main thread)
+  end;
   T3DDelegate = objcclass(NSObject, NSApplicationDelegateProtocol)
     function applicationShouldTerminateAfterLastWindowClosed(s: NSApplication): ObjCBOOL; message 'applicationShouldTerminateAfterLastWindowClosed:';
     procedure applicationWillTerminate(n: NSNotification); message 'applicationWillTerminate:';
@@ -100,11 +118,20 @@ begin
   if Assigned(gPending) then begin cb:=gPending; gPending:=nil; cb(); end;
 end;
 
+{ CADisplayLink fires this on the main thread, vsync-locked to the display's real
+  refresh — 120 Hz on the ProMotion panel once preferredFrameRateRange asks for it. }
+procedure T3DTicker.frame(sender: id);
+var cb: TRAFProc;
+begin
+  if Assigned(gPending) then begin cb:=gPending; gPending:=nil; cb(); end;
+end;
+
 function T3DDelegate.applicationShouldTerminateAfterLastWindowClosed(s: NSApplication): ObjCBOOL; begin Result:=True; end;
 procedure T3DDelegate.applicationWillTerminate(n: NSNotification); begin PointerUnlock; end;
 
 procedure CreateWindow(const title: string; w, h: Integer; renderer: TWebGLRenderer);
 var win: NSWindow; rect: NSRect; del: T3DDelegate; ticker: T3DTicker;
+    dl: CADisplayLink; frr: CAFrameRateRange;
 begin
   gRend:=renderer;
   NSApplication.sharedApplication;
@@ -118,7 +145,19 @@ begin
   win.setContentView(gView); win.makeFirstResponder(gView); win.makeKeyAndOrderFront(nil);
   NSApp.activateIgnoringOtherApps(True);
   ticker:=T3DTicker.alloc.init;
-  NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(1/60, ticker, objcselector('tick:'), nil, True);
+  { Drive frames from a CADisplayLink at the display's real refresh, and REQUEST the
+    high rate — on the ProMotion XDR panel this runs the frame loop at 120 Hz (a plain
+    NSTimer / CVDisplayLink is compositor-throttled to 60). Falls back to a 120 Hz timer
+    on any macOS that lacks displayLinkWithTarget:selector: (pre-14). }
+  dl:=gView.displayLinkWithTarget_selector(id(ticker), objcselector('frame:'));
+  if dl<>nil then
+  begin
+    frr.minimum:=60; frr.maximum:=120; frr.preferred:=120;
+    dl.setPreferredFrameRateRange(frr);
+    dl.addToRunLoop_forMode(NSRunLoop.mainRunLoop, NSDefaultRunLoopMode);
+  end
+  else
+    NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(1/120, ticker, objcselector('tick:'), nil, True);
 end;
 
 procedure RequestAnimationFrame(cb: TRAFProc); begin gPending:=cb; end;
