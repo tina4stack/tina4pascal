@@ -619,9 +619,7 @@ begin
   grad := BuildNSGradient(Colors, Positions);
   if grad = nil then Exit;
   NSGraphicsContext.currentContext.saveGraphicsState;
-  path := NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius(
-    NSMakeRect(X, Y, W, H), Radius, Radius);
-  path.addClip;
+  ClipPolygon(RoundRectPolygon(X, Y, W, H, Radius));   // clip the gradient to the box
   // CSS angle: 0=up, 90=right. Flipped view is y-down, matching CSS.
   a := AngleDeg * Pi / 180;
   dx := Sin(a); dy := -Cos(a);
