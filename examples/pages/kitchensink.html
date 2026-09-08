@@ -1,0 +1,53 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  body{margin:0;background:#f4f5f8;font:12px/1.4 system-ui,sans-serif;padding:14px;color:#222}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .cell{background:#fff;border:1px solid #e3e4ea;border-radius:8px;padding:8px;height:120px;
+        display:flex;flex-direction:column;overflow:hidden}
+  .cap{font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:#889;margin-bottom:6px}
+  .demo{flex:1;display:flex;align-items:center;justify-content:center;position:relative}
+  /* 1 linear-gradient angle+stops */ .d1{width:80px;height:56px;border-radius:6px;background:linear-gradient(60deg,#ff5aa0 0%,#ffd23c 50%,#2b41e6 100%)}
+  /* 2 radial-gradient */            .d2{width:80px;height:56px;border-radius:6px;background:radial-gradient(circle at 40% 40%,#ffd23c,#2b41e6)}
+  /* 3 conic-gradient */             .d3{width:60px;height:60px;border-radius:50%;background:conic-gradient(from 0deg,#ff5aa0,#ffd23c,#2b41e6,#ff5aa0)}
+  /* 4 repeating-linear */           .d4{width:80px;height:56px;border-radius:6px;background:repeating-linear-gradient(45deg,#2b41e6 0 8px,#ffd23c 8px 16px)}
+  /* 5 transform rotate */           .d5{width:56px;height:40px;background:#2b41e6;transform:rotate(20deg)}
+  /* 6 transform scale+skew */       .d6{width:50px;height:40px;background:#ff5aa0;transform:skewX(-18deg) scale(1.1)}
+  /* 7 filter blur */                .d7{width:56px;height:44px;background:#2b41e6;filter:blur(3px)}
+  /* 8 filter grayscale */           .d8{width:60px;height:44px;background:linear-gradient(45deg,#ff5aa0,#2b41e6);filter:grayscale(1)}
+  /* 9 filter drop-shadow */         .d9{width:0;height:0;border-left:26px solid transparent;border-right:26px solid transparent;border-bottom:44px solid #2b41e6;filter:drop-shadow(3px 4px 2px rgba(0,0,0,.5))}
+  /* 10 text-decoration */           .d10{font-size:15px}.d10 .u{text-decoration:underline wavy #ff5aa0}.d10 .s{text-decoration:line-through}
+  /* 11 text-shadow */               .d11{font-size:20px;font-weight:800;color:#fff;text-shadow:2px 2px 0 #ff5aa0,4px 4px 0 #2b41e6}
+  /* 12 background-clip text */      .d12{font-size:22px;font-weight:800;background:linear-gradient(90deg,#ff5aa0,#2b41e6);-webkit-background-clip:text;background-clip:text;color:transparent}
+  /* 13 ::before content */          .d13{font-size:14px}.d13::before{content:"★ ";color:#ffd23c}
+  /* 14 opacity */                   .d14{width:56px;height:44px;background:#2b41e6;opacity:.4}
+  /* 15 clip-path polygon */         .d15{width:56px;height:56px;background:#ff5aa0;clip-path:polygon(50% 0,100% 100%,0 100%)}
+  /* 16 aspect-ratio */              .d16{width:64px;aspect-ratio:2/1;background:#2b41e6;border-radius:4px}
+  /* 17 mix-blend-mode */            .d17{position:relative;width:70px;height:56px}.d17 i{position:absolute;width:44px;height:44px;border-radius:50%;mix-blend-mode:multiply}.d17 .a{background:#ff5aa0;left:0;top:6px}.d17 .b{background:#2b41e6;left:24px;top:6px}
+  /* 18 grid mini */                 .d18{display:grid;grid-template-columns:1fr 1fr;gap:3px;width:64px}.d18 span{height:22px;background:#2b41e6;border-radius:3px}.d18 .w{grid-column:1/3;background:#ff5aa0}
+  /* 19 transition-less pseudo pos */ .d19{width:60px;height:44px;background:#ffd23c;border-radius:6px;position:relative}.d19::after{content:"";position:absolute;right:-4px;top:-4px;width:14px;height:14px;background:#ff5aa0;border-radius:50%}
+  /* 20 writing-mode */              .d20{writing-mode:vertical-rl;font-size:13px;font-weight:700;color:#2b41e6}
+</style></head>
+<body>
+<div class="grid">
+  <div class="cell"><div class="cap">1 linear-grad</div><div class="demo"><div class="d1"></div></div></div>
+  <div class="cell"><div class="cap">2 radial-grad</div><div class="demo"><div class="d2"></div></div></div>
+  <div class="cell"><div class="cap">3 conic-grad</div><div class="demo"><div class="d3"></div></div></div>
+  <div class="cell"><div class="cap">4 repeating</div><div class="demo"><div class="d4"></div></div></div>
+  <div class="cell"><div class="cap">5 rotate</div><div class="demo"><div class="d5"></div></div></div>
+  <div class="cell"><div class="cap">6 skew+scale</div><div class="demo"><div class="d6"></div></div></div>
+  <div class="cell"><div class="cap">7 filter blur</div><div class="demo"><div class="d7"></div></div></div>
+  <div class="cell"><div class="cap">8 grayscale</div><div class="demo"><div class="d8"></div></div></div>
+  <div class="cell"><div class="cap">9 drop-shadow</div><div class="demo"><div class="d9"></div></div></div>
+  <div class="cell"><div class="cap">10 text-decor</div><div class="demo"><div class="d10"><span class="u">wavy</span> <span class="s">strike</span></div></div></div>
+  <div class="cell"><div class="cap">11 text-shadow</div><div class="demo"><div class="d11">Aa</div></div></div>
+  <div class="cell"><div class="cap">12 bg-clip text</div><div class="demo"><div class="d12">Grad</div></div></div>
+  <div class="cell"><div class="cap">13 ::before</div><div class="demo"><div class="d13">star</div></div></div>
+  <div class="cell"><div class="cap">14 opacity</div><div class="demo"><div class="d14"></div></div></div>
+  <div class="cell"><div class="cap">15 clip-path</div><div class="demo"><div class="d15"></div></div></div>
+  <div class="cell"><div class="cap">16 aspect-ratio</div><div class="demo"><div class="d16"></div></div></div>
+  <div class="cell"><div class="cap">17 blend mult</div><div class="demo"><div class="d17"><i class="a"></i><i class="b"></i></div></div></div>
+  <div class="cell"><div class="cap">18 grid+span</div><div class="demo"><div class="d18"><span class="w"></span><span></span><span></span></div></div></div>
+  <div class="cell"><div class="cap">19 ::after badge</div><div class="demo"><div class="d19"></div></div></div>
+  <div class="cell"><div class="cap">20 writing-mode</div><div class="demo"><div class="d20">Vert</div></div></div>
+</div>
+</body></html>
