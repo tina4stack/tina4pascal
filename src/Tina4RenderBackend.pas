@@ -9,7 +9,7 @@ unit Tina4RenderBackend;
 
 interface
 
-uses SysUtils, Classes, base64, Tina4WebP;
+uses SysUtils, Classes, Math, base64, Tina4WebP;
 
 const
   { Handles at/above this are base-class RGBA images (pure-Pascal WebP decode),
@@ -71,6 +71,9 @@ type
       after the background, under the border. Default: no-op — inset shadows simply
       don't show on backends that can't blur (a safe degrade). }
     procedure FillInsetShadow(X, Y, W, H, Radius, DX, DY, Blur, Spread: Single; Color: TTina4Color); virtual;
+    { Pure-Pascal soft shadow (drop/inset) via an alpha box-blur blitted with
+      DrawRGBA — the default FillSoftShadow/FillInsetShadow use it when SupportsRGBA. }
+    procedure SoftwareShadow(X, Y, W, H, Radius, DX, DY, Blur, Spread: Single; Color: TTina4Color; Inset: Boolean);
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); virtual; abstract;
     { Stroke a connected polyline (device coords) with ROUND joins + caps — used
       by the canvas/Lottie path stroker so curved outlines are smooth. The base
@@ -586,15 +589,143 @@ begin
   SoftGradientFill(Self, 1, X, Y, W, H, Radius, 0, Colors, Positions);
 end;
 
+{ Signed distance from point (px,py) to a rounded rect centred at (cx,cy) with
+  half-extents (hw,hh) and corner radius rad. <0 inside. }
+function RRectSDF(px, py, cx, cy, hw, hh, rad: Single): Single;
+var qx, qy, ax, ay: Single;
+begin
+  qx := Abs(px - cx) - (hw - rad); qy := Abs(py - cy) - (hh - rad);
+  ax := qx; if ax < 0 then ax := 0; ay := qy; if ay < 0 then ay := 0;
+  Result := Sqrt(ax * ax + ay * ay) + Min(Max(qx, qy), 0) - rad;
+end;
+
+{ Separable 3-pass box blur of an 8-bit alpha buffer → approximates a Gaussian. }
+procedure BoxBlurAlpha(var a: array of Byte; w, h, rad: Integer);
+var tmp: array of Byte; pass, x, yy, s, i0, i1, k, den: Integer;
+begin
+  if (rad < 1) or (w < 1) or (h < 1) then Exit;
+  SetLength(tmp, w * h); den := 2 * rad + 1;
+  for pass := 1 to 3 do
+  begin
+    for yy := 0 to h - 1 do                 // horizontal
+    begin
+      s := 0;
+      for k := -rad to rad do begin i0 := k; if i0 < 0 then i0 := 0; if i0 > w - 1 then i0 := w - 1; s := s + a[yy * w + i0]; end;
+      for x := 0 to w - 1 do
+      begin
+        tmp[yy * w + x] := s div den;
+        i0 := x - rad; if i0 < 0 then i0 := 0;
+        i1 := x + rad + 1; if i1 > w - 1 then i1 := w - 1;
+        s := s - a[yy * w + i0] + a[yy * w + i1];
+      end;
+    end;
+    Move(tmp[0], a[0], w * h);
+    for x := 0 to w - 1 do                   // vertical
+    begin
+      s := 0;
+      for k := -rad to rad do begin i0 := k; if i0 < 0 then i0 := 0; if i0 > h - 1 then i0 := h - 1; s := s + a[i0 * w + x]; end;
+      for yy := 0 to h - 1 do
+      begin
+        tmp[yy * w + x] := s div den;
+        i0 := yy - rad; if i0 < 0 then i0 := 0;
+        i1 := yy + rad + 1; if i1 > h - 1 then i1 := h - 1;
+        s := s - a[i0 * w + x] + a[i1 * w + x];
+      end;
+    end;
+    Move(tmp[0], a[0], w * h);
+  end;
+end;
+
+{ Software soft shadow (drop or inset) for backends that can blit an RGBA buffer
+  (SupportsRGBA/DrawRGBA) but have no native blur — Android, Windows, the raster
+  canvas, etc. Rasterises the shadow shape into an alpha buffer, box-blurs it, and
+  blits it in the shadow colour. Cocoa overrides FillSoftShadow with NSShadow, so
+  this serves the OTHER backends; where DrawRGBA is unavailable it degrades to a
+  hard-edged rect (drop) or nothing (inset). }
+procedure TTina4Canvas.SoftwareShadow(X, Y, W, H, Radius, DX, DY, Blur, Spread: Single;
+  Color: TTina4Color; Inset: Boolean);
+var
+  boxR, pad, bw, bh, bx, by, px, py, i: Integer;
+  cr, cg, cb, cA: Integer;
+  alpha, mask: array of Byte; rgba: array of Cardinal;
+  wx, wy, cov, d, av: Single;
+  cx, cy, hw, hh, hr: Single;      // shape (drop) / hole (inset)
+begin
+  cA := (Color shr 24) and $FF; cr := (Color shr 16) and $FF; cg := (Color shr 8) and $FF; cb := Color and $FF;
+  if cA = 0 then Exit;
+  boxR := Round(Blur * 0.5); if boxR < 1 then boxR := 1;
+  pad := boxR * 3 + 2;
+
+  if not Inset then
+  begin
+    // buffer around the shadow shape (X,Y,W,H already carry offset+spread)
+    bx := Floor(X) - pad; by := Floor(Y) - pad;
+    bw := Ceil(W) + 2 * pad + 2; bh := Ceil(H) + 2 * pad + 2;
+    if (bw < 1) or (bh < 1) then Exit;
+    SetLength(alpha, bw * bh);
+    cx := X + W / 2; cy := Y + H / 2; hw := W / 2; hh := H / 2; hr := Radius;
+    if hr > hw then hr := hw; if hr > hh then hr := hh; if hr < 0 then hr := 0;
+    for py := 0 to bh - 1 do
+      for px := 0 to bw - 1 do
+      begin
+        wx := bx + px + 0.5; wy := by + py + 0.5;
+        d := RRectSDF(wx, wy, cx, cy, hw, hh, hr);
+        cov := 0.5 - d; if cov < 0 then cov := 0; if cov > 1 then cov := 1;
+        alpha[py * bw + px] := Round(cov * 255);
+      end;
+    BoxBlurAlpha(alpha, bw, bh, boxR);
+  end
+  else
+  begin
+    // inset: buffer = the box; blur a "frame" (outside the offset+spread hole) and
+    // mask it to the box shape so the shadow only shows inside.
+    bx := Floor(X); by := Floor(Y); bw := Ceil(W); bh := Ceil(H);
+    if (bw < 1) or (bh < 1) then Exit;
+    SetLength(alpha, bw * bh); SetLength(mask, bw * bh);
+    // hole
+    cx := X + DX + W / 2; cy := Y + DY + H / 2; hw := W / 2 - Spread; hh := H / 2 - Spread;
+    hr := Radius - Spread; if hr < 0 then hr := 0;
+    if (hw <= 0) or (hh <= 0) then Exit;
+    for py := 0 to bh - 1 do
+      for px := 0 to bw - 1 do
+      begin
+        wx := bx + px + 0.5; wy := by + py + 0.5;
+        d := RRectSDF(wx, wy, cx, cy, hw, hh, hr);      // >0 outside the hole = frame
+        cov := 0.5 + d; if cov < 0 then cov := 0; if cov > 1 then cov := 1;
+        alpha[py * bw + px] := Round(cov * 255);
+        // box mask (clip the shadow to the element's rounded rect)
+        d := RRectSDF(wx, wy, X + W / 2, Y + H / 2, W / 2, H / 2,
+          Min(Radius, Min(W / 2, H / 2)));
+        cov := 0.5 - d; if cov < 0 then cov := 0; if cov > 1 then cov := 1;
+        mask[py * bw + px] := Round(cov * 255);
+      end;
+    BoxBlurAlpha(alpha, bw, bh, boxR);
+    for i := 0 to bw * bh - 1 do alpha[i] := (alpha[i] * mask[i]) div 255;
+  end;
+
+  // colourise (straight $AARRGGBB) and blit
+  SetLength(rgba, bw * bh);
+  for i := 0 to bw * bh - 1 do
+  begin
+    av := alpha[i] * cA / 255;
+    rgba[i] := (Cardinal(Round(av)) shl 24) or (Cardinal(cr) shl 16) or (Cardinal(cg) shl 8) or Cardinal(cb);
+  end;
+  DrawRGBA(@rgba[0], bw, bh, bx, by, bw, bh);
+end;
+
 procedure TTina4Canvas.FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color);
 begin
-  // base fallback: a hard-edged shadow rect (no blur)
-  FillRoundRect(X, Y, W, H, Radius, Color);
+  if (Blur > 0) and SupportsRGBA then
+    SoftwareShadow(X, Y, W, H, Radius, 0, 0, Blur, 0, Color, False)
+  else
+    FillRoundRect(X, Y, W, H, Radius, Color);   // hard-edged fallback (no blur)
 end;
 
 procedure TTina4Canvas.FillInsetShadow(X, Y, W, H, Radius, DX, DY, Blur, Spread: Single; Color: TTina4Color);
 begin
-  // base fallback: no inset shadow (needs a blur the base canvas can't do)
+  if SupportsRGBA then
+    SoftwareShadow(X, Y, W, H, Radius, DX, DY, Blur, Spread, Color, True);
+  // else: no inset shadow (needs the RGBA blit path)
 end;
 
 { Decode a WebP (local file or data: URI) to the base RGBA store, converting the

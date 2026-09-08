@@ -59,6 +59,8 @@ type
       Styles: TTina4FontStyles): TTina4TextMetrics; override;
     procedure SetClip(X, Y, W, H: Single); override;
     procedure ClearClip; override;
+    function  SupportsRGBA: Boolean; override;
+    procedure DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single); override;
   end;
 
 implementation
@@ -351,6 +353,33 @@ end;
 
 procedure TTina4RasterCanvas.ClearClip;
 begin
+end;
+
+function TTina4RasterCanvas.SupportsRGBA: Boolean;
+begin
+  Result := True;
+end;
+
+{ Composite a straight-$AARRGGBB buffer onto the canvas (alpha-blended), nearest-
+  sampled when scaled. Used for the base soft-shadow blit and image blits. }
+procedure TTina4RasterCanvas.DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single);
+var src: PCardinal; dxi, dyi, dwi, dhi, ox, oy, sx, sy: Integer; c: Cardinal; a: Single;
+begin
+  if (Buf = nil) or (BW <= 0) or (BH <= 0) then Exit;
+  src := PCardinal(Buf);
+  dxi := Round(DX); dyi := Round(DY);
+  dwi := Round(DW); dhi := Round(DH);
+  if dwi < 1 then dwi := 1; if dhi < 1 then dhi := 1;
+  for oy := 0 to dhi - 1 do
+    for ox := 0 to dwi - 1 do
+    begin
+      sx := (ox * BW) div dwi; sy := (oy * BH) div dhi;
+      if (sx < 0) or (sx >= BW) or (sy < 0) or (sy >= BH) then Continue;
+      c := src[sy * BW + sx];
+      a := ((c shr 24) and $FF) / 255;
+      if a <= 0 then Continue;
+      BlendPixel(dxi + ox, dyi + oy, (c shr 16) and $FF, (c shr 8) and $FF, c and $FF, a);
+    end;
 end;
 
 end.
