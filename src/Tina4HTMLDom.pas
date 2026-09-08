@@ -290,9 +290,11 @@ type
     TextDecorationStyle: string;      // 'solid'|'double'|'dotted'|'dashed'|'wavy'
     TextDecorationColor: TAlphaColor;  // 0 => use text color
     TextAlign: TTextAlign;
+    TextAlignSet: Boolean;     // text-align was explicitly set (vs inherited/initial 'start')
     TextJustify: Boolean;      // text-align: justify (spread slack across gaps)
     TextAlignLast: string;     // '' = auto | left/right/center/start/end/justify
     TabSize: Integer;          // tab width in space-widths (default 8)
+    Direction: string;         // 'ltr' (default) | 'rtl' — inherited
     LineHeight: Single;
     VerticalAlign: string;
     CaptionSide: string;        // '' | 'top' | 'bottom' (table <caption> placement)
@@ -2354,8 +2356,10 @@ begin
   Result.TextDecorationColor := 0;
   Result.TextAlign := TTextAlign.Leading;
   Result.TextJustify := False;
+  Result.TextAlignSet := False;
   Result.TextAlignLast := '';
   Result.TabSize := 8;
+  Result.Direction := 'ltr';
   Result.LineHeight := 1.4;
   Result.VerticalAlign := 'baseline';
   Result.CaptionSide := 'top';
@@ -2815,8 +2819,10 @@ begin
   Result.Color := ParentStyle.Color;
   Result.TextAlign := ParentStyle.TextAlign;
   Result.TextJustify := ParentStyle.TextJustify;
+  Result.TextAlignSet := False;                        // not inherited (re-evaluated per element)
   Result.TextAlignLast := ParentStyle.TextAlignLast;   // inherited
   Result.TabSize := ParentStyle.TabSize;               // inherited
+  Result.Direction := ParentStyle.Direction;           // inherited
   Result.WritingMode := ParentStyle.WritingMode;   // inherited
   Result.LineHeight := ParentStyle.LineHeight;
   Result.WhiteSpace := ParentStyle.WhiteSpace;
@@ -3775,7 +3781,10 @@ begin
     else if Temp = 'justify' then Style.TextAlign := TTextAlign.Leading
     else Style.TextAlign := TTextAlign.Leading;
     Style.TextJustify := (Temp = 'justify');
+    Style.TextAlignSet := (Temp <> 'start');   // explicit alignment (not the initial 'start')
   end;
+  if Decls.TryGetValue('direction', Temp) and not ShouldSkip(Temp) then
+    Style.Direction := Temp.Trim.ToLower;
   if Decls.TryGetValue('text-align-last', Temp) and not ShouldSkip(Temp) then
     Style.TextAlignLast := Temp.Trim.ToLower;
   // text-justify: only 'none' has a visible effect for us — it turns OFF the

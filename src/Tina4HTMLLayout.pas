@@ -3072,9 +3072,13 @@ var
     // this line's vertical range (left floats push x0 right, right floats x1 left)
     LineBounds(lineTop, lineTop + lineH, flx0, flx1);
     availW := flx1 - flx0;
-    // text-align-last overrides the alignment of the block's last line (and the
-    // line before a forced break); 'justify' on the last line spreads it too.
+    // direction:rtl makes the block's default (start) alignment right — an
+    // explicit text-align still wins. Full bidi (mixed-direction inline runs,
+    // mirrored punctuation) is out of scope; this covers the common RTL block.
     effAlign := ParentStyle.TextAlign;
+    if (ParentStyle.Direction = 'rtl') and (not ParentStyle.TextAlignSet) and
+       (effAlign = TTextAlign.Leading) then
+      effAlign := TTextAlign.Trailing;
     tal := ParentStyle.TextAlignLast;
     if isLast and (tal <> '') and (tal <> 'auto') then
     begin

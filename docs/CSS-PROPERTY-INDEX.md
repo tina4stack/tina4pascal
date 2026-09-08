@@ -91,7 +91,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | list-style shorthand, list-style-position | ✅ | shorthand tokenised (type · inside/outside · image url); `position:inside` draws the marker in the content flow |
 | list-style-image | ✅ | `url(...)` image marker (dedicated property + shorthand) loaded via the shell and drawn as a font-sized square outdented left of the content; falls back to the bullet glyph if the image fails to load |
 | writing-mode | 🟡 | `vertical-rl` / `vertical-lr` / `sideways-*`: a line is set sideways (rotated 90° CW about the box centre, Latin mixed orientation) through the transform path; inherited. Full vertical block-flow reordering (multi-line column progression) not yet modelled |
-| direction, unicode-bidi | ❌ | LTR only (needs the Unicode bidi algorithm) |
+| direction | 🟡 | `rtl` right-aligns a block's default (start) text — the common RTL case; inherited, an explicit `text-align` still wins. Full bidi (mixed-direction inline runs + mirrored punctuation) not yet |
+| unicode-bidi | ✅ | accepted (its effect is the bidi algorithm, which we don't run — no-op alongside the `direction` right-alignment) |
 | tab-size | ✅ | `-moz-tab-size` too; tabs in `white-space:pre`/`pre-wrap` expand to N space-widths (default 8) |
 | text-align-last | ✅ | left/right/center/start/end/justify on the block's last line (and the line before a `<br>`) |
 | text-justify | ✅ | `none` disables the justification `text-align:justify` turns on; `inter-word`/`auto` keep it |

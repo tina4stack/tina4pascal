@@ -617,6 +617,18 @@ begin
     finally
       Decls.Free;
     end;
+
+    // direction:rtl parsed + inherited; text-align marked explicit only when set
+    Decls := TCSSDeclarations.Create;
+    try
+      Decls.AddOrSetValue('direction', 'rtl');
+      DecoStyle := TComputedStyle.Default;
+      TComputedStyle.ApplyDeclarations(Decls, DecoStyle, TComputedStyle.Default);
+      CheckEqualsStr('rtl', DecoStyle.Direction, 'direction:rtl parsed');
+      Check(not DecoStyle.TextAlignSet, 'no explicit text-align => start (flippable by rtl)');
+    finally
+      Decls.Free;
+    end;
     Check(TComputedStyle.Default.TabSize = 8, 'tab-size default 8');
 
     CheckEqualsF(10, TComputedStyle.ParseLength('10px'), 'ParseLength px');
