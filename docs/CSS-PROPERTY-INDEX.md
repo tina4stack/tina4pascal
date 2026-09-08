@@ -79,7 +79,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | letter-spacing | ✅ | applied in measure AND paint |
 | word-spacing | ✅ | extra px added to every inter-word space (inherited; affects wrap + alignment) |
 | text-align | ✅ | left/center/right/justify (justify spreads slack across word gaps; last line stays left) |
-| text-decoration | 🟡 | underline + line-through (native) + overline (hand-ruled); no color/style longhands |
+| text-decoration | ✅ | underline / line-through / overline; shorthand parses line + style + color in any order, plus `text-decoration-line/-style/-color` longhands. Solid same-color stays on the cheap font underline; a non-solid **style** (wavy zig-zag / dotted / dashed / double) or a distinct **color** is hand-painted (`PaintDecorLine`) with the font line suppressed |
 | text-transform | ✅ | uppercase/lowercase/capitalize applied to painted glyphs |
 | text-indent | ✅ | first formatted line indented (left-aligned blocks) |
 | text-overflow | ✅ | ellipsis truncation (single nowrap line): truncates the crossing run + drops the rest |
@@ -90,7 +90,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | list-style-type | ✅ | disc/circle/square/decimal/alpha/roman/none |
 | list-style shorthand, list-style-position | ✅ | shorthand tokenised (type · inside/outside · image url); `position:inside` draws the marker in the content flow |
 | list-style-image | ✅ | `url(...)` image marker (dedicated property + shorthand) loaded via the shell and drawn as a font-sized square outdented left of the content; falls back to the bullet glyph if the image fails to load |
-| direction, unicode-bidi, writing-mode | ❌ | LTR only |
+| writing-mode | 🟡 | `vertical-rl` / `vertical-lr` / `sideways-*`: a line is set sideways (rotated 90° CW about the box centre, Latin mixed orientation) through the transform path; inherited. Full vertical block-flow reordering (multi-line column progression) not yet modelled |
+| direction, unicode-bidi | ❌ | LTR only (needs the Unicode bidi algorithm) |
 | tab-size, hyphens, text-rendering, text-align-last, text-justify | ❌ | |
 
 ## Backgrounds & borders
@@ -102,6 +103,10 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | background-image: url() | ✅ | painted via the cached/async image path; size cover/contain/auto, position, repeat; clipped |
 | background: linear-gradient() | ✅ | real multi-stop gradient (up to 8 stops + positions), angle honored; backend NSGradient on Cocoa (base fallback = flat avg) |
 | background: radial-gradient() | ✅ | parsed + painted (center radial); shape/size keywords accepted, not yet modelled |
+| background: conic-gradient() | ✅ | angular sweep (`from <angle>`, `at` center); per-pixel software fill (`FillGradientSoft`, `ArcTan2` angle → stop) blitted via `DrawRGBA`, rounded-clipped |
+| background: repeating-linear-gradient() | ✅ | stop pattern tiled by its px period (`Frac(proj/period)`); same soft-gradient path |
+| background-clip: text, -webkit-background-clip | ✅ | the background is suppressed and painted **into the glyphs** — each glyph is a solid sample of the gradient at its position along the CSS axis (per-glyph, UTF-8 aware). Close approximation of the true text mask |
+| content (::before / ::after) | ✅ | generated-content pseudo-elements synthesised into the tree (`CollectPseudoStyle` + layout `InjectPseudo`): the matching `base::before`/`::after` rule's declarations bake into the pseudo box, the unquoted `content` becomes its text. Handles `content:""` (e.g. a badge dot) and blockifies an absolutely-positioned pseudo. `attr()` / counters not yet |
 | box-shadow | ✅ | soft blur (NSShadow) + spread + corner-radius aware, outset; inset still TODO |
 | outline (+ width/style/color/offset) | ✅ | painted: stroke outside the border box, offset by outline-offset (dashed→solid) |
 
@@ -174,9 +179,10 @@ fixed/relative/absolute, z-index, `font-family` + numeric weight, `text-overflow
 caption + caption-side, col/colgroup, tfoot-to-bottom, th bold/center).
 
 **Quick wins — done** (outline, text-shadow, text-align:justify,
-text-decoration:overline, position:sticky, cursor). Remaining longhands:
-text-decoration color/style; the sub-keyword resize cursors beyond
-col/row-resize.
+text-decoration overline + wavy/dotted/dashed/double + color/style,
+`::before`/`::after` content, background-clip:text, conic + repeating
+gradients, position:sticky, cursor). Remaining longhands: the sub-keyword
+resize cursors beyond col/row-resize.
 
 **Outstanding — bigger rocks** (each needs a dedicated subsystem the immediate-
 mode renderer doesn't yet have):
@@ -187,8 +193,8 @@ mode renderer doesn't yet have):
     position/size/repeat (gradient alpha masks + `filter`/`backdrop-filter`/
     `mix-blend-mode`/`drop-shadow` and clip-path basic shapes are done).
 3. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
-    `direction`/`writing-mode` (bidi), `vertical-align`
-    text-top/text-bottom.
+    `direction`/`unicode-bidi` (bidi) + full vertical block-flow (single-line
+    `writing-mode` done), `vertical-align` text-top/text-bottom.
 4. **user-select / resize** (need a selection model / drag-resize handle);
     `@import`.
 
