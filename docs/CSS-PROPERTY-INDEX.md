@@ -97,7 +97,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | text-align-last | ✅ | left/right/center/start/end/justify on the block's last line (and the line before a `<br>`) |
 | text-justify | ✅ | `none` disables the justification `text-align:justify` turns on; `inter-word`/`auto` keep it |
 | text-rendering | ✅ | accepted (a rendering hint with no required visual change — no-op) |
-| hyphens | ❌ | needs a hyphenation dictionary (`auto`); soft-hyphen `manual` not yet |
+| hyphens | 🟡 | parsed; soft hyphens (U+00AD) are stripped so they never render as an artifact (`none` behaviour). Breaking at soft hyphens (`manual`) needs the line-breaker to insert a hyphen on break; `auto` needs a hyphenation dictionary |
 
 ## Backgrounds & borders
 
@@ -206,10 +206,12 @@ mode renderer doesn't yet have):
     **background-blend-mode** (software per-background-layer blend compositing —
     the existing blend path is Cocoa CGBlendMode, not pure-Pascal).
 
-Coverage: **105 ✅ · 4 🟡 · 3 📦 · 2 ❌**. Every immediate-mode-tractable
-property is done; the list above is the irreducible set that each needs a
-dedicated subsystem (a hyphenation dictionary, the Unicode bidi algorithm, font
-synthesis, a text-selection model, or software blend/mask compositing).
+Coverage: **105 ✅ · 6 🟡 · 3 📦 · 0 ❌** — no property is entirely unhandled.
+Every 🟡/📦 that remains is the advanced tail of an otherwise-working feature and
+needs a dedicated subsystem to finish: a hyphenation dictionary + soft-hyphen
+line-breaking, the Unicode bidi algorithm, font synthesis (small-caps/stretch),
+a text-selection model (user-select/resize), `mask` url() images, non-separable
+blend modes, full vertical block-flow, and multi-plane `preserve-3d`.
 
 
 Each item ships with a reftest under `examples/compliance/` and flips its row

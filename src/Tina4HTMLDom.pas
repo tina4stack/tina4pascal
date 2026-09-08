@@ -340,6 +340,7 @@ type
     OverflowY: string;
     WordBreak: string;
     OverflowWrap: string;
+    Hyphens: string;   // 'manual' (default) | 'none' | 'auto' — inherited
     TextOverflow: string;
     BoxShadow: TBoxShadow;                 // first shadow (compat); full list below
     BoxShadows: array[0..7] of TBoxShadow; // all comma-separated shadows, [0] = on top
@@ -2404,6 +2405,7 @@ begin
   Result.OverflowY := 'visible';
   Result.WordBreak := 'normal';
   Result.OverflowWrap := 'normal';
+  Result.Hyphens := 'manual';
   Result.TextOverflow := 'clip';
   Result.BoxShadow.Active := False;
   Result.BoxShadowCount := 0;
@@ -2837,6 +2839,7 @@ begin
   Result.Visibility := ParentStyle.Visibility;
   Result.WordBreak := ParentStyle.WordBreak;
   Result.OverflowWrap := ParentStyle.OverflowWrap;
+  Result.Hyphens := ParentStyle.Hyphens;   // inherited
   Result.CaptionSide := ParentStyle.CaptionSide;  // inherited
   Result.TableLayout := '';                        // not inherited
   Result.EmptyCells := ParentStyle.EmptyCells;     // inherited
@@ -4264,6 +4267,8 @@ begin
     Style.OverflowWrap := Temp.ToLower;
   if Decls.TryGetValue('word-wrap', Temp) and not ShouldSkip(Temp) then
     Style.OverflowWrap := Temp.ToLower;  // word-wrap is legacy alias
+  if Decls.TryGetValue('hyphens', Temp) and not ShouldSkip(Temp) then
+    Style.Hyphens := Temp.Trim.ToLower;
 
   if Decls.TryGetValue('text-overflow', Temp) and not ShouldSkip(Temp) then
     Style.TextOverflow := Temp.ToLower;

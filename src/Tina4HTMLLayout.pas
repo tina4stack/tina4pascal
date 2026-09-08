@@ -2800,6 +2800,10 @@ var
         Exit;
       end;
       txt := CollapseWS(T.Text);
+      // soft hyphen U+00AD (UTF-8 $C2$AD): a break-opportunity hint that is
+      // invisible unless a line breaks there. We don't hyphenate, so strip it
+      // rather than render it as an artifact (hyphens:none behaviour).
+      if Pos(#$C2#$AD, txt) > 0 then txt := StringReplace(txt, #$C2#$AD, '', [rfReplaceAll]);
       if (St.TextTransform <> '') and not SameText(St.TextTransform, 'none') then
         txt := ApplyTextTransform(txt, St.TextTransform);
       if Trim(txt) = '' then
