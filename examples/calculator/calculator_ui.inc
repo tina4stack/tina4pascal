@@ -35,7 +35,9 @@ const CALC_HTML =
   '  .row { display: flex; gap: 11px; margin-top: 11px; }'#10 +
   '  .key {'#10 +
   '    flex: 1; height: 62px; border-radius: 31px;'#10 +
-  '    display: flex; align-items: center; justify-content: center;'#10 +
+  '    /* centre the label with line-height (vertical) + text-align (horizontal) —'#10 +
+  '       reliable in tina4; flex align/justify centring of a text child is not */'#10 +
+  '    line-height: 62px; text-align: center;'#10 +
   '    font-size: 26px; font-weight: 500; color: #fff;'#10 +
   '    background: #2a2a2e; cursor: pointer; user-select: none;'#10 +
   '  }'#10 +
@@ -43,7 +45,7 @@ const CALC_HTML =
   '     simple selector, so these override .key by source order, not .key.op */'#10 +
   '  .func { background: #4a4a50; color: #fff; font-weight: 600; }'#10 +
   '  .op   { background: linear-gradient(180deg,#ffb340,#ff9500); color: #fff; font-weight: 600; }'#10 +
-  '  .wide { flex: 2.16; justify-content: flex-start; padding-left: 28px; }'#10 +
+  '  .wide { flex: 2.16; text-align: left; padding-left: 28px; }'#10 +
   '  .eq   { background: linear-gradient(180deg,#ff9f5a,#ff7a00); }'#10 +
   '</style>'#10 +
   '</head>'#10 +
