@@ -17,6 +17,7 @@ program calculator;
 
 {$mode delphi}{$H+}
 {$IFDEF WINDOWS}{$apptype gui}{$ENDIF}   // windowed app — no console window pops up
+{$IFDEF WINDOWS}{$R calculator.rc}{$ENDIF}   // embed MAINICON (calculator.ico)
 
 uses
   SysUtils,

@@ -323,7 +323,7 @@ begin
 end;
 
 procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: string; W, H: Integer);
-var wc: WNDCLASSEXW; m: MSG; cls, cap: UnicodeString; ico: HICON;
+var wc: WNDCLASSEXW; m: MSG; cls, cap: UnicodeString; ico, appIco: HICON;
     snap, dk, dout: string; overlay: Boolean; ix, iy: Single;
 begin
   GW := W; GH := H;
@@ -332,23 +332,27 @@ begin
   if (snap <> '') or (dk <> '') or (GScript <> '') then
   begin WinHeadless(TemplateDir, Template, JsonContext, GW, GH, snap, overlay, dk, dout, ix, iy); Halt(0); end;
   cls := 'Tina4AppWindow';
+  { the exe's own embedded icon (MAINICON, from a {$R app.rc}), if it has one —
+    used for the window title bar + taskbar so a standalone app is branded with
+    no external file. IconPath (a PNG) still overrides at runtime below. }
+  appIco := LoadIconW(HInstance, PWideChar(UnicodeString('MAINICON')));
   FillChar(wc, SizeOf(wc), 0);
   wc.cbSize := SizeOf(wc); wc.style := CS_HREDRAW or CS_VREDRAW;
   wc.lpfnWndProc := @WWndProc; wc.hInstance := HInstance;
   wc.hCursor := LoadCursor(0, IDC_ARROW); wc.hbrBackground := 0;
+  wc.hIcon := appIco; wc.hIconSm := appIco;
   wc.lpszClassName := PWideChar(cls);
   RegisterClassExW(wc);
   cap := UnicodeString(Title);
   GHwnd := CreateWindowExW(0, PWideChar(cls), PWideChar(cap), WS_OVERLAPPEDWINDOW,
     CW_USEDEFAULT, CW_USEDEFAULT, W, H, 0, 0, HInstance, nil);
-  if IconPath <> '' then
+  ico := 0;
+  if IconPath <> '' then ico := WinLoadHIcon(IconPath);   // explicit PNG wins
+  if ico = 0 then ico := appIco;                          // else the embedded icon
+  if ico <> 0 then
   begin
-    ico := WinLoadHIcon(IconPath);
-    if ico <> 0 then
-    begin
-      SendMessageW(GHwnd, WM_SETICON, ICON_BIG, LPARAM(ico));
-      SendMessageW(GHwnd, WM_SETICON, ICON_SMALL, LPARAM(ico));
-    end;
+    SendMessageW(GHwnd, WM_SETICON, ICON_BIG, LPARAM(ico));
+    SendMessageW(GHwnd, WM_SETICON, ICON_SMALL, LPARAM(ico));
   end;
   GCanvas := TWinCanvas.Create;
   TinaInit(GCanvas);
