@@ -16,6 +16,7 @@ program calculator;
   handy for editing the UI without a rebuild. }
 
 {$mode delphi}{$H+}
+{$IFDEF WINDOWS}{$apptype gui}{$ENDIF}   // windowed app — no console window pops up
 
 uses
   SysUtils,

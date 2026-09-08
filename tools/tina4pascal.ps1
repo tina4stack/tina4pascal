@@ -237,6 +237,7 @@ end.
   Write-File (Join-Path $proj 'app.pas') @"
 program $name;
 {`$mode objfpc}{`$H+}
+{`$IFDEF WINDOWS}{`$apptype gui}{`$ENDIF}   // windowed app — no console window
 uses Tina4App;
 begin
   // window/taskbar icon + the on-screen logo both come from assets/icon.png,
