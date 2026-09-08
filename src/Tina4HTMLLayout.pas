@@ -88,6 +88,8 @@ type
     function MakeInlineBlock(Tag: THTMLTag; const St: TComputedStyle): TLayoutBox;
     function MakeInlineContainer(Tag: THTMLTag; const St: TComputedStyle;
       AvailW: Single): TLayoutBox;
+    function MakeContainerBox(Tag: THTMLTag; const ParentStyle: TComputedStyle;
+      AvailW: Single; const d: string): TLayoutBox;
     { A replaced element (img/svg/qrcode) used directly as a block or flex
       item — build it as an atom instead of laying out its children. Returns
       nil when Tag is not a replaced element. }
@@ -206,6 +208,14 @@ end;
 function IsTextNode(Tag: THTMLTag): Boolean;
 begin
   Result := Tag.TagName = '#text';
+end;
+
+{ True when the element establishes a flex or grid formatting context. }
+function IsFlexOrGrid(const cs: TComputedStyle): Boolean;
+var d: string;
+begin
+  d := LowerCase(cs.Display);
+  Result := (d = 'flex') or (d = 'inline-flex') or (d = 'grid') or (d = 'inline-grid');
 end;
 
 function DisplayOf(Tag: THTMLTag; const St: TComputedStyle): string;
@@ -1452,6 +1462,26 @@ begin
   Result.H := usedH + edgeT + edgeB;
 end;
 
+{ Build a flex/grid item box that is ITSELF a flex/grid container, so its own
+  display is honoured (a card in a grid still centres its label). LayoutFlex/Grid
+  create + parent the box themselves, so we catch it under a throwaway parent and
+  extract it; the outer flex then ShiftBoxTree's it into place. Laid out at the
+  origin. `d` is the lower-cased display. }
+function TLayoutEngine.MakeContainerBox(Tag: THTMLTag; const ParentStyle: TComputedStyle;
+  AvailW: Single; const d: string): TLayoutBox;
+var tmp: TLayoutBox;
+begin
+  Result := nil;
+  tmp := TLayoutBox.Create;
+  try
+    if (d = 'flex') or (d = 'inline-flex') then LayoutFlex(tmp, Tag, ParentStyle, 0, 0, AvailW)
+    else LayoutGrid(tmp, Tag, ParentStyle, 0, 0, AvailW);
+    if tmp.Children.Count > 0 then Result := tmp.Children.Extract(tmp.Children[0]);
+  finally
+    tmp.Free;   // owns no real box now (extracted)
+  end;
+end;
+
 function TLayoutEngine.MakeReplacedBox(T: THTMLTag; const cs: TComputedStyle;
   CW: Single): TLayoutBox;
 var
@@ -1524,6 +1554,7 @@ var
   itemTags: TList<THTMLTag>;
   c: THTMLTag;
   runText: string;   // accumulates a contiguous text run → anonymous flex item
+  hadDefW: Boolean;  // item had a definite width before flex-basis override
   mL, mR, mT, mB, availInner, ew, eh: Single;
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
   isCol: Boolean;
@@ -1627,6 +1658,8 @@ begin
         cb := MakeReplacedBox(itemTags[i], cs, contentW);
         if (cb = nil) and IsFormControlTag(itemTags[i].TagName) then
           cb := MakeControl(itemTags[i], cs, contentW);
+        if (cb = nil) and IsFlexOrGrid(cs) then                       // item is itself a flex/grid container
+          cb := MakeContainerBox(itemTags[i], st, contentW, LowerCase(cs.Display));
         if cb = nil then cb := MakeInlineContainer(itemTags[i], cs, contentW);
         box.Children.Add(cb); items.Add(cb);
       end;
@@ -1689,6 +1722,7 @@ begin
       for i := 0 to itemTags.Count - 1 do
       begin
         cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
+        hadDefW := ResolveSize(cs.ExplicitWidth, contentW) >= 0;   // definite BEFORE the override
         targetW := baseW[i];
         // grow only when NOT wrapping (wrapped items keep their base size)
         if (growF[i] > 0) and (sumGrow > 0) and
@@ -1704,6 +1738,10 @@ begin
         cb := MakeReplacedBox(itemTags[i], cs, contentW);
         if (cb = nil) and IsFormControlTag(itemTags[i].TagName) then
           cb := MakeControl(itemTags[i], cs, contentW)   // control, not a box
+        // item is itself a flex/grid container AND had a definite width (so
+        // LayoutFlex's recomputed width matches the forced main size) → honour its display
+        else if (cb = nil) and IsFlexOrGrid(cs) and hadDefW then
+          cb := MakeContainerBox(itemTags[i], st, contentW, LowerCase(cs.Display))
         else if cb = nil then
         begin
           cb := MakeInlineContainer(itemTags[i], cs, contentW);
