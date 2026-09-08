@@ -1616,6 +1616,10 @@ begin
   tmp := TLayoutBox.Create;
   try
     if (d = 'flex') or (d = 'inline-flex') then LayoutFlex(tmp, Tag, ParentStyle, 0, 0, AvailW)
+    else if SameText(Tag.TagName, 'table') or (d = 'table') or (d = 'inline-table') then
+      // a table flex/grid item keeps its internal table formatting (rows→columns),
+      // not the inline stacking MakeInlineContainer would give it
+      LayoutTable(tmp, Tag, ParentStyle, 0, 0, AvailW)
     else LayoutGrid(tmp, Tag, ParentStyle, 0, 0, AvailW);
     if tmp.Children.Count > 0 then Result := tmp.Children.Extract(tmp.Children[0]);
   finally
@@ -1798,7 +1802,7 @@ begin
         cb := MakeReplacedBox(itemTags[i], cs, contentW);
         if (cb = nil) and IsFormControlTag(itemTags[i].TagName) then
           cb := MakeControl(itemTags[i], cs, contentW);
-        if (cb = nil) and IsFlexOrGrid(cs) then                       // item is itself a flex/grid container
+        if (cb = nil) and (IsFlexOrGrid(cs) or SameText(itemTags[i].TagName, 'table')) then  // flex/grid/table item keeps its own formatting
           cb := MakeContainerBox(itemTags[i], st, contentW, LowerCase(cs.Display));
         if cb = nil then cb := MakeInlineContainer(itemTags[i], cs, contentW);
         box.Children.Add(cb); items.Add(cb);
@@ -1881,7 +1885,8 @@ begin
         // LayoutFlex's natural size matches the flex main size) → honour its display.
         // Pass targetW (the item's flex basis) as the available width so a width-less
         // flex item stays content-sized instead of filling the row like a block.
-        else if (cb = nil) and IsFlexOrGrid(cs) and (targetW = baseW[i]) then
+        else if (cb = nil) and (SameText(itemTags[i].TagName, 'table') or
+                (IsFlexOrGrid(cs) and (targetW = baseW[i]))) then
           cb := MakeContainerBox(itemTags[i], st, targetW, LowerCase(cs.Display))
         else if cb = nil then
         begin
@@ -2369,6 +2374,8 @@ begin
       cb := MakeReplacedBox(itemTags[i], cs, cellW);
       if (cb = nil) and IsFormControlTag(itemTags[i].TagName) then
         cb := MakeControl(itemTags[i], cs, cellW)
+      else if (cb = nil) and (IsFlexOrGrid(cs) or SameText(itemTags[i].TagName, 'table')) then
+        cb := MakeContainerBox(itemTags[i], st, cellW, LowerCase(cs.Display))  // nested flex/grid/table keeps its formatting
       else if cb = nil then
         cb := MakeInlineContainer(itemTags[i], cs, cellW);
       box.Children.Add(cb);
