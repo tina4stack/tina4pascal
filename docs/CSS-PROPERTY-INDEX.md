@@ -194,11 +194,13 @@ mode renderer doesn't yet have):
 2. **mask** long tail — `url()` image masks, `mask-mode:luminance`, mask
     position/size/repeat (gradient alpha masks + `filter`/`backdrop-filter`/
     `mix-blend-mode`/`drop-shadow` and clip-path basic shapes are done).
-3. Typography remainder: `font-variant` small-caps synthesis, `font-stretch`,
-    `direction`/`unicode-bidi` (bidi) + full vertical block-flow (single-line
-    `writing-mode` done), `vertical-align` text-top/text-bottom.
+3. Typography remainder (font selection / bidi): `font-variant` small-caps
+    synthesis, `font-stretch`, `hyphens` (needs a hyphenation dictionary),
+    `direction`/`unicode-bidi` + full vertical block-flow (single-line
+    `writing-mode` done).
 4. **user-select / resize** (need a selection model / drag-resize handle);
-    `@import`.
+    **background-blend-mode** (per-background-layer compositing); `@import`
+    (core parses the CSS; needs host-side fetch wiring like `<link>`, per OS).
 
 
 Each item ships with a reftest under `examples/compliance/` and flips its row
