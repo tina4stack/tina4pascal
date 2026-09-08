@@ -314,6 +314,33 @@ asset ships a `.sha256`. The macOS build is GPG-signed rather than Apple-notariz
 so a browser download may be quarantined — verify it, then
 `xattr -dr com.apple.quarantine <binary>` to clear the Gatekeeper flag.
 
+### v1.1.0
+
+A big feature release — three new subsystems, all pure-Pascal and cross-platform.
+
+- **ThreePascal — a software 3D engine** — a pure-Pascal three.js-style renderer
+  (scene/camera/mesh, textures, AnimationMixer, GLTFLoader, Raycaster, instancing,
+  FXAA, culling) that rasterises entirely on the CPU with zero GPU dependency, so
+  it runs identically everywhere. Ships with the walking-Merino-ram demos and a
+  20-strong flock. Desktop hosts for **macOS, Windows and Linux** plus on-device
+  Android/iOS — the same app source on all.
+- **Barcode scanning** — a native `<barcode-scanner>` element with `onscan`
+  dispatch: a live camera preview with an HTML overlay on Android and iOS, plus a
+  desktop/image decoder (zbar) and a scan ViewScreen example.
+- **SSO with RBAC** — generic OIDC/OAuth 2.0 login (Authorization Code + PKCE),
+  JWT claims, and role/permission access control expressed declaratively in HTML
+  (`data-role` / `data-perm`). The **desktop flow is complete**: PKCE crypto,
+  loopback redirect capture (can't hang), token exchange, and session storage
+  encrypted at rest with DPAPI on Windows. See `docs/SSO.md`.
+- **Standalone, branded desktop apps** — apps embed their UI and build to a single
+  exe with no external assets, no console window (GUI subsystem), and an embedded
+  icon shown in Explorer, the title bar and the taskbar. `tina4 init` scaffolds it
+  all; a calculator example demonstrates it desktop + Android from one HTML source.
+- **Rendering** — the frame now fills the whole window with the page's own root/
+  body background (canvas-background propagation); multiple, inset and soft-blurred
+  box-shadows; border-radius on images, backgrounds and overflow; dashed/dotted/
+  double outlines; percentage heights resolved against a definite container.
+
 ### v1.0.3
 
 - **macOS notarization** — `release-macos.sh` now Developer-ID-codesigns (hardened
