@@ -94,14 +94,16 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | direction, unicode-bidi | ❌ | LTR only (needs the Unicode bidi algorithm) |
 | tab-size | ✅ | `-moz-tab-size` too; tabs in `white-space:pre`/`pre-wrap` expand to N space-widths (default 8) |
 | text-align-last | ✅ | left/right/center/start/end/justify on the block's last line (and the line before a `<br>`) |
-| hyphens, text-rendering, text-justify | ❌ | (hyphens needs a hyphenation dictionary) |
+| text-justify | ✅ | `none` disables the justification `text-align:justify` turns on; `inter-word`/`auto` keep it |
+| text-rendering | ✅ | accepted (a rendering hint with no required visual change — no-op) |
+| hyphens | ❌ | needs a hyphenation dictionary (`auto`); soft-hyphen `manual` not yet |
 
 ## Backgrounds & borders
 
 | Property | Status | Note |
 |---|---|---|
 | background-color | ✅ | alpha-scaled by opacity |
-| background (shorthand) | 🟡 | color channel only |
+| background (shorthand) | 🟡 | colour + image (`url(...)` and every gradient) parse from the shorthand; position / size / repeat within the shorthand still need their longhands |
 | background-image: url() | ✅ | painted via the cached/async image path; size cover/contain/auto, position, repeat; clipped |
 | background: linear-gradient() | ✅ | real multi-stop gradient (up to 8 stops + positions), angle honored; backend NSGradient on Cocoa (base fallback = flat avg) |
 | background: radial-gradient() | ✅ | parsed + painted (center radial); shape/size keywords accepted, not yet modelled |
@@ -121,7 +123,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | transform: matrix() | ✅ | `matrix(a,b,c,d,e,f)` concatenated on the shell canvas (`TransformMatrix` contract method → NSAffineTransformStruct); pivots at `transform-origin` |
 | transform: 3d | ✅ | `rotateX/Y/Z`, `translateZ/translate3d`, `scaleZ/scale3d`, `perspective()`, `matrix3d()`. The chain builds a 4×4 matrix; the element rasterises into the offscreen layer, its 4 corners project through the matrix + perspective divide, and the texture is perspective-warped onto the quad (`EndLayer3D`: inverse-homography sampling → CGBitmapContext blit). The `perspective`/`perspective-origin` properties parse; per-element `perspective()` in the transform is the supported viewing model. No backface-culling / z-sorting of separate elements (`transform-style: preserve-3d` scenes) |
 | transform-origin | ✅ | keyword/px/% pivot for rotate/scale/skew (default 50% 50%) |
-| perspective | ❌ | needs a 3D pipeline |
+| perspective | 📦 | the property + `perspective-origin` parse into the computed style; the supported 3D viewing model is per-element `perspective()` in the `transform` chain (that renders), so the standalone property is parsed but not yet applied to children |
 | clip-path | ✅ | `inset()` / `circle()` / `ellipse()` / `polygon()` — the core tessellates the shape to a polygon in border-box coords and clips the subtree via the `ClipPolygon` contract method (Cocoa: `NSBezierPath.addClip`). Radius on `inset(... round)`, `path()`, and URL references not yet applied |
 | filter | ✅ | `blur` · `grayscale` · `brightness` · `contrast` · `invert` · `saturate` · `sepia` · `hue-rotate` · `opacity` · `drop-shadow`, chained. Rendered through a new offscreen-layer contract (`BeginLayer`/`EndLayerFiltered`): the element+subtree draw into an offscreen buffer, the pixels are filtered (separable box-blur ≈ Gaussian; colour-matrix ops; drop-shadow is a blurred, offset silhouette painted behind), then composited back |
 | mix-blend-mode | ✅ | all 16 separable + non-separable modes (multiply/screen/overlay/darken/lighten/color-dodge/color-burn/soft-light/hard-light/difference/exclusion/hue/saturation/color/luminosity) via `CGContextSetBlendMode` when the layer composites back |

@@ -605,6 +605,18 @@ begin
     finally
       Decls.Free;
     end;
+
+    // text-justify:none turns off the justification text-align:justify enabled
+    Decls := TCSSDeclarations.Create;
+    try
+      Decls.AddOrSetValue('text-align', 'justify');
+      Decls.AddOrSetValue('text-justify', 'none');
+      DecoStyle := TComputedStyle.Default;
+      TComputedStyle.ApplyDeclarations(Decls, DecoStyle, TComputedStyle.Default);
+      Check(not DecoStyle.TextJustify, 'text-justify:none disables justify');
+    finally
+      Decls.Free;
+    end;
     Check(TComputedStyle.Default.TabSize = 8, 'tab-size default 8');
 
     CheckEqualsF(10, TComputedStyle.ParseLength('10px'), 'ParseLength px');

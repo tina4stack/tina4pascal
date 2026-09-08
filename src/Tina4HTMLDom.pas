@@ -3778,6 +3778,10 @@ begin
   end;
   if Decls.TryGetValue('text-align-last', Temp) and not ShouldSkip(Temp) then
     Style.TextAlignLast := Temp.Trim.ToLower;
+  // text-justify: only 'none' has a visible effect for us — it turns OFF the
+  // justification that text-align:justify enabled. inter-word/auto keep it on.
+  if Decls.TryGetValue('text-justify', Temp) and not ShouldSkip(Temp) then
+    if SameText(Trim(Temp), 'none') then Style.TextJustify := False;
   if (Decls.TryGetValue('tab-size', Temp) or Decls.TryGetValue('-moz-tab-size', Temp))
      and not ShouldSkip(Temp) then
     Style.TabSize := Max(0, StrToIntDef(Trim(StringReplace(Temp, 'px', '', [rfIgnoreCase])), 8));
