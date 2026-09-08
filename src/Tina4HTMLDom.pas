@@ -378,8 +378,12 @@ type
     BgGradientAngle: Single;     // degrees clockwise from `to top`
     BgGradientActive: Boolean;
     BgGradientRadial: Boolean;   // radial-gradient() vs linear-gradient()
+    BgGradientConic: Boolean;    // conic-gradient() — angular sweep
+    BgGradientRepeating: Boolean;// repeating-*-gradient() — tile the stop pattern
+    BgGradientPeriodPx: Single;  // repeating: the stop-pattern length in px (0 = none)
     GradStopColors: array[0..7] of TAlphaColor;  // up to 8 colour stops
     GradStopPos: array[0..7] of Single;          // stop position 0..1, -1 = auto
+    GradStopPosPx: array[0..7] of Single;        // stop position in px (-1 = none), for repeating
     GradStopCount: Integer;
     // CSS transforms (subset)
     TransformActive: Boolean;
@@ -2329,6 +2333,9 @@ begin
   Result.BgRepeat := 'no-repeat';
   Result.BgGradientActive := False;
   Result.BgGradientRadial := False;
+  Result.BgGradientConic := False;
+  Result.BgGradientRepeating := False;
+  Result.BgGradientPeriodPx := 0;
   Result.GradStopCount := 0;
   Result.AppearanceNone := False;
   Result.AccentColor := 0; Result.CaretColor := 0; Result.PointerEventsNone := False; Result.BorderCollapse := False; Result.BorderSpacing := 0;
@@ -2787,6 +2794,9 @@ begin
   Result.BgRepeat := 'no-repeat';
   Result.BgGradientActive := False;
   Result.BgGradientRadial := False;
+  Result.BgGradientConic := False;
+  Result.BgGradientRepeating := False;
+  Result.BgGradientPeriodPx := 0;
   Result.GradStopCount := 0;
   Result.AppearanceNone := False;
   Result.AccentColor := 0; Result.CaretColor := 0; Result.PointerEventsNone := False; Result.BorderCollapse := False; Result.BorderSpacing := 0;
@@ -3211,32 +3221,67 @@ end;
 
 { Parse one gradient colour stop ("#fff", "var(--x)", "red 50%") and append it
   to the style's stop arrays (capped at 8). }
+{ Is `s` a gradient stop POSITION token (a %, a length, or a bare number)? }
+function IsGradPos(const s: string): Boolean;
+var t: string;
+begin
+  t := Trim(s).ToLower;
+  Result := (t <> '') and (t.EndsWith('%') or t.EndsWith('px') or t.EndsWith('em') or
+    t.EndsWith('rem') or t.EndsWith('vw') or t.EndsWith('vh') or (StrToFloatDef(t, 1e30) <> 1e30));
+end;
+
+{ A stop position → a 0..1 fraction. Percentages resolve exactly; a length has no
+  gradient span at parse time, so it becomes `auto` (-1) and is spread evenly. }
+function GradPosFrac(const s: string): Single;
+var t: string;
+begin
+  t := Trim(s).ToLower;
+  if t.EndsWith('%') then Result := StrToFloatDef(Copy(t, 1, Length(t) - 1), -100) / 100
+  else Result := -1;   // px/em stops: no span known here → auto
+end;
+
+{ Parse one gradient stop: `<color> [pos [pos]]`. A colour with no positions is
+  auto; one position sets it; TWO positions (e.g. `#333 0 8px`, the stripe syntax)
+  emit the colour twice, at each position — never feed the positions to ParseColor
+  (which would return black). }
 procedure ParseGradientStop(const S: string; var Style: TComputedStyle);
 var
-  t, colStr, posStr: string;
-  sp: Integer;
-  pos: Single;
+  t, colStr: string;
+  toks: TStringArray;
+  i, nPos: Integer;
+  col: TAlphaColor;
 begin
   if Style.GradStopCount >= 8 then Exit;
   t := Trim(S);
   if t = '' then Exit;
-  pos := -1;                       // auto
-  // a trailing "NN%" is the stop position; keep the rest as the colour
-  sp := t.LastIndexOf(' ');
-  if (sp > 0) then
+  toks := t.Split([' '], TStringSplitOptions.ExcludeEmpty);
+  // trailing 1-2 tokens that look like positions belong to the stop, not the colour
+  nPos := 0;
+  while (Length(toks) - 1 - nPos >= 1) and (nPos < 2) and IsGradPos(toks[High(toks) - nPos]) do
+    Inc(nPos);
+  colStr := '';
+  for i := 0 to High(toks) - nPos do colStr := colStr + toks[i] + ' ';
+  col := TComputedStyle.ParseColor(Trim(colStr));
+  if nPos = 0 then
   begin
-    posStr := Trim(Copy(t, sp + 2, MaxInt));
-    if posStr.EndsWith('%') then
-    begin
-      pos := StrToFloatDef(Copy(posStr, 1, Length(posStr) - 1), -1) / 100;
-      colStr := Trim(Copy(t, 1, sp));
-    end
-    else colStr := t;
+    Style.GradStopColors[Style.GradStopCount] := col;
+    Style.GradStopPos[Style.GradStopCount] := -1;
+    Style.GradStopPosPx[Style.GradStopCount] := -1;
+    Inc(Style.GradStopCount);
   end
-  else colStr := t;
-  Style.GradStopColors[Style.GradStopCount] := TComputedStyle.ParseColor(colStr);
-  Style.GradStopPos[Style.GradStopCount] := pos;
-  Inc(Style.GradStopCount);
+  else
+    for i := High(toks) - nPos + 1 to High(toks) do
+    begin
+      if Style.GradStopCount >= 8 then Break;
+      Style.GradStopColors[Style.GradStopCount] := col;
+      Style.GradStopPos[Style.GradStopCount] := GradPosFrac(toks[i]);
+      if Trim(toks[i]).ToLower.EndsWith('px') then
+        Style.GradStopPosPx[Style.GradStopCount] :=
+          StrToFloatDef(Copy(Trim(toks[i]), 1, Length(Trim(toks[i])) - 2), -1)
+      else
+        Style.GradStopPosPx[Style.GradStopCount] := -1;
+      Inc(Style.GradStopCount);
+    end;
 end;
 
 { transform-origin token → px (>=0) or a %-marker (<-1.5: -50 = 50%). Keywords
@@ -4288,15 +4333,19 @@ begin
   begin
     GSrc := GradientSrc;
     GLower := GSrc.ToLower;
+    Style.BgGradientRepeating := GLower.Contains('repeating-');
+    Style.BgGradientConic := GLower.Contains('conic-gradient(');
     Style.BgGradientRadial := GLower.Contains('radial-gradient(');
-    if Style.BgGradientRadial then GP1 := GLower.IndexOf('radial-gradient(') + 15
+    if Style.BgGradientConic then GP1 := GLower.IndexOf('conic-gradient(') + 14
+    else if Style.BgGradientRadial then GP1 := GLower.IndexOf('radial-gradient(') + 15
     else GP1 := GLower.IndexOf('linear-gradient(') + 15;
     GP2 := GLower.LastIndexOf(')');
-    if (GP1 >= 15) and (GP2 > GP1) then
+    if (GP1 >= 14) and (GP2 > GP1) then
     begin
       GInner := GSrc.Substring(GP1 + 1, GP2 - GP1 - 1);
       GArgs := SplitTopLevelCommas(GInner);
-      Style.BgGradientAngle := 180;  // default `to bottom` (top->bottom)
+      Style.BgGradientAngle := 180;  // linear default `to bottom`; conic `from` angle
+      if Style.BgGradientConic then Style.BgGradientAngle := 0;
       SetLength(GColors, 0);
       Style.GradStopCount := 0;
       for GArg in GArgs do
@@ -4304,6 +4353,9 @@ begin
         GAngleStr := GArg.Trim.ToLower;
         if GAngleStr.EndsWith('deg') then
           Style.BgGradientAngle := StrToFloatDef(GAngleStr.Substring(0, GAngleStr.Length - 3), 180)
+        else if GAngleStr.StartsWith('from ') then   // conic `from <angle>`
+          Style.BgGradientAngle := StrToFloatDef(
+            Trim(GAngleStr.Substring(5).Replace('deg', '')), 0)
         else if GAngleStr.StartsWith('to ') then
         begin
           if GAngleStr = 'to top' then Style.BgGradientAngle := 0
@@ -4314,10 +4366,14 @@ begin
         else if GAngleStr.StartsWith('circle') or GAngleStr.StartsWith('ellipse')
              or GAngleStr.StartsWith('at ') or GAngleStr.StartsWith('closest')
              or GAngleStr.StartsWith('farthest') then
-          // radial shape/size/position keywords — accepted, not modelled yet
+          // radial/conic shape/size/position keywords — accepted, not modelled yet
         else
-          ParseGradientStop(GArg.Trim, Style);   // "colour [pos%]"
+          ParseGradientStop(GArg.Trim, Style);   // "colour [pos [pos]]"
       end;
+      // repeating: the stripe period = the last px stop position (e.g. 16px)
+      Style.BgGradientPeriodPx := 0;
+      if Style.BgGradientRepeating and (Style.GradStopCount > 0) then
+        Style.BgGradientPeriodPx := Style.GradStopPosPx[Style.GradStopCount - 1];
       if Style.GradStopCount >= 2 then
       begin
         Style.BgGradientStart := Style.GradStopColors[0];

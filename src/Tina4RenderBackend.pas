@@ -63,6 +63,12 @@ type
       const Colors: array of TTina4Color; const Positions: array of Single); virtual;
     procedure FillRadialGradient(X, Y, W, H, Radius: Single;
       const Colors: array of TTina4Color; const Positions: array of Single); virtual;
+    { Software gradient (conic sweep, or a repeating linear stripe pattern) rasterised
+      per-pixel and blitted via DrawRGBA — for backends that can blit RGBA. Kind: 0
+      linear (repeating when PeriodPx>0), 2 conic (AngleDeg = `from` angle). Positions
+      are 0..1 (within one period for repeating). Falls back to a flat fill without RGBA. }
+    procedure FillGradientSoft(X, Y, W, H, Radius, AngleDeg, PeriodPx: Single; Kind: Integer;
+      const Colors: array of TTina4Color; const Positions: array of Single);
     { A soft (blurred) drop shadow for a rounded rect — CSS box-shadow. The base
       class draws a hard-edged rect so simple backends still show a shadow. }
     procedure FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color); virtual;
@@ -711,6 +717,68 @@ begin
     rgba[i] := (Cardinal(Round(av)) shl 24) or (Cardinal(cr) shl 16) or (Cardinal(cg) shl 8) or Cardinal(cb);
   end;
   DrawRGBA(@rgba[0], bw, bh, bx, by, bw, bh);
+end;
+
+{ Sample a stop list at parameter t (0..1). Auto positions (-1) are spread evenly. }
+function GradSample(t: Single; const Colors: array of TTina4Color; const Positions: array of Single): TTina4Color;
+var n, i, k: Integer; rp: array of Single; f: Single; a0,r0,g0,b0,a1,r1,g1,b1: Integer;
+begin
+  n := Length(Colors);
+  if n = 0 then Exit(0);
+  if n = 1 then Exit(Colors[0]);
+  SetLength(rp, n);
+  for i := 0 to n - 1 do
+    if (i < Length(Positions)) and (Positions[i] >= 0) then rp[i] := Positions[i]
+    else rp[i] := i / (n - 1);
+  for i := 1 to n - 1 do if rp[i] < rp[i-1] then rp[i] := rp[i-1];   // keep monotonic
+  if t <= rp[0] then Exit(Colors[0]);
+  if t >= rp[n-1] then Exit(Colors[n-1]);
+  k := 0;
+  while (k < n - 2) and (t > rp[k+1]) do Inc(k);
+  if rp[k+1] > rp[k] then f := (t - rp[k]) / (rp[k+1] - rp[k]) else f := 0;
+  a0:=(Colors[k] shr 24)and$FF; r0:=(Colors[k]shr 16)and$FF; g0:=(Colors[k]shr 8)and$FF; b0:=Colors[k]and$FF;
+  a1:=(Colors[k+1]shr 24)and$FF; r1:=(Colors[k+1]shr 16)and$FF; g1:=(Colors[k+1]shr 8)and$FF; b1:=Colors[k+1]and$FF;
+  Result := (Cardinal(Round(a0+(a1-a0)*f)) shl 24) or (Cardinal(Round(r0+(r1-r0)*f)) shl 16)
+         or (Cardinal(Round(g0+(g1-g0)*f)) shl 8) or Cardinal(Round(b0+(b1-b0)*f));
+end;
+
+procedure TTina4Canvas.FillGradientSoft(X, Y, W, H, Radius, AngleDeg, PeriodPx: Single; Kind: Integer;
+  const Colors: array of TTina4Color; const Positions: array of Single);
+var
+  iw, ih, px, py, i: Integer; rgba: array of Cardinal;
+  a, dx, dy, cx, cy, L, proj, t, ang, cov, sdf: Single; col: TTina4Color;
+begin
+  if not SupportsRGBA then begin FillRoundRect(X, Y, W, H, Radius, GradSample(0.5, Colors, Positions)); Exit; end;
+  iw := Ceil(W); ih := Ceil(H); if (iw < 1) or (ih < 1) then Exit;
+  SetLength(rgba, iw * ih);
+  a := AngleDeg * Pi / 180;
+  dx := Sin(a); dy := -Cos(a);                 // CSS axis (0=up, 90=right), y-down
+  cx := W / 2; cy := H / 2;
+  L := Abs(W * dx) + Abs(H * dy); if L < 1 then L := 1;
+  for py := 0 to ih - 1 do
+    for px := 0 to iw - 1 do
+    begin
+      if Kind = 2 then                          // conic: angle around the centre
+      begin
+        ang := ArcTan2((px + 0.5) - cx, -((py + 0.5) - cy)) * 180 / Pi;  // 0 at top, CW
+        t := ang - AngleDeg; while t < 0 do t := t + 360; while t >= 360 do t := t - 360;
+        t := t / 360;
+      end
+      else                                      // linear (optionally repeating)
+      begin
+        proj := ((px + 0.5) - cx) * dx + ((py + 0.5) - cy) * dy + L / 2;   // 0..L along axis
+        if PeriodPx > 0.5 then t := Frac(proj / PeriodPx)
+        else t := proj / L;
+        if t < 0 then t := 0; if t > 1 then t := 1;
+      end;
+      col := GradSample(t, Colors, Positions);
+      // clip to the rounded box
+      sdf := RRectSDF(X + px + 0.5, Y + py + 0.5, X + W/2, Y + H/2, W/2, H/2, Min(Radius, Min(W/2, H/2)));
+      cov := 0.5 - sdf; if cov < 0 then cov := 0; if cov > 1 then cov := 1;
+      rgba[py * iw + px] := (Cardinal(Round(cov * 255)) shl 24)
+        or ((col and $00FFFFFF));
+    end;
+  DrawRGBA(@rgba[0], iw, ih, X, Y, iw, ih);
 end;
 
 procedure TTina4Canvas.FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color);

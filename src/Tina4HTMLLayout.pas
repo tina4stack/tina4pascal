@@ -1458,7 +1458,11 @@ begin
   begin
     if SameText(St.BoxSizing, 'border-box') then usedH := Max(0, eh - edgeT - edgeB)
     else usedH := eh;
-  end;
+  end
+  // aspect-ratio with an auto height: derive the height from the width (the same
+  // rule LayoutBlock applies, but for a flex/inline-block item like a media box)
+  else if (St.AspectRatio > 0) and (Result.W > 0) then
+    usedH := Max(usedH, Max(0, Result.W / St.AspectRatio - edgeT - edgeB));
   Result.H := usedH + edgeT + edgeB;
 end;
 
@@ -4446,9 +4450,17 @@ begin
     for gi := 0 to st.GradStopCount - 1 do
     begin
       gcol[gi] := ScaleAlpha(st.GradStopColors[gi], op);
-      gpos[gi] := st.GradStopPos[gi];
+      // repeating stripes: stop positions are px within one period → 0..1 within-period
+      if st.BgGradientRepeating and (st.BgGradientPeriodPx > 0) and (st.GradStopPosPx[gi] >= 0) then
+        gpos[gi] := st.GradStopPosPx[gi] / st.BgGradientPeriodPx
+      else
+        gpos[gi] := st.GradStopPos[gi];
     end;
-    if st.BgGradientRadial then
+    if st.BgGradientConic then
+      Canvas.FillGradientSoft(Box.X, y, Box.W, Box.H, mcr, st.BgGradientAngle, 0, 2, gcol, gpos)
+    else if st.BgGradientRepeating and (st.BgGradientPeriodPx > 0) then
+      Canvas.FillGradientSoft(Box.X, y, Box.W, Box.H, mcr, st.BgGradientAngle, st.BgGradientPeriodPx, 0, gcol, gpos)
+    else if st.BgGradientRadial then
       Canvas.FillRadialGradient(Box.X, y, Box.W, Box.H, mcr, gcol, gpos)
     else
       Canvas.FillLinearGradient(Box.X, y, Box.W, Box.H, mcr,
