@@ -1,7 +1,7 @@
 unit Tina3D;
 
-{ The macOS "DOM" for ThreePascal — following three.js's proven pattern: the APP
-  owns the render loop. You create a window bound to a renderer (three.js's
+{ The desktop "DOM" for ThreePascal — following three.js's proven pattern: the
+  APP owns the render loop. You create a window bound to a renderer (three.js's
   renderer.domElement appended to the page), then drive it yourself:
 
     procedure Animate;
@@ -13,11 +13,14 @@ unit Tina3D;
     end;
     begin CreateWindow('title', w, h, renderer); RequestAnimationFrame(@Animate); Run; end.
 
-  The engine provides the surface, the loop pump, GPU present, input state, and a
-  WalkControls helper (three.js PointerLockControls analogue). No Cocoa in apps. }
+  The engine provides the surface, the loop pump, present, input state, and a
+  WalkControls helper (three.js PointerLockControls analogue). No OS calls in
+  apps. macOS uses Cocoa + a CADisplayLink; Windows uses a Win32 window and a
+  DIB blit of the renderer's RGBA framebuffer — the same buffer the Android
+  shell blits. The app source is identical on both. }
 
 {$mode delphi}{$H+}
-{$modeswitch objectivec1}
+{$IFDEF DARWIN}{$modeswitch objectivec1}{$ENDIF}
 
 interface
 
@@ -43,15 +46,39 @@ const
 
 implementation
 
-uses CocoaAll, SysUtils, Math, MacBlit;
+uses SysUtils, Math
+  {$IFDEF DARWIN}, CocoaAll, MacBlit{$ENDIF}
+  {$IFDEF WINDOWS}, Windows{$ENDIF};
 
+{ ---- shared state + pure helpers (platform-agnostic) --------------------- }
+var
+  gRend: TWebGLRenderer; gPending: TRAFProc = nil;
+  gKeys: array[0..255] of Boolean; gMDX: Single = 0; gMDY: Single = 0;
+  gLocked: Boolean = False; gFPS: Single = 0; gLastMs: QWord = 0;
+  gWalkInit: Boolean = False; gPX, gPY, gPZ, gYaw, gPitch: Single;
+
+function KeyPressed(code: Integer): Boolean; begin Result:=(code>=0) and (code<256) and gKeys[code]; end;
+function ConsumeMouseDX: Single; begin Result:=gMDX; gMDX:=0; end;
+function ConsumeMouseDY: Single; begin Result:=gMDY; gMDY:=0; end;
+
+procedure RequestAnimationFrame(cb: TRAFProc); begin gPending:=cb; end;
+
+{ FPS meter drawn into the renderer's own framebuffer (cross-platform). }
+procedure DrawFps;
+var now, dt: QWord;
+begin
+  now:=GetTickCount64; if gLastMs>0 then dt:=now-gLastMs else dt:=16; gLastMs:=now;
+  if dt<1 then dt:=1; gFPS:=gFPS*0.85 + (1000.0/dt)*0.15;
+  gRend.FillRectPx(gRend.Width-116, 0, 116, 28, 14,15,31, 0.6);
+  gRend.DrawTextPx(gRend.Width-106, 8, 'FPS '+IntToStr(Round(gFPS))+'  '+IntToStr(dt)+'MS', 2, 79,209,139);
+end;
+
+{$IFDEF DARWIN}
+{ ============================ macOS / Cocoa ============================== }
 {$linkframework CoreGraphics}
 {$linkframework QuartzCore}
 function CGAssociateMouseAndMouseCursorPosition(connected: LongInt): LongInt; cdecl; external;
 
-{ CADisplayLink (macOS 14+) isn't in FPC's CocoaAll — bind the bits we need.
-  preferredFrameRateRange is what actually REQUESTS 120 Hz on a ProMotion panel
-  (a CVDisplayLink only follows the current, adaptive refresh, so it stays 60). }
 type
   CAFrameRateRange = record minimum, maximum, preferred: single; end;
   CADisplayLink = objcclass external (NSObject)
@@ -63,17 +90,8 @@ type
     function displayLinkWithTarget_selector(target: id; sel: SEL): CADisplayLink; message 'displayLinkWithTarget:selector:';
   end;
 
-var
-  gRend: TWebGLRenderer; gPending: TRAFProc = nil;
-  gKeys: array[0..127] of Boolean; gMDX: Single = 0; gMDY: Single = 0;
-  gLocked: Boolean = False; gFPS: Single = 0; gLastMs: QWord = 0;
-  gWalkInit: Boolean = False; gPX, gPY, gPZ, gYaw, gPitch: Single;
-
 procedure PointerLock;   begin if gLocked then Exit; NSCursor.hide; CGAssociateMouseAndMouseCursorPosition(0); gLocked:=True; end;
 procedure PointerUnlock; begin if not gLocked then Exit; CGAssociateMouseAndMouseCursorPosition(1); NSCursor.unhide; gLocked:=False; end;
-function KeyPressed(code: Integer): Boolean; begin Result:=(code>=0) and (code<128) and gKeys[code]; end;
-function ConsumeMouseDX: Single; begin Result:=gMDX; gMDX:=0; end;
-function ConsumeMouseDY: Single; begin Result:=gMDY; gMDY:=0; end;
 
 type
   T3DView = objcclass(NSView)
@@ -86,8 +104,8 @@ type
     procedure mouseDown(e: NSEvent); override;
   end;
   T3DTicker = objcclass(NSObject)
-    procedure tick(t: NSTimer); message 'tick:';           // NSTimer fallback (no CADisplayLink)
-    procedure frame(sender: id); message 'frame:';         // CADisplayLink callback (main thread)
+    procedure tick(t: NSTimer); message 'tick:';
+    procedure frame(sender: id); message 'frame:';
   end;
   T3DDelegate = objcclass(NSObject, NSApplicationDelegateProtocol)
     function applicationShouldTerminateAfterLastWindowClosed(s: NSApplication): ObjCBOOL; message 'applicationShouldTerminateAfterLastWindowClosed:';
@@ -111,20 +129,12 @@ begin
 end;
 procedure T3DView.keyUp(e: NSEvent); begin if e.keyCode<128 then gKeys[e.keyCode]:=False; end;
 
-{ the pump — fires the app's pending rAF callback (which renders + reschedules) }
 procedure T3DTicker.tick(t: NSTimer);
 var cb: TRAFProc;
-begin
-  if Assigned(gPending) then begin cb:=gPending; gPending:=nil; cb(); end;
-end;
-
-{ CADisplayLink fires this on the main thread, vsync-locked to the display's real
-  refresh — 120 Hz on the ProMotion panel once preferredFrameRateRange asks for it. }
+begin if Assigned(gPending) then begin cb:=gPending; gPending:=nil; cb(); end; end;
 procedure T3DTicker.frame(sender: id);
 var cb: TRAFProc;
-begin
-  if Assigned(gPending) then begin cb:=gPending; gPending:=nil; cb(); end;
-end;
+begin if Assigned(gPending) then begin cb:=gPending; gPending:=nil; cb(); end; end;
 
 function T3DDelegate.applicationShouldTerminateAfterLastWindowClosed(s: NSApplication): ObjCBOOL; begin Result:=True; end;
 procedure T3DDelegate.applicationWillTerminate(n: NSNotification); begin PointerUnlock; end;
@@ -145,10 +155,6 @@ begin
   win.setContentView(gView); win.makeFirstResponder(gView); win.makeKeyAndOrderFront(nil);
   NSApp.activateIgnoringOtherApps(True);
   ticker:=T3DTicker.alloc.init;
-  { Drive frames from a CADisplayLink at the display's real refresh, and REQUEST the
-    high rate — on the ProMotion XDR panel this runs the frame loop at 120 Hz (a plain
-    NSTimer / CVDisplayLink is compositor-throttled to 60). Falls back to a 120 Hz timer
-    on any macOS that lacks displayLinkWithTarget:selector: (pre-14). }
   dl:=gView.displayLinkWithTarget_selector(id(ticker), objcselector('frame:'));
   if dl<>nil then
   begin
@@ -160,21 +166,126 @@ begin
     NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(1/120, ticker, objcselector('tick:'), nil, True);
 end;
 
-procedure RequestAnimationFrame(cb: TRAFProc); begin gPending:=cb; end;
-
 procedure Present;
-var now, dt: QWord;
 begin
   if gRend=nil then Exit;
-  now:=GetTickCount64; if gLastMs>0 then dt:=now-gLastMs else dt:=16; gLastMs:=now;
-  if dt<1 then dt:=1; gFPS:=gFPS*0.85 + (1000.0/dt)*0.15;
-  gRend.FillRectPx(gRend.Width-116, 0, 116, 28, 14,15,31, 0.6);
-  gRend.DrawTextPx(gRend.Width-106, 8, 'FPS '+IntToStr(Round(gFPS))+'  '+IntToStr(dt)+'MS', 2, 79,209,139);
+  DrawFps;
   MacBlit.Present(gView, @gRend.Pixels[0], gRend.Width, gRend.Height);
 end;
 
 procedure Run; begin NSApp.run; end;
+{$ENDIF}
 
+{$IFDEF WINDOWS}
+{ ============================ Windows / Win32 =========================== }
+var
+  gHwnd: HWND = 0; gW: Integer = 0; gH: Integer = 0;
+  gBits: array of Byte;          // BGRA top-down DIB, filled from gRend.Pixels each frame
+
+procedure PointerLock;   begin gLocked:=True; end;    // no cursor capture needed for the flock demo
+procedure PointerUnlock; begin gLocked:=False; end;
+
+{ RGBA (R,G,B,A) → 32bpp DIB (B,G,R,0), then blit to the window. }
+procedure WinBlit;
+var n, i: Integer; src: PByte; dst: PByte; bi: BITMAPINFO; dc: HDC; cr: TRect;
+begin
+  if (gHwnd=0) or (gRend=nil) then Exit;
+  n := gRend.Width * gRend.Height;
+  if Length(gBits) <> n*4 then SetLength(gBits, n*4);
+  src := @gRend.Pixels[0]; dst := @gBits[0];
+  for i := 0 to n-1 do
+  begin
+    dst[0] := src[2]; dst[1] := src[1]; dst[2] := src[0]; dst[3] := 0;   // B G R 0
+    Inc(src, 4); Inc(dst, 4);
+  end;
+  FillChar(bi, SizeOf(bi), 0);
+  bi.bmiHeader.biSize := SizeOf(BITMAPINFOHEADER);
+  bi.bmiHeader.biWidth := gRend.Width;
+  bi.bmiHeader.biHeight := -gRend.Height;    // negative = top-down
+  bi.bmiHeader.biPlanes := 1;
+  bi.bmiHeader.biBitCount := 32;
+  bi.bmiHeader.biCompression := BI_RGB;
+  dc := GetDC(gHwnd);
+  GetClientRect(gHwnd, cr);                    // stretch to fill the (DPI-scaled) client
+  StretchDIBits(dc, 0, 0, cr.Right, cr.Bottom, 0, 0, gRend.Width, gRend.Height,
+    @gBits[0], bi, DIB_RGB_COLORS, SRCCOPY);
+  ReleaseDC(gHwnd, dc);
+end;
+
+function VkToKey(vk: WPARAM): Integer;
+begin
+  case vk of
+    Ord('W'): Result:=KEY_W; Ord('A'): Result:=KEY_A; Ord('S'): Result:=KEY_S; Ord('D'): Result:=KEY_D;
+    VK_LEFT: Result:=KEY_LEFT; VK_RIGHT: Result:=KEY_RIGHT; VK_UP: Result:=KEY_UP; VK_DOWN: Result:=KEY_DOWN;
+  else Result:=-1;
+  end;
+end;
+
+function WndProc(hwnd: HWND; msg: UINT; wp: WPARAM; lp: LPARAM): LRESULT; stdcall;
+var k: Integer;
+begin
+  Result := 0;
+  case msg of
+    WM_KEYDOWN:
+      begin
+        if wp = VK_ESCAPE then begin PostQuitMessage(0); Exit; end;
+        k := VkToKey(wp); if (k>=0) and (k<256) then gKeys[k]:=True;
+      end;
+    WM_KEYUP: begin k := VkToKey(wp); if (k>=0) and (k<256) then gKeys[k]:=False; end;
+    WM_PAINT: begin WinBlit; ValidateRect(hwnd, nil); end;
+    WM_DESTROY: begin PostQuitMessage(0); end;
+  else
+    Result := DefWindowProcW(hwnd, msg, wp, lp);
+  end;
+end;
+
+procedure CreateWindow(const title: string; w, h: Integer; renderer: TWebGLRenderer);
+var wc: WNDCLASSW; cap: UnicodeString; r: TRect; style: DWORD;
+begin
+  gRend := renderer; gW := w; gH := h;
+  FillChar(wc, SizeOf(wc), 0);
+  wc.lpfnWndProc := @WndProc;
+  wc.hInstance := HInstance;
+  wc.hCursor := LoadCursor(0, IDC_ARROW);
+  wc.hbrBackground := 0;
+  wc.lpszClassName := 'Tina3DWindow';
+  RegisterClassW(wc);
+  { size the window so the CLIENT area is w×h }
+  style := WS_OVERLAPPEDWINDOW;
+  r.Left := 0; r.Top := 0; r.Right := w; r.Bottom := h;
+  AdjustWindowRect(r, style, False);
+  cap := UnicodeString(title);
+  gHwnd := CreateWindowExW(0, 'Tina3DWindow', PWideChar(cap), style,
+    CW_USEDEFAULT, CW_USEDEFAULT, r.Right-r.Left, r.Bottom-r.Top, 0, 0, HInstance, nil);
+  ShowWindow(gHwnd, SW_SHOW); UpdateWindow(gHwnd);
+end;
+
+procedure Present;
+begin
+  if gRend=nil then Exit;
+  DrawFps;
+  WinBlit;
+end;
+
+{ game loop: pump messages, then run the pending rAF callback as fast as the
+  software renderer allows (Sleep(1) when idle so we don't spin a core flat). }
+procedure Run;
+var msg: TMsg; cb: TRAFProc;
+begin
+  while True do
+  begin
+    while PeekMessageW(msg, 0, 0, 0, PM_REMOVE) do
+    begin
+      if msg.message = WM_QUIT then Exit;
+      TranslateMessage(msg); DispatchMessageW(msg);
+    end;
+    if Assigned(gPending) then begin cb:=gPending; gPending:=nil; cb(); end
+    else Sleep(1);
+  end;
+end;
+{$ENDIF}
+
+{ ---- shared: WalkControls (pure math over the input state) --------------- }
 procedure WalkControls(cam: TPerspectiveCamera; boundX, boundZ: Single);
 const SPD=0.11; ROT=0.03; SENS=0.0026;
 var fx, fz, rx, rz, tx, ty, tz: Single;

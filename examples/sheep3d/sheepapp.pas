@@ -6,6 +6,7 @@ program sheepapp;
   clouds, and calls renderer.Render. The engine (Tina3D) is the "DOM". }
 
 {$mode delphi}{$H+}
+{$IFDEF WINDOWS}{$apptype gui}{$ENDIF}
 
 uses Math, ThreePascal, RamModel, CloudField, Tina3D;
 
