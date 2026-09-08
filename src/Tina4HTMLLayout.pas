@@ -4080,21 +4080,39 @@ end;
 procedure PaintBorders(Canvas: TTina4Canvas; Box: TLayoutBox;
   const st: TComputedStyle; y, op: Single);
 var
-  wT, wR, wB, wL: Single;
+  wT, wR, wB, wL, x0, y0, x1, y1: Single;
   style: string;
+  function Quad(ax, ay, bx, by, cx, cy, dx, dy: Single): TTina4PointArray;
+  begin
+    SetLength(Result, 4);
+    Result[0].X:=ax; Result[0].Y:=ay; Result[1].X:=bx; Result[1].Y:=by;
+    Result[2].X:=cx; Result[2].Y:=cy; Result[3].X:=dx; Result[3].Y:=dy;
+  end;
 begin
   wT := st.BorderWidths.Top;    wR := st.BorderWidths.Right;
   wB := st.BorderWidths.Bottom; wL := st.BorderWidths.Left;
   style := LowerCase(st.BorderStyle);
   if style = 'none' then Exit;
-  if wT > 0 then PaintBorderEdge(Canvas, Box.X, y, Box.W, wT, True, style,
-    ScaleAlpha(st.BorderColors[0], op));
-  if wB > 0 then PaintBorderEdge(Canvas, Box.X, y + Box.H - wB, Box.W, wB, True, style,
-    ScaleAlpha(st.BorderColors[2], op));
-  if wL > 0 then PaintBorderEdge(Canvas, Box.X, y, wL, Box.H, False, style,
-    ScaleAlpha(st.BorderColors[3], op));
-  if wR > 0 then PaintBorderEdge(Canvas, Box.X + Box.W - wR, y, wR, Box.H, False, style,
-    ScaleAlpha(st.BorderColors[1], op));
+  // dashed/dotted/double keep the per-edge stepped painter (no diagonal miters)
+  if (style = 'dashed') or (style = 'dotted') or (style = 'double') then
+  begin
+    if wT > 0 then PaintBorderEdge(Canvas, Box.X, y, Box.W, wT, True, style, ScaleAlpha(st.BorderColors[0], op));
+    if wB > 0 then PaintBorderEdge(Canvas, Box.X, y + Box.H - wB, Box.W, wB, True, style, ScaleAlpha(st.BorderColors[2], op));
+    if wL > 0 then PaintBorderEdge(Canvas, Box.X, y, wL, Box.H, False, style, ScaleAlpha(st.BorderColors[3], op));
+    if wR > 0 then PaintBorderEdge(Canvas, Box.X + Box.W - wR, y, wR, Box.H, False, style, ScaleAlpha(st.BorderColors[1], op));
+    Exit;
+  end;
+  // solid: each side is a TRAPEZOID meeting adjacent sides at a 45° miter, so a
+  // 0-size box with thick borders forms the classic CSS triangle/arrow.
+  x0 := Box.X; y0 := y; x1 := Box.X + Box.W; y1 := y + Box.H;
+  if (wT > 0) and ((st.BorderColors[0] shr 24) > 0) then
+    Canvas.FillPolygon([Quad(x0,y0, x1,y0, x1-wR,y0+wT, x0+wL,y0+wT)], ScaleAlpha(st.BorderColors[0], op), False);
+  if (wR > 0) and ((st.BorderColors[1] shr 24) > 0) then
+    Canvas.FillPolygon([Quad(x1,y0, x1,y1, x1-wR,y1-wB, x1-wR,y0+wT)], ScaleAlpha(st.BorderColors[1], op), False);
+  if (wB > 0) and ((st.BorderColors[2] shr 24) > 0) then
+    Canvas.FillPolygon([Quad(x0,y1, x1,y1, x1-wR,y1-wB, x0+wL,y1-wB)], ScaleAlpha(st.BorderColors[2], op), False);
+  if (wL > 0) and ((st.BorderColors[3] shr 24) > 0) then
+    Canvas.FillPolygon([Quad(x0,y0, x0,y1, x0+wL,y1-wB, x0+wL,y0+wT)], ScaleAlpha(st.BorderColors[3], op), False);
 end;
 
 { Paint a box's background-image. Handles background-size cover/contain/auto,
