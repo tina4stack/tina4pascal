@@ -324,7 +324,9 @@ type
     WordBreak: string;
     OverflowWrap: string;
     TextOverflow: string;
-    BoxShadow: TBoxShadow;
+    BoxShadow: TBoxShadow;                 // first shadow (compat); full list below
+    BoxShadows: array[0..7] of TBoxShadow; // all comma-separated shadows, [0] = on top
+    BoxShadowCount: Integer;               // number of shadows in BoxShadows
     ObjectFit: string;     // 'fill' (default), 'cover', 'contain', 'none', 'scale-down'
     BackgroundImage: string; // URL from background-image: url(...)
     BackgroundSize: string;  // 'auto', 'cover', 'contain', or explicit size
@@ -2285,6 +2287,7 @@ begin
   Result.OverflowWrap := 'normal';
   Result.TextOverflow := 'clip';
   Result.BoxShadow.Active := False;
+  Result.BoxShadowCount := 0;
   Result.ObjectFit := 'fill';
   Result.BackgroundImage := '';
   Result.BackgroundSize := 'auto';
@@ -2672,6 +2675,7 @@ begin
   Result.BoxShadow.Color := 0;
   Result.BoxShadow.Inset := False;
   Result.BoxShadow.Active := False;
+  Result.BoxShadowCount := 0;
   Result.TextShadowOffsetX := 0;
   Result.TextShadowOffsetY := 0;
   Result.TextShadowBlur := 0;
@@ -3427,6 +3431,55 @@ begin
   end;
 end;
 
+{ Split a CSS value list on TOP-LEVEL commas only (commas inside rgba()/calc()
+  parentheses are kept), for multi-value box-shadow / transition / etc. }
+function SplitTopLevelComma(const s: string): TStringArray;
+var i, depth, start: Integer;
+begin
+  SetLength(Result, 0); depth := 0; start := 1;
+  for i := 1 to Length(s) do
+  begin
+    if s[i] = '(' then Inc(depth)
+    else if s[i] = ')' then begin if depth > 0 then Dec(depth); end
+    else if (s[i] = ',') and (depth = 0) then
+    begin
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := Trim(Copy(s, start, i - start));
+      start := i + 1;
+    end;
+  end;
+  SetLength(Result, Length(Result) + 1);
+  Result[High(Result)] := Trim(Copy(s, start, Length(s) - start + 1));
+end;
+
+{ Parse one shadow spec: [inset] offX offY [blur [spread]] [color]. }
+function ParseOneBoxShadow(const raw: string; FontSize: Single): TBoxShadow;
+var s, t: string; parts: TStringArray; nums: array of Single; pl: Single;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  Result.Color := $40000000;   // default semi-transparent black
+  Result.Active := True;
+  s := raw.Trim.ToLower;
+  Result.Inset := s.Contains('inset');
+  s := s.Replace('inset', '').Trim;
+  parts := s.Split([' ']);
+  SetLength(nums, 0);
+  for t in parts do
+  begin
+    if Trim(t) = '' then Continue;
+    pl := TComputedStyle.ParseLength(Trim(t), FontSize);
+    if (Trim(t).EndsWith('px')) or (Trim(t).EndsWith('em')) or (Trim(t).EndsWith('rem')) or
+       (Trim(t) = '0') or (StrToFloatDef(Trim(t), Single.MaxValue) <> Single.MaxValue) then
+    begin SetLength(nums, Length(nums) + 1); nums[High(nums)] := pl; end
+    else
+      Result.Color := TComputedStyle.ParseColor(Trim(t));
+  end;
+  if Length(nums) >= 1 then Result.OffsetX := nums[0];
+  if Length(nums) >= 2 then Result.OffsetY := nums[1];
+  if Length(nums) >= 3 then Result.BlurRadius := nums[2];
+  if Length(nums) >= 4 then Result.SpreadRadius := nums[3];
+end;
+
 class procedure TComputedStyle.ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle);
 var
   Temp: string;
@@ -3997,42 +4050,28 @@ begin
   if Decls.TryGetValue('text-overflow', Temp) and not ShouldSkip(Temp) then
     Style.TextOverflow := Temp.ToLower;
 
-  // box-shadow: offsetX offsetY [blur [spread]] color [inset]
+  // box-shadow: one or more (comma-separated) shadows, each
+  //   [inset] offsetX offsetY [blur [spread]] [color]   — first listed paints on top
   if Decls.TryGetValue('box-shadow', Temp) and not ShouldSkip(Temp) then
   begin
-    ShadowStr := Temp.Trim.ToLower;
-    if ShadowStr = 'none' then
-      Style.BoxShadow.Active := False
+    if SameText(Temp.Trim, 'none') then
+    begin
+      Style.BoxShadow.Active := False;
+      Style.BoxShadowCount := 0;
+    end
     else
     begin
-      Style.BoxShadow.Active := True;
-      Style.BoxShadow.Inset := ShadowStr.Contains('inset');
-      ShadowStr := ShadowStr.Replace('inset', '').Trim;
-      // Parse: values are space-separated lengths then a color
-      SParts := ShadowStr.Split([' ']);
-      SetLength(Nums, 0);
-      Style.BoxShadow.Color := $40000000;  // default: semi-transparent black
+      SParts := SplitTopLevelComma(Temp.Trim);
+      Style.BoxShadowCount := 0;
       for SP in SParts do
       begin
-        ST := SP.Trim;
-        if ST = '' then Continue;
-        PL := ParseLength(ST, Style.FontSize);
-        // ParseLength returns 0 for unknown strings, but also for "0px"
-        // Check if it looks numeric
-        if (ST.EndsWith('px')) or (ST.EndsWith('em')) or (ST.EndsWith('rem')) or
-           (ST = '0') or (StrToFloatDef(ST, Single.MaxValue) <> Single.MaxValue) then
-        begin
-          SetLength(Nums, Length(Nums) + 1);
-          Nums[High(Nums)] := PL;
-        end
-        else
-          Style.BoxShadow.Color := ParseColor(ST);
+        if Trim(SP) = '' then Continue;
+        if Style.BoxShadowCount > High(Style.BoxShadows) then Break;   // cap at 8
+        Style.BoxShadows[Style.BoxShadowCount] := ParseOneBoxShadow(SP, Style.FontSize);
+        Inc(Style.BoxShadowCount);
       end;
-      // Assign numeric values: offsetX, offsetY, [blur, [spread]]
-      if Length(Nums) >= 1 then Style.BoxShadow.OffsetX := Nums[0];
-      if Length(Nums) >= 2 then Style.BoxShadow.OffsetY := Nums[1];
-      if Length(Nums) >= 3 then Style.BoxShadow.BlurRadius := Nums[2] else Style.BoxShadow.BlurRadius := 0;
-      if Length(Nums) >= 4 then Style.BoxShadow.SpreadRadius := Nums[3] else Style.BoxShadow.SpreadRadius := 0;
+      if Style.BoxShadowCount > 0 then Style.BoxShadow := Style.BoxShadows[0]
+      else Style.BoxShadow.Active := False;
     end;
   end;
 

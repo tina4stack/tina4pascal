@@ -4137,6 +4137,7 @@ var
   lpw, lph: Integer;
   mcr: Single;   // resolved max border-radius (px; % resolved against this box)
   olStyle: string; olw, olx, oly, olrw, olrh: Single;   // dashed/dotted/double outline edges
+  shi: Integer;   // box-shadow list index
 begin
   st := Box.Style;
   // CSS transition: ease transform/opacity/colours toward their computed value
@@ -4325,32 +4326,29 @@ begin
     Exit;
   end;
 
-  // box-shadow (drawn under the box). A blurred (soft) shadow uses the backend
-  // blur primitive; a zero-blur shadow is a hard rounded rect. Follows the box's
-  // corner radius so a square shadow never peeks past a rounded card.
-  if (not Hidden) and st.BoxShadow.Active and not st.BoxShadow.Inset then
-    if st.BoxShadow.BlurRadius > 0 then
-      Canvas.FillSoftShadow(
-        Box.X + st.BoxShadow.OffsetX - st.BoxShadow.SpreadRadius,
-        y + st.BoxShadow.OffsetY - st.BoxShadow.SpreadRadius,
-        Box.W + 2 * st.BoxShadow.SpreadRadius,
-        Box.H + 2 * st.BoxShadow.SpreadRadius,
-        mcr, st.BoxShadow.BlurRadius,
-        ScaleAlpha(st.BoxShadow.Color, op))
-    else if mcr > 0 then
-      Canvas.FillRoundRect(
-        Box.X + st.BoxShadow.OffsetX - st.BoxShadow.SpreadRadius,
-        y + st.BoxShadow.OffsetY - st.BoxShadow.SpreadRadius,
-        Box.W + 2 * st.BoxShadow.SpreadRadius,
-        Box.H + 2 * st.BoxShadow.SpreadRadius,
-        mcr, ScaleAlpha(st.BoxShadow.Color, op))
-    else
-      Canvas.FillRect(
-        Box.X + st.BoxShadow.OffsetX - st.BoxShadow.SpreadRadius,
-        y + st.BoxShadow.OffsetY - st.BoxShadow.SpreadRadius,
-        Box.W + 2 * st.BoxShadow.SpreadRadius,
-        Box.H + 2 * st.BoxShadow.SpreadRadius,
-        ScaleAlpha(st.BoxShadow.Color, op));
+  // box-shadow (drawn under the box). Each comma-separated shadow; the first
+  // listed paints ON TOP, so draw the list back-to-front (last index first). A
+  // blurred shadow uses the backend blur primitive; a zero-blur one is a hard
+  // rounded rect. Follows the box's corner radius so it never peeks past a card.
+  if not Hidden then
+    for shi := st.BoxShadowCount - 1 downto 0 do
+      if not st.BoxShadows[shi].Inset then
+        with st.BoxShadows[shi] do
+          if BlurRadius > 0 then
+            Canvas.FillSoftShadow(
+              Box.X + OffsetX - SpreadRadius, y + OffsetY - SpreadRadius,
+              Box.W + 2 * SpreadRadius, Box.H + 2 * SpreadRadius,
+              mcr, BlurRadius, ScaleAlpha(Color, op))
+          else if mcr > 0 then
+            Canvas.FillRoundRect(
+              Box.X + OffsetX - SpreadRadius, y + OffsetY - SpreadRadius,
+              Box.W + 2 * SpreadRadius, Box.H + 2 * SpreadRadius,
+              mcr, ScaleAlpha(Color, op))
+          else
+            Canvas.FillRect(
+              Box.X + OffsetX - SpreadRadius, y + OffsetY - SpreadRadius,
+              Box.W + 2 * SpreadRadius, Box.H + 2 * SpreadRadius,
+              ScaleAlpha(Color, op));
 
   bg := ScaleAlpha(st.BackgroundColor, op);
   bd := ScaleAlpha(st.BorderColor, op);
@@ -4388,14 +4386,14 @@ begin
   // tiled per background-repeat, and clipped to the box.
   if (not Hidden) and (st.BackgroundImage <> '') and (Box.W > 0) and (Box.H > 0) then
     PaintBackgroundImage(Canvas, Box, st, y);
-  // inset box-shadow: cast inward from the edges, over the background, under the
-  // border/content (CSS paint order).
-  if (not Hidden) and st.BoxShadow.Active and st.BoxShadow.Inset
-     and (Box.W > 0) and (Box.H > 0) then
-    Canvas.FillInsetShadow(Box.X, y, Box.W, Box.H, mcr,
-      st.BoxShadow.OffsetX, st.BoxShadow.OffsetY,
-      st.BoxShadow.BlurRadius, st.BoxShadow.SpreadRadius,
-      ScaleAlpha(st.BoxShadow.Color, op));
+  // inset box-shadows: cast inward from the edges, over the background, under the
+  // border/content (CSS paint order); first-listed on top → draw back-to-front.
+  if (not Hidden) and (Box.W > 0) and (Box.H > 0) then
+    for shi := st.BoxShadowCount - 1 downto 0 do
+      if st.BoxShadows[shi].Inset then
+        with st.BoxShadows[shi] do
+          Canvas.FillInsetShadow(Box.X, y, Box.W, Box.H, mcr,
+            OffsetX, OffsetY, BlurRadius, SpreadRadius, ScaleAlpha(Color, op));
   // <canvas>: hand a Tina4Canvas2D (origin at the box top-left, clipped to it) to
   // the Pascal painter registered for this canvas id — the no-JS canvas.
   if (not Hidden) and (Box.Tag <> nil) and SameText(Box.Tag.TagName, 'canvas') then
