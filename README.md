@@ -267,21 +267,26 @@ PPC_CONFIG_PATH=$HOME/fpc/etc $HOME/fpc/bin/fpc -Mdelphi -Twin64 -Px86_64 \
   -FE/tmp/w -FU/tmp/w -Fusrc examples/htmlviewer/htmlviewer_win.pas
 ```
 
-**Code signing (Authenticode).** `tina4pascal build win64` signs the `.exe` when a
-code-signing certificate is configured — via `osslsigncode`, so it signs straight
-from the Mac cross-build (no Windows box needed). Secrets stay in the environment,
-never the repo:
+**Code signing (Authenticode).** `tina4pascal build win64` signs the `.exe` with
+`osslsigncode` straight from the Mac cross-build (no Windows box needed), SHA-256 +
+RFC3161-timestamped. Two key sources, tried in order:
 
-```sh
-export TINA4_WIN_CERT=/path/to/codesign.p12   # PKCS#12 (.pfx/.p12); required to sign
-export TINA4_WIN_CERT_PASS=…                   # its password (optional)
-# optional overrides: TINA4_WIN_TS (RFC3161 TSA, default DigiCert),
-#                     TINA4_WIN_SIGN_NAME (default Tina4Pascal), TINA4_WIN_SIGN_URL
-./tools/tina4pascal build win64                # → SHA-256 + RFC3161-timestamped exe
-```
+- **SimplySign / a PKCS#11 token** (Certum cloud EV cert — the key never leaves the
+  token). Auto-used when SimplySign is installed; just **log into SimplySign Desktop**
+  first, then `tina4pascal build win64` — no env vars needed. Overridable with
+  `TINA4_WIN_PKCS11_MODULE` / `_ENGINE` / `_CERT` / `_KEY` (defaults autodetect the
+  module + libp11 engine and pick the token's single cert/key).
+- **A PKCS#12 file:**
+  ```sh
+  export TINA4_WIN_CERT=/path/to/codesign.p12   # .pfx/.p12
+  export TINA4_WIN_CERT_PASS=…                   # optional
+  ```
 
-With no `TINA4_WIN_CERT` set the build prints an `UNSIGNED` notice and proceeds, so
-dev builds still work. Needs `brew install osslsigncode` (already on the build Mac).
+Common overrides: `TINA4_WIN_TS` (TSA URL, default DigiCert), `TINA4_WIN_SIGN_NAME`,
+`TINA4_WIN_SIGN_URL`. With neither key source available the build prints an
+`UNSIGNED` notice and proceeds, so dev builds still work. Needs
+`brew install osslsigncode libp11` (already on the build Mac); secrets stay in the
+environment / token, never the repo.
 
 ### What's next on Windows
 

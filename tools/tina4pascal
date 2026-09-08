@@ -221,37 +221,83 @@ build_prog() {
 }
 
 # Authenticode-sign a Windows .exe with osslsigncode (cross-platform, so we sign
-# straight from the Mac cross-build). No-op — not an error — when no cert is
-# configured, so unsigned dev builds still work. Secrets stay in env, never the
-# repo, mirroring the Android keystore contract:
-#   TINA4_WIN_CERT       path to the PKCS#12 (.pfx/.p12) code-signing cert  [required to sign]
-#   TINA4_WIN_CERT_PASS  its password                                       [optional]
-#   TINA4_WIN_TS         RFC3161 timestamp URL   [default DigiCert]
-#   TINA4_WIN_SIGN_NAME  signature description   [default Tina4Pascal]
-#   TINA4_WIN_SIGN_URL   signature URL           [default https://tina4.com]
+# straight from the Mac cross-build). Two key sources, tried in order:
+#
+#   1. SimplySign / any PKCS#11 token (Certum cloud EV cert lives on a virtual
+#      token — no key file). Auto-detected when the SimplySign module is present;
+#      needs an active SimplySign Desktop session (log in via the mobile app).
+#   2. A PKCS#12 (.pfx/.p12) file via TINA4_WIN_CERT.
+#
+# No-op — not an error — when neither is available, so unsigned dev builds work.
+# Secrets never touch the repo (mirrors the Android keystore contract):
+#   PKCS#11:  TINA4_WIN_PKCS11_MODULE  module .dylib/.so   [default: SimplySign if installed]
+#             TINA4_WIN_PKCS11_ENGINE  libp11 engine       [default: autodetected]
+#             TINA4_WIN_PKCS11_CERT    cert PKCS#11 URI     [default pkcs11:type=cert]
+#             TINA4_WIN_PKCS11_KEY     key  PKCS#11 URI     [default pkcs11:type=private]
+#   PKCS#12:  TINA4_WIN_CERT (.pfx/.p12)   TINA4_WIN_CERT_PASS
+#   Common:   TINA4_WIN_TS (RFC3161 URL, default DigiCert), TINA4_WIN_SIGN_NAME,
+#             TINA4_WIN_SIGN_URL
 sign_windows_exe() {
   exe="$1"
-  if [ -z "${TINA4_WIN_CERT:-}" ]; then
-    warn "Windows exe UNSIGNED — set TINA4_WIN_CERT (PKCS#12) to Authenticode-sign it"
-    return 0
-  fi
-  [ -f "$TINA4_WIN_CERT" ] || die "TINA4_WIN_CERT not found: $TINA4_WIN_CERT"
-  command -v osslsigncode >/dev/null 2>&1 || die "osslsigncode not installed (brew install osslsigncode)"
   ts="${TINA4_WIN_TS:-http://timestamp.digicert.com}"
   nm="${TINA4_WIN_SIGN_NAME:-Tina4Pascal}"
   url="${TINA4_WIN_SIGN_URL:-https://tina4.com}"
   tmp="${exe}.signed"
-  say "${D}osslsigncode sign (sha256, RFC3161 $ts)${Z}"
-  if [ -n "${TINA4_WIN_CERT_PASS:-}" ]; then
-    osslsigncode sign -pkcs12 "$TINA4_WIN_CERT" -pass "$TINA4_WIN_CERT_PASS" \
-      -h sha256 -n "$nm" -i "$url" -ts "$ts" -in "$exe" -out "$tmp" \
-      || die "Authenticode signing failed"
-  else
-    osslsigncode sign -pkcs12 "$TINA4_WIN_CERT" \
-      -h sha256 -n "$nm" -i "$url" -ts "$ts" -in "$exe" -out "$tmp" \
-      || die "Authenticode signing failed"
+
+  # ---- method resolution --------------------------------------------------
+  ss_default="/usr/local/lib/libSimplySignPKCS.dylib"
+  p11mod="${TINA4_WIN_PKCS11_MODULE:-}"
+  p11auto=""
+  if [ -z "$p11mod" ] && [ -z "${TINA4_WIN_CERT:-}" ] && [ -f "$ss_default" ]; then
+    p11mod="$ss_default"; p11auto="1"   # opportunistic: SimplySign is installed
   fi
-  mv -f "$tmp" "$exe"
+
+  if [ -z "$p11mod" ] && [ -z "${TINA4_WIN_CERT:-}" ]; then
+    warn "Windows exe UNSIGNED — log into SimplySign Desktop, or set TINA4_WIN_CERT (PKCS#12), to Authenticode-sign it"
+    return 0
+  fi
+  command -v osslsigncode >/dev/null 2>&1 || die "osslsigncode not installed (brew install osslsigncode)"
+
+  if [ -n "$p11mod" ]; then
+    # ---- PKCS#11 (SimplySign / token) -------------------------------------
+    [ -f "$p11mod" ] || die "PKCS#11 module not found: $p11mod"
+    eng="${TINA4_WIN_PKCS11_ENGINE:-}"
+    if [ -z "$eng" ]; then
+      for c in /opt/homebrew/lib/engines-3/pkcs11.dylib /usr/local/lib/engines-3/pkcs11.dylib \
+               /opt/homebrew/lib/engines-1.1/pkcs11.dylib; do
+        [ -f "$c" ] && eng="$c" && break
+      done
+    fi
+    [ -n "$eng" ] || die "pkcs11 engine not found — brew install libp11, or set TINA4_WIN_PKCS11_ENGINE"
+    certuri="${TINA4_WIN_PKCS11_CERT:-pkcs11:type=cert}"
+    keyuri="${TINA4_WIN_PKCS11_KEY:-pkcs11:type=private}"
+    say "${D}osslsigncode sign — PKCS#11 token (sha256, RFC3161 $ts)${Z}"
+    if osslsigncode sign -pkcs11engine "$eng" -pkcs11module "$p11mod" \
+         -pkcs11cert "$certuri" -key "$keyuri" \
+         -h sha256 -n "$nm" -i "$url" -ts "$ts" -in "$exe" -out "$tmp"; then
+      mv -f "$tmp" "$exe"
+    else
+      rm -f "$tmp"
+      if [ -n "$p11auto" ]; then
+        warn "SimplySign is installed but signing failed — is a session logged in (SimplySign Desktop)? Leaving the exe UNSIGNED."
+        return 0
+      fi
+      die "PKCS#11 signing failed"
+    fi
+  else
+    # ---- PKCS#12 file -----------------------------------------------------
+    [ -f "$TINA4_WIN_CERT" ] || die "TINA4_WIN_CERT not found: $TINA4_WIN_CERT"
+    say "${D}osslsigncode sign — PKCS#12 (sha256, RFC3161 $ts)${Z}"
+    if [ -n "${TINA4_WIN_CERT_PASS:-}" ]; then
+      osslsigncode sign -pkcs12 "$TINA4_WIN_CERT" -pass "$TINA4_WIN_CERT_PASS" \
+        -h sha256 -n "$nm" -i "$url" -ts "$ts" -in "$exe" -out "$tmp" || die "Authenticode signing failed"
+    else
+      osslsigncode sign -pkcs12 "$TINA4_WIN_CERT" \
+        -h sha256 -n "$nm" -i "$url" -ts "$ts" -in "$exe" -out "$tmp" || die "Authenticode signing failed"
+    fi
+    mv -f "$tmp" "$exe"
+  fi
+
   if osslsigncode verify -in "$exe" >/dev/null 2>&1; then
     ok "signed + timestamped: $(basename "$exe")"
   else
