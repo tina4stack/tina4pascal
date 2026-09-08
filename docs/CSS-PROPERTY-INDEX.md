@@ -198,11 +198,18 @@ mode renderer doesn't yet have):
     position/size/repeat (gradient alpha masks + `filter`/`backdrop-filter`/
     `mix-blend-mode`/`drop-shadow` and clip-path basic shapes are done).
 3. Typography remainder (font selection / bidi): `font-variant` small-caps
-    synthesis, `font-stretch`, `hyphens` (needs a hyphenation dictionary),
-    `direction`/`unicode-bidi` + full vertical block-flow (single-line
+    synthesis, `font-stretch`, `hyphens` (dictionary for `auto`; soft-hyphen
+    `manual` still TODO), full bidi (mixed-direction inline runs — `direction:rtl`
+    block right-alignment is done) + full vertical block-flow (single-line
     `writing-mode` done).
 4. **user-select / resize** (need a selection model / drag-resize handle);
-    **background-blend-mode** (per-background-layer compositing).
+    **background-blend-mode** (software per-background-layer blend compositing —
+    the existing blend path is Cocoa CGBlendMode, not pure-Pascal).
+
+Coverage: **105 ✅ · 4 🟡 · 3 📦 · 2 ❌**. Every immediate-mode-tractable
+property is done; the list above is the irreducible set that each needs a
+dedicated subsystem (a hyphenation dictionary, the Unicode bidi algorithm, font
+synthesis, a text-selection model, or software blend/mask compositing).
 
 
 Each item ships with a reftest under `examples/compliance/` and flips its row
