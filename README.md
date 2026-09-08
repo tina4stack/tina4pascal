@@ -246,15 +246,23 @@ all render, sharing the same `Tina4Compositor` as macOS/iOS.
 ```bat
 :: 1. Install FPC 3.2.2 — the official installer from https://www.freepascal.org/download.html
 ::    (puts fpc.exe on PATH; no extra config, unlike the Mac's self-contained ~/fpc)
-:: 2. Build + run the viewer:
+:: 2. Build + run the viewer (fpcres embeds the app icon; ships with FPC):
 cd examples\htmlviewer
+fpcres htmlviewer_win.rc -o htmlviewer_win.res -of res
 fpc -Mdelphi -Fu..\..\src htmlviewer_win.pas
 htmlviewer_win.exe win-test.html      :: any .html; no arg loads the built-in @demo
 ```
 
+`tina4pascal build win64` does the `fpcres` step for you. The source embeds the
+precompiled `htmlviewer_win.res` (not the `.rc`) because the cross-toolchain has
+no `x86_64-win64-windres` — building straight from the `.rc` silently dropped the
+app icon.
+
 Cross-compiling the `.exe` from macOS/Linux instead:
 
 ```sh
+$HOME/fpc/bin/fpcres examples/htmlviewer/htmlviewer_win.rc \
+  -o examples/htmlviewer/htmlviewer_win.res -of res
 PPC_CONFIG_PATH=$HOME/fpc/etc $HOME/fpc/bin/fpc -Mdelphi -Twin64 -Px86_64 \
   -FE/tmp/w -FU/tmp/w -Fusrc examples/htmlviewer/htmlviewer_win.pas
 ```

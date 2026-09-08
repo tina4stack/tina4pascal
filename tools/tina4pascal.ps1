@@ -46,7 +46,7 @@ function Invoke-Doctor {
     Ok "fpc $ver  ($fpc)"
     $bin = Split-Path -Parent $fpc
     if (Test-Path (Join-Path $bin 'ppcrossx64.exe')) { Ok "win64 cross (ppcrossx64.exe)" } else { Miss "win64 cross missing - reinstall FPC with the win64 cross" }
-    if (Test-Path (Join-Path $bin 'windres.exe')) { Ok "windres.exe (exe icon resource)" } else { Miss "windres.exe missing - the app-icon resource will not compile" }
+    if (Test-Path (Join-Path $bin 'fpcres.exe')) { Ok "fpcres.exe (embeds the app icon)" } else { Miss "fpcres.exe missing - the app icon will not embed (reinstall FPC)" }
   } else {
     Miss "fpc.exe not found - it auto-installs on your first 'init'/'build'/'run'. To install by hand: FPC 3.2.2 from https://www.freepascal.org/download.html (default C:\FPC\3.2.2), or the pascal-dev MCP setup_fpc."
   }
@@ -100,6 +100,15 @@ function Invoke-Build([string]$t) {
   $out = Join-Path $Build $t
   New-Item -ItemType Directory -Force -Path $out | Out-Null
   $prog = Join-Path $View 'htmlviewer_win.pas'
+  # Embed the app icon (MAINICON): compile htmlviewer_win.rc -> .res with fpcres
+  # (ships with FPC), which the source references via {$R htmlviewer_win.res}.
+  # This avoids depending on windres, so the icon shows even without MinGW.
+  $fpcres = Join-Path (Split-Path $fpc) 'fpcres.exe'
+  if (Test-Path $fpcres) {
+    & $fpcres (Join-Path $View 'htmlviewer_win.rc') '-o' (Join-Path $View 'htmlviewer_win.res') '-of' 'res' 2>&1 | Out-Null
+    if (Test-Path (Join-Path $View 'htmlviewer_win.res')) { Ok "app icon embedded (fpcres)" }
+    else { Write-Host "! fpcres produced no .res - app icon will be missing" -ForegroundColor Yellow }
+  } else { Write-Host "! fpcres.exe not found - app icon will be missing" -ForegroundColor Yellow }
   Write-Host "fpc -Mdelphi $($flags -join ' ') htmlviewer_win.pas"
   Push-Location $View
   try {

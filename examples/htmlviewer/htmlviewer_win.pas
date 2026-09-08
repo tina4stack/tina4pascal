@@ -11,7 +11,12 @@ program htmlviewer_win;
 
 {$mode delphi}{$H+}
 {$apptype gui}
-{$R htmlviewer_win.rc}
+// App icon (MAINICON): embed the PRECOMPILED .res, not the .rc. fpcres builds
+// htmlviewer_win.res from htmlviewer_win.rc on every host (the `tina4pascal
+// build win64` step does this); the .rc directive instead needs an
+// x86_64-win64-windres the cross-toolchain doesn't ship, which silently
+// dropped the icon on Mac cross-builds.
+{$R htmlviewer_win.res}
 
 uses
   Windows, SysUtils, Classes,
@@ -80,7 +85,10 @@ begin
   GNid.hWnd := GHwnd;
   GNid.uID := 1;
   GNid.uFlags := NIF_ICON or NIF_TIP;
-  GNid.hIcon := LoadIcon(0, IDI_APPLICATION);
+  // branded tray/balloon icon from the embedded MAINICON, generic app icon only
+  // as a last resort (should never be needed once the resource is linked in)
+  GNid.hIcon := LoadIconW(HInstance, PWideChar(WideString('MAINICON')));
+  if GNid.hIcon = 0 then GNid.hIcon := LoadIcon(0, IDI_APPLICATION);
   WFill(@GNid.szTip[0], Length(GNid.szTip), 'Tina4Pascal');
   GTrayAdded := Shell_NotifyIconW(NIM_ADD, @GNid);
 end;
@@ -296,6 +304,11 @@ begin
   wc.lpfnWndProc := @WndProc;
   wc.hInstance := HInstance;
   wc.hCursor := LoadCursor(0, IDC_ARROW);
+  // window + taskbar + Alt-Tab icon straight from the exe's embedded MAINICON
+  // (htmlviewer_win.rc → branding\icon.ico). This is the reliable icon source:
+  // it needs no branding\ folder beside the exe, unlike the runtime PNG below.
+  wc.hIcon := LoadIconW(HInstance, PWideChar(WideString('MAINICON')));
+  wc.hIconSm := wc.hIcon;
   wc.hbrBackground := 0;
   wc.lpszClassName := PWideChar(cls);
   RegisterClassExW(wc);
