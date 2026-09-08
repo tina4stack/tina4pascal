@@ -81,6 +81,8 @@ type
     function RegisterFont(const Family, Src: string): Boolean; override;
     function ImageSize(Handle: Integer; out W, H: Single): Boolean; override;
     procedure DrawImage(Handle: Integer; X, Y, W, H: Single); override;
+    function SupportsRGBA: Boolean; override;
+    procedure DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single); override;
     function BeginLayer(X, Y, W, H, Pad: Single): Integer; override;
     procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); override;
     procedure EndLayer3D(Handle: Integer; const Corners: array of Single); override;
@@ -703,6 +705,43 @@ begin
   CGContextScaleCTM(FCtx, 1, -1);
   CGContextDrawImage(FCtx, R(0, 0, W, H), FImgs[Handle].Img);
   CGContextRestoreGState(FCtx);
+end;
+
+function TIOSCanvas.SupportsRGBA: Boolean;
+begin
+  Result := True;
+end;
+
+{ Composite a straight-$AARRGGBB buffer via a CGImage (premultiplied for CG),
+  flipped like DrawImage. Powers the base soft/inset box-shadow blit on iOS. }
+procedure TIOSCanvas.DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single);
+var
+  src: PCardinal; rgba: array of Byte; i, n, a, cr, cg, cb: Integer; c: Cardinal;
+  prov: CGDataProviderRef; img: CGImageRef;
+begin
+  if (FCtx = nil) or (Buf = nil) or (BW <= 0) or (BH <= 0) then Exit;
+  src := PCardinal(Buf); n := BW * BH; SetLength(rgba, n * 4);
+  for i := 0 to n - 1 do
+  begin
+    c := src[i]; a := (c shr 24) and $FF;
+    cr := ((c shr 16) and $FF) * a div 255;   // premultiply for CG compositing
+    cg := ((c shr 8) and $FF) * a div 255;
+    cb := (c and $FF) * a div 255;
+    rgba[i * 4 + 0] := cr; rgba[i * 4 + 1] := cg; rgba[i * 4 + 2] := cb; rgba[i * 4 + 3] := a;
+  end;
+  prov := CGDataProviderCreateWithData(nil, @rgba[0], n * 4, nil);
+  img := CGImageCreate(BW, BH, 8, 32, BW * 4, FSpace,
+    kCGImageAlphaPremultipliedLast, prov, nil, 0, kCGRenderingIntentDefault);
+  if img <> nil then
+  begin
+    CGContextSaveGState(FCtx);
+    CGContextTranslateCTM(FCtx, DX, DY + DH);
+    CGContextScaleCTM(FCtx, 1, -1);
+    CGContextDrawImage(FCtx, R(0, 0, DW, DH), img);
+    CGContextRestoreGState(FCtx);
+    CGImageRelease(img);
+  end;
+  CGDataProviderRelease(prov);
 end;
 
 { ---- offscreen filter / blend / 3D compositing (shared Tina4Compositor) ---- }
