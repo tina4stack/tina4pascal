@@ -478,12 +478,12 @@ var
   kids: TList<THTMLTag>;
 begin
   if Tag = nil then Exit;
+  // strip previously-injected pseudo children. THTMLTag.Destroy self-detaches
+  // from its parent's Children (Parent.Children.Remove), so Free already removes
+  // it from this list — an extra Delete(i) would double-remove (out of range).
   for i := Tag.Children.Count - 1 downto 0 do
     if Tag.Children[i].TagName.StartsWith('tina4::') then
-    begin
       Tag.Children[i].Free;
-      Tag.Children.Delete(i);
-    end;
   kids := TList<THTMLTag>.Create;
   try
     for c in Tag.Children do kids.Add(c);
