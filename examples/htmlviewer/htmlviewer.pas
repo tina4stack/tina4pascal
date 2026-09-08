@@ -712,10 +712,9 @@ begin
     end;
     if SameText(t.TagName, 'input') or SameText(t.TagName, 'textarea') then
     begin
-      // Capture the laid-out box BEFORE SetFocus — Rebuild frees RootBox and
-      // defers layout to the next paint, so it would be nil right after.
+      // Use the laid-out box for caret positioning BEFORE SetFocus — SetFocus
+      // Rebuilds, which FREES the box tree (cb would dangle → use-after-free).
       cb := FindBoxForTag(RootBox, t);
-      SetFocus(t);
       // click-to-position the caret (single-line inputs)
       if SameText(t.TagName, 'input') then
       begin
@@ -734,7 +733,6 @@ begin
             ci := ni;
           end;
           t.Attributes.AddOrSetValue('_caret', IntToStr(ci));
-          Rebuild;
         end;
       end
       // click-to-position the caret (multi-line textarea): pick the line by Y,
@@ -772,9 +770,10 @@ begin
             ci := ni;
           end;
           t.Attributes.AddOrSetValue('_caret', IntToStr(ci));
-          Rebuild;
         end;
       end;
+      SetFocus(t);   // focus AFTER cb is done being read (SetFocus frees the box tree)
+      Rebuild;       // reflect the new _caret even when focus didn't change
       Exit;
     end;
   end
