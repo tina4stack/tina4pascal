@@ -39,6 +39,12 @@ function  TinaAuthDiscover(const DiscoveryJson: string): Boolean;
   and hands back the code_verifier + state to correlate the redirect. }
 function  TinaAuthAuthorizeUrl(out Verifier, State: string): string;
 
+{ The form-urlencoded body to POST to the token endpoint to exchange an auth
+  code (with its PKCE verifier), and to refresh with the stored refresh token. }
+function  TinaAuthTokenBody(const Code, Verifier: string): string;
+function  TinaAuthRefreshBody: string;
+function  TinaAuthTokenEndpoint: string;
+
 { Parse a token-endpoint JSON response (access_token, refresh_token, id_token,
   expires_in, ...) into the session (tokens, expiry) and load the JWT claims. }
 function  TinaAuthHandleTokenResponse(const Json: string): Boolean;
@@ -178,6 +184,25 @@ begin
     '&code_challenge=' + UrlEnc(challenge) +
     '&code_challenge_method=S256';
 end;
+
+function TinaAuthTokenBody(const Code, Verifier: string): string;
+begin
+  Result := 'grant_type=authorization_code' +
+    '&code=' + UrlEnc(Code) +
+    '&redirect_uri=' + UrlEnc(GCfg.RedirectUri) +
+    '&client_id=' + UrlEnc(GCfg.ClientId) +
+    '&code_verifier=' + UrlEnc(Verifier);
+end;
+
+function TinaAuthRefreshBody: string;
+begin
+  Result := 'grant_type=refresh_token' +
+    '&refresh_token=' + UrlEnc(GRefresh) +
+    '&client_id=' + UrlEnc(GCfg.ClientId);
+end;
+
+function TinaAuthTokenEndpoint: string;
+begin Result := GCfg.TokenEndpoint; end;
 
 function TinaAuthLoadToken(const AccessToken: string): Boolean;
 var dot1, dot2: Integer; payload: RawByteString; d: TJSONData; exp: Int64;

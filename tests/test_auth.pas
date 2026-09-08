@@ -75,6 +75,15 @@ begin
   Check(TinaRefreshToken = 'r1', 'refresh token stored');
   Check(TinaIdToken = 'i1', 'id token stored');
 
+  WriteLn('token-endpoint request bodies');
+  Check(Pos('grant_type=authorization_code', TinaAuthTokenBody('CD', 'VF')) > 0, 'auth_code grant');
+  Check((Pos('code=CD', TinaAuthTokenBody('CD', 'VF')) > 0) and
+        (Pos('code_verifier=VF', TinaAuthTokenBody('CD', 'VF')) > 0), 'code + PKCE verifier');
+  Check(Pos('client_id=app', TinaAuthTokenBody('CD', 'VF')) > 0, 'client_id included');
+  Check(Pos('grant_type=refresh_token', TinaAuthRefreshBody) > 0, 'refresh grant');
+  Check(Pos('refresh_token=r1', TinaAuthRefreshBody) > 0, 'refresh body uses the stored token');
+  Check(TinaAuthTokenEndpoint = 'https://idp.example/token', 'token endpoint exposed');
+
   WriteLn('dotted-path roles (Keycloak realm_access.roles)');
   TinaAuthConfigure(Cfg('realm_access.roles'));
   Check(TinaAuthLoadToken(MakeJWT('{"sub":"u2","realm_access":{"roles":["seller","viewer"]},"exp":' +
