@@ -393,6 +393,8 @@ type
     GradStopPos: array[0..7] of Single;          // stop position 0..1, -1 = auto
     GradStopPosPx: array[0..7] of Single;        // stop position in px (-1 = none), for repeating
     GradStopCount: Integer;
+    BackgroundClipText: Boolean;  // background-clip:text — paint the bg into the glyphs
+    WritingMode: string;          // 'horizontal-tb' (default) | 'vertical-rl' | 'vertical-lr'
     // CSS transforms (subset)
     TransformActive: Boolean;
     TransformTranslateX: Single;
@@ -2380,6 +2382,7 @@ begin
   Result.BgGradientRepeating := False;
   Result.BgGradientPeriodPx := 0;
   Result.GradStopCount := 0;
+  Result.BackgroundClipText := False;
   Result.AppearanceNone := False;
   Result.AccentColor := 0; Result.CaretColor := 0; Result.PointerEventsNone := False; Result.BorderCollapse := False; Result.BorderSpacing := 0;
   Result.TransformActive := False;
@@ -2755,6 +2758,7 @@ begin
   Result.Color := ParentStyle.Color;
   Result.TextAlign := ParentStyle.TextAlign;
   Result.TextJustify := ParentStyle.TextJustify;
+  Result.WritingMode := ParentStyle.WritingMode;   // inherited
   Result.LineHeight := ParentStyle.LineHeight;
   Result.WhiteSpace := ParentStyle.WhiteSpace;
   Result.ListStyleType := ParentStyle.ListStyleType;
@@ -2843,6 +2847,7 @@ begin
   Result.BgGradientRepeating := False;
   Result.BgGradientPeriodPx := 0;
   Result.GradStopCount := 0;
+  Result.BackgroundClipText := False;
   Result.AppearanceNone := False;
   Result.AccentColor := 0; Result.CaretColor := 0; Result.PointerEventsNone := False; Result.BorderCollapse := False; Result.BorderSpacing := 0;
   Result.TransformActive := False;
@@ -3698,6 +3703,11 @@ begin
     Style.TextDecorationStyle := Temp.ToLower;
   if Decls.TryGetValue('text-decoration-color', Temp) and not ShouldSkip(Temp) then
     Style.TextDecorationColor := ParseColor(Temp);
+  if (Decls.TryGetValue('background-clip', Temp) or
+      Decls.TryGetValue('-webkit-background-clip', Temp)) and not ShouldSkip(Temp) then
+    Style.BackgroundClipText := SameText(Trim(Temp), 'text');
+  if Decls.TryGetValue('writing-mode', Temp) and not ShouldSkip(Temp) then
+    Style.WritingMode := Temp.ToLower;
   if Decls.TryGetValue('text-align', Temp) and not ShouldSkip(Temp) then
   begin
     Temp := Temp.ToLower;

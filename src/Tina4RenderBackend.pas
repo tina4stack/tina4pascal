@@ -256,6 +256,11 @@ function RoundRectPolygon(X, Y, W, H, Radius: Single): TTina4PointArray;
 { Per-corner variant (TL, TR, BR, BL) for asymmetric border-radius. }
 function RoundRectPolygon4(X, Y, W, H, R0, R1, R2, R3: Single): TTina4PointArray;
 
+{ Interpolate a multi-stop gradient colour at position t (0..1). Positions <0
+  are auto-spread evenly. Shared by the soft-gradient fills and by the layout's
+  background-clip:text per-glyph colouring. }
+function GradSample(t: Single; const Colors: array of TTina4Color; const Positions: array of Single): TTina4Color;
+
 implementation
 
 { Per-corner rounded-rect → polygon. 6 segments per corner reads smooth at UI

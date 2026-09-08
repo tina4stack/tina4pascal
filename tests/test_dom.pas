@@ -575,6 +575,21 @@ begin
       Decls.Free;
     end;
 
+    // background-clip:text and writing-mode
+    Decls := TCSSDeclarations.Create;
+    try
+      Decls.AddOrSetValue('-webkit-background-clip', 'text');
+      Decls.AddOrSetValue('writing-mode', 'vertical-rl');
+      DecoStyle := TComputedStyle.Default;
+      TComputedStyle.ApplyDeclarations(Decls, DecoStyle, TComputedStyle.Default);
+      Check(DecoStyle.BackgroundClipText, '-webkit-background-clip:text sets the flag');
+      CheckEqualsStr('vertical-rl', DecoStyle.WritingMode, 'writing-mode parsed');
+    finally
+      Decls.Free;
+    end;
+    Check(not TComputedStyle.Default.BackgroundClipText,
+      'NEGATIVE: background-clip:text off by default');
+
     CheckEqualsF(10, TComputedStyle.ParseLength('10px'), 'ParseLength px');
     CheckEqualsF(28, TComputedStyle.ParseLength('2em', 14), 'ParseLength em uses EmSize');
     CheckEqualsF(24, TComputedStyle.ParseLength('1.5rem'), 'ParseLength rem = 16px base');

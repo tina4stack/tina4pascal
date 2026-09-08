@@ -4423,6 +4423,9 @@ var
   shifted, hasRS, ellip, ellipDone, anyZ: Boolean;
   rightEdge, avail: Single;
   decCol: TTina4Color; decW, decTh, dbx, dby: Single;
+  bcTextRad, bcTextDX, bcTextDenom, bcGX, bcFrac, bcCW: Single;
+  bcCi, bcCl: Integer; bcCh: string;
+  wmRot: Single;
   drawTxt: string;
   zorder: array of Integer;
   zi, zj, ztmp, gi: Integer;
@@ -4486,9 +4489,15 @@ begin
   end;
   // transform: rotate/scale — wrap the subtree paint in a canvas transform
   // about the box centre (default transform-origin)
+  // vertical writing-mode: Latin runs (mixed orientation) are set sideways —
+  // the whole line rotates 90° clockwise about the box centre. Full block-flow
+  // reordering is out of scope; a single centred line reads correctly this way.
+  wmRot := 0;
+  if (Pos('vertical', st.WritingMode) > 0) or (Pos('sideways', st.WritingMode) > 0) then
+    wmRot := 90;
   hasRS := (not use3D) and ((st.TransformRotate <> 0) or (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1)
     or (st.TransformSkewX <> 0) or (st.TransformSkewY <> 0) or st.TransformMatrixSet
-    or (st.ClipPath <> ''));
+    or (wmRot <> 0) or (st.ClipPath <> ''));
   if hasRS then
   begin
     // pivot at transform-origin (px or %-marker; default 50% 50% = centre)
@@ -4498,7 +4507,7 @@ begin
     else rcy := y + st.TransformOriginY;
     Canvas.SaveState;
     Canvas.Translate(rcx, rcy);
-    if st.TransformRotate <> 0 then Canvas.Rotate(st.TransformRotate); // +deg = CSS clockwise (flipped canvas)
+    if (st.TransformRotate + wmRot) <> 0 then Canvas.Rotate(st.TransformRotate + wmRot); // +deg = CSS clockwise (flipped canvas)
     if (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1) then
       Canvas.Scale(st.TransformScaleX, st.TransformScaleY);
     if (st.TransformSkewX <> 0) or (st.TransformSkewY <> 0) then
@@ -4655,7 +4664,7 @@ begin
   // real gradient background (linear or radial, multi-stop), when no solid
   // background-color covers it. Stops are opacity-scaled; the backend clips to
   // the corner radius and falls back to a flat fill if it can't gradient.
-  if (not Hidden) and ((bg shr 24) = 0) and st.BgGradientActive and (st.GradStopCount >= 2) then
+  if (not Hidden) and (not st.BackgroundClipText) and ((bg shr 24) = 0) and st.BgGradientActive and (st.GradStopCount >= 2) then
   begin
     SetLength(gcol, st.GradStopCount); SetLength(gpos, st.GradStopCount);
     for gi := 0 to st.GradStopCount - 1 do
@@ -4677,7 +4686,7 @@ begin
       Canvas.FillLinearGradient(Box.X, y, Box.W, Box.H, mcr,
         st.BgGradientAngle, gcol, gpos);
   end
-  else if (not Hidden) and ((bg shr 24) > 0) then
+  else if (not Hidden) and (not st.BackgroundClipText) and ((bg shr 24) > 0) then
   begin
     if mcr <= 0 then
       Canvas.FillRect(Box.X, y, Box.W, Box.H, bg)
@@ -4879,11 +4888,54 @@ begin
   ellip := SameText(st.TextOverflow, 'ellipsis') and SameText(st.WhiteSpace, 'nowrap');
   rightEdge := Box.X + Box.W - st.BorderWidths.Right - st.Padding.Right;
   ellipDone := False;
+  // background-clip:text — the gradient/solid background is suppressed above and
+  // instead painted INTO the glyphs. Precompute the stop arrays once; the run
+  // loop colours each glyph by the gradient sample at its position.
+  if st.BackgroundClipText and st.BgGradientActive and (st.GradStopCount >= 2) then
+  begin
+    SetLength(gcol, st.GradStopCount); SetLength(gpos, st.GradStopCount);
+    for gi := 0 to st.GradStopCount - 1 do
+    begin
+      gcol[gi] := st.GradStopColors[gi];
+      gpos[gi] := st.GradStopPos[gi];
+    end;
+  end;
   if not Hidden then
     for i := 0 to Box.Runs.Count - 1 do
     begin
       r := Box.Runs[i];
       drawTxt := r.Text;
+      // per-glyph gradient fill for background-clip:text (approximates the CSS
+      // text mask: each glyph is a solid sample of the gradient at its centre).
+      if st.BackgroundClipText and st.BgGradientActive and (st.GradStopCount >= 2)
+         and (drawTxt <> '') then
+      begin
+        Canvas.LetterSpacing := r.LetterSpacing;
+        Canvas.FontFamily := r.FontFamily;
+        Canvas.FontWeight := r.FontWeight;
+        bcTextRad := st.BgGradientAngle * Pi / 180;
+        bcTextDX := Sin(bcTextRad);
+        bcTextDenom := Abs(bcTextDX) * Box.W + Abs(Cos(bcTextRad)) * Box.H;
+        if bcTextDenom <= 0 then bcTextDenom := Box.W;
+        bcGX := r.X - sx;
+        bcCi := 1;
+        while bcCi <= Length(drawTxt) do
+        begin
+          bcCl := 1;   // group UTF-8 continuation bytes into one glyph
+          while (bcCi + bcCl <= Length(drawTxt)) and
+                ((Ord(drawTxt[bcCi + bcCl]) and $C0) = $80) do Inc(bcCl);
+          bcCh := Copy(drawTxt, bcCi, bcCl);
+          bcCW := Canvas.MeasureText(bcCh, r.FontSize, r.Styles).Width;
+          bcFrac := 0.5 + (((bcGX - (Box.X - sx)) + bcCW / 2) - Box.W / 2) * bcTextDX / bcTextDenom;
+          if bcFrac < 0 then bcFrac := 0 else if bcFrac > 1 then bcFrac := 1;
+          Canvas.DrawText(bcGX, r.Y - innerOfs, bcCh, r.FontSize, r.Styles,
+            ScaleAlpha(GradSample(bcFrac, gcol, gpos), op));
+          bcGX := bcGX + bcCW;
+          bcCi := bcCi + bcCl;
+        end;
+        Canvas.LetterSpacing := 0; Canvas.FontFamily := ''; Canvas.FontWeight := 0;
+        Continue;
+      end;
       if ellip then
       begin
         if ellipDone then Continue;                 // line already ended with '…'
