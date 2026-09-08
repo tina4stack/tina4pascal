@@ -590,6 +590,23 @@ begin
     Check(not TComputedStyle.Default.BackgroundClipText,
       'NEGATIVE: background-clip:text off by default');
 
+    // flex-flow shorthand, text-align-last, tab-size
+    Decls := TCSSDeclarations.Create;
+    try
+      Decls.AddOrSetValue('flex-flow', 'column wrap');
+      Decls.AddOrSetValue('text-align-last', 'center');
+      Decls.AddOrSetValue('tab-size', '4');
+      DecoStyle := TComputedStyle.Default;
+      TComputedStyle.ApplyDeclarations(Decls, DecoStyle, TComputedStyle.Default);
+      CheckEqualsStr('column', DecoStyle.FlexDirection, 'flex-flow sets direction');
+      CheckEqualsStr('wrap', DecoStyle.FlexWrap, 'flex-flow sets wrap');
+      CheckEqualsStr('center', DecoStyle.TextAlignLast, 'text-align-last parsed');
+      Check(DecoStyle.TabSize = 4, 'tab-size parsed');
+    finally
+      Decls.Free;
+    end;
+    Check(TComputedStyle.Default.TabSize = 8, 'tab-size default 8');
+
     CheckEqualsF(10, TComputedStyle.ParseLength('10px'), 'ParseLength px');
     CheckEqualsF(28, TComputedStyle.ParseLength('2em', 14), 'ParseLength em uses EmSize');
     CheckEqualsF(24, TComputedStyle.ParseLength('1.5rem'), 'ParseLength rem = 16px base');

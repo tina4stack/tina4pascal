@@ -2703,6 +2703,10 @@ var
   begin
     s := StringReplace(Raw, #13#10, #10, [rfReplaceAll]);
     s := StringReplace(s, #13, #10, [rfReplaceAll]);
+    // tab-size: expand tabs to N space-widths (CSS default 8). pre-line collapses
+    // whitespace anyway; for pre / pre-wrap this makes tab indentation visible.
+    if Pos(#9, s) > 0 then
+      s := StringReplace(s, #9, StringOfChar(' ', Max(0, St.TabSize)), [rfReplaceAll]);
     lines := s.Split([#10]);
     for li := 0 to High(lines) do
     begin
@@ -3035,7 +3039,7 @@ var
   end;
 
   procedure FlushLine(startIdx: Integer; var lineItems: TList<Integer>;
-    lineTop, lineH: Single; justify: Boolean = False);
+    lineTop, lineH: Single; justify: Boolean = False; isLast: Boolean = False);
   var
     idx, k: Integer;
     lineW, xShift, x, maxAscent, gapExtra, flx0, flx1, availW: Single;
@@ -3044,6 +3048,8 @@ var
     run: TTextRun;
     r: TTextRun;
     j: Integer;
+    effAlign: TTextAlign;
+    tal: string;
   begin
     if lineItems.Count = 0 then Exit;
     // width used
@@ -3059,7 +3065,18 @@ var
     // this line's vertical range (left floats push x0 right, right floats x1 left)
     LineBounds(lineTop, lineTop + lineH, flx0, flx1);
     availW := flx1 - flx0;
-    case ParentStyle.TextAlign of
+    // text-align-last overrides the alignment of the block's last line (and the
+    // line before a forced break); 'justify' on the last line spreads it too.
+    effAlign := ParentStyle.TextAlign;
+    tal := ParentStyle.TextAlignLast;
+    if isLast and (tal <> '') and (tal <> 'auto') then
+    begin
+      if tal = 'center' then effAlign := TTextAlign.Center
+      else if (tal = 'right') or (tal = 'end') then effAlign := TTextAlign.Trailing
+      else if (tal = 'left') or (tal = 'start') then effAlign := TTextAlign.Leading
+      else if tal = 'justify' then begin effAlign := TTextAlign.Leading; justify := True; end;
+    end;
+    case effAlign of
       TTextAlign.Center:   xShift := Max(0, (availW - lineW) / 2);
       TTextAlign.Trailing: xShift := Max(0, availW - lineW);
     else
@@ -3083,7 +3100,10 @@ var
     for k := 0 to lineItems.Count - 1 do
     begin
       it := items[lineItems[k]];
-      if (it.Box <> nil) and SameText(it.Box.Style.VerticalAlign, 'top') then Continue;
+      if (it.Box <> nil) and (SameText(it.Box.Style.VerticalAlign, 'top') or
+         SameText(it.Box.Style.VerticalAlign, 'text-top') or
+         SameText(it.Box.Style.VerticalAlign, 'bottom') or
+         SameText(it.Box.Style.VerticalAlign, 'text-bottom')) then Continue;
       if it.Ascent > maxAscent then maxAscent := it.Ascent;
     end;
     x := flx0 + xShift;
@@ -3099,8 +3119,14 @@ var
         x := x + FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width + gapExtra + ParentStyle.WordSpacing;
       if it.Box <> nil then
       begin
-        if SameText(it.Box.Style.VerticalAlign, 'top') then
+        if SameText(it.Box.Style.VerticalAlign, 'top') or
+           SameText(it.Box.Style.VerticalAlign, 'text-top') then
+          // top / text-top: box top at the line's top (text-top ignores half-leading)
           ShiftBoxTree(it.Box, x, lineTop)
+        else if SameText(it.Box.Style.VerticalAlign, 'bottom') or
+                SameText(it.Box.Style.VerticalAlign, 'text-bottom') then
+          // bottom / text-bottom: box bottom at the line's bottom
+          ShiftBoxTree(it.Box, x, lineTop + Max(0, lineH - it.H))
         else if SameText(it.Box.Style.VerticalAlign, 'middle') then
           // centre the box within the line box (matches browsers for the
           // common case of same-height inline-blocks filling the line)
@@ -3146,7 +3172,7 @@ var
         it := items[i];
         if it.LineBreak then
         begin // <br> or a preformatted \n: hard break even in nowrap/pre
-          FlushLine(i, lineItems, y, Max(lineH, it.H));
+          FlushLine(i, lineItems, y, Max(lineH, it.H), False, True);  // line before <br> = last of paragraph
           y := y + Max(lineH, it.H);
           curW := 0; lineH := 0;
           Continue;
@@ -3194,7 +3220,7 @@ var
         if curW > Box.NaturalW then Box.NaturalW := curW;
         lineH := Max(lineH, it.H);
       end;
-      FlushLine(items.Count, lineItems, y, lineH);
+      FlushLine(items.Count, lineItems, y, lineH, False, True);  // block's last line
       y := y + lineH;
     finally
       lineItems.Free;

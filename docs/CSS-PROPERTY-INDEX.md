@@ -54,7 +54,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | flex-shrink | ✅ | weighted shrink pass on overflowing non-wrapping rows |
 | flex-direction | ✅ | row/column + row-reverse/column-reverse (items reversed along the main axis) |
 | flex-wrap | ✅ | wrap + wrap-reverse (lines stacked in reverse cross order); grow disabled while wrapping |
-| flex-flow | ❌ | use longhands |
+| flex-flow | ✅ | shorthand for `flex-direction` \|\| `flex-wrap` (either order, one or both) |
 | justify-content | ✅ | start/center/end/space-between/around/evenly |
 | align-items | ✅ | center/flex-end/stretch (the default, fills the cross axis); no baseline |
 | align-self, order | ✅ | `align-self` overrides `align-items` per item (stretch/center/start/end); `order` reorders items (stable) before layout |
@@ -86,13 +86,15 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | text-shadow | ✅ | painted (offset shadow pass before the glyph); see PaintBoxEx run loop |
 | white-space | ✅ | normal/nowrap/pre/pre-wrap/pre-line; pre* preserve newlines (+ spaces for pre/pre-wrap) — parser keeps raw text for <pre> and inline white-space:pre* |
 | word-break, overflow-wrap | ✅ | break-word/break-all/anywhere: over-long words break between characters (UTF-8 aware) |
-| vertical-align | 🟡 | sub/super/top/middle + **`<length>`** (px/em/rem baseline shift on inline text); no text-top/text-bottom |
+| vertical-align | ✅ | sub/super/top/bottom/middle/text-top/text-bottom + **`<length>`** (px/em/rem baseline shift on inline text) |
 | list-style-type | ✅ | disc/circle/square/decimal/alpha/roman/none |
 | list-style shorthand, list-style-position | ✅ | shorthand tokenised (type · inside/outside · image url); `position:inside` draws the marker in the content flow |
 | list-style-image | ✅ | `url(...)` image marker (dedicated property + shorthand) loaded via the shell and drawn as a font-sized square outdented left of the content; falls back to the bullet glyph if the image fails to load |
 | writing-mode | 🟡 | `vertical-rl` / `vertical-lr` / `sideways-*`: a line is set sideways (rotated 90° CW about the box centre, Latin mixed orientation) through the transform path; inherited. Full vertical block-flow reordering (multi-line column progression) not yet modelled |
 | direction, unicode-bidi | ❌ | LTR only (needs the Unicode bidi algorithm) |
-| tab-size, hyphens, text-rendering, text-align-last, text-justify | ❌ | |
+| tab-size | ✅ | `-moz-tab-size` too; tabs in `white-space:pre`/`pre-wrap` expand to N space-widths (default 8) |
+| text-align-last | ✅ | left/right/center/start/end/justify on the block's last line (and the line before a `<br>`) |
+| hyphens, text-rendering, text-justify | ❌ | (hyphens needs a hyphenation dictionary) |
 
 ## Backgrounds & borders
 
@@ -128,7 +130,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | background-blend-mode | ❌ | needs per-background-layer compositing |
 | animation, @keyframes | ✅ | `@keyframes` parsed; `animation` shorthand + longhands (name/duration/delay/timing/iteration/direction). Per-frame interpolation at paint off the ticker: transform (translate/rotate/scale), opacity, background-color, color; timing linear/ease/ease-in/-out; iteration + alternate/reverse |
 | transition | ✅ | eases a property toward its computed value when it changes (hover/focus/DOM): background-color, color, opacity, transform (translate/rotate/scale). Per-element from/start tracked on the tag; duration/delay/timing/property from the shorthand + longhands. Mid-transition reversal supported |
-| will-change, contain | ❌ | |
+| will-change, contain | ✅ | accepted (performance hints with no visual effect — correct to no-op) |
 
 ## Tables
 

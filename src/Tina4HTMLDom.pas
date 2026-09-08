@@ -286,6 +286,8 @@ type
     TextDecorationColor: TAlphaColor;  // 0 => use text color
     TextAlign: TTextAlign;
     TextJustify: Boolean;      // text-align: justify (spread slack across gaps)
+    TextAlignLast: string;     // '' = auto | left/right/center/start/end/justify
+    TabSize: Integer;          // tab width in space-widths (default 8)
     LineHeight: Single;
     VerticalAlign: string;
     CaptionSide: string;        // '' | 'top' | 'bottom' (table <caption> placement)
@@ -2299,6 +2301,8 @@ begin
   Result.TextDecorationColor := 0;
   Result.TextAlign := TTextAlign.Leading;
   Result.TextJustify := False;
+  Result.TextAlignLast := '';
+  Result.TabSize := 8;
   Result.LineHeight := 1.4;
   Result.VerticalAlign := 'baseline';
   Result.CaptionSide := 'top';
@@ -2758,6 +2762,8 @@ begin
   Result.Color := ParentStyle.Color;
   Result.TextAlign := ParentStyle.TextAlign;
   Result.TextJustify := ParentStyle.TextJustify;
+  Result.TextAlignLast := ParentStyle.TextAlignLast;   // inherited
+  Result.TabSize := ParentStyle.TabSize;               // inherited
   Result.WritingMode := ParentStyle.WritingMode;   // inherited
   Result.LineHeight := ParentStyle.LineHeight;
   Result.WhiteSpace := ParentStyle.WhiteSpace;
@@ -3717,6 +3723,11 @@ begin
     else Style.TextAlign := TTextAlign.Leading;
     Style.TextJustify := (Temp = 'justify');
   end;
+  if Decls.TryGetValue('text-align-last', Temp) and not ShouldSkip(Temp) then
+    Style.TextAlignLast := Temp.Trim.ToLower;
+  if (Decls.TryGetValue('tab-size', Temp) or Decls.TryGetValue('-moz-tab-size', Temp))
+     and not ShouldSkip(Temp) then
+    Style.TabSize := Max(0, StrToIntDef(Trim(StringReplace(Temp, 'px', '', [rfIgnoreCase])), 8));
   if Decls.TryGetValue('line-height', Temp) and not ShouldSkip(Temp) then
   begin
     // LineHeight is stored as a unitless multiple of the element's font-size.
@@ -4271,6 +4282,18 @@ begin
   end;
 
   // Flexbox container properties
+  if Decls.TryGetValue('flex-flow', Temp) and not ShouldSkip(Temp) then
+  begin
+    // flex-flow: <flex-direction> || <flex-wrap>  (either order, one or both)
+    OvParts := Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    for GP1 := 0 to High(OvParts) do
+      if (OvParts[GP1] = 'row') or (OvParts[GP1] = 'row-reverse') or
+         (OvParts[GP1] = 'column') or (OvParts[GP1] = 'column-reverse') then
+        Style.FlexDirection := OvParts[GP1]
+      else if (OvParts[GP1] = 'nowrap') or (OvParts[GP1] = 'wrap') or
+              (OvParts[GP1] = 'wrap-reverse') then
+        Style.FlexWrap := OvParts[GP1];
+  end;
   if Decls.TryGetValue('flex-direction', Temp) and not ShouldSkip(Temp) then
     Style.FlexDirection := Temp.Trim.ToLower;
   if Decls.TryGetValue('flex-wrap', Temp) and not ShouldSkip(Temp) then
