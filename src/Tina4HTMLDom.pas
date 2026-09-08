@@ -176,6 +176,7 @@ type
   private
     FRules: TObjectList<TCSSRule>;
     FCustomProps: TDictionary<string, string>;
+    FImportHrefs: TStringList;   // @import URLs discovered during parse (host fetches)
     FOnParseError: TCSSStyleSheetParseError;
     FHasInteractiveSelectors: Boolean;  // any rule uses :hover/:active/:focus?
     FHasPseudo: Boolean;                // any rule targets ::before / ::after
@@ -248,6 +249,10 @@ type
     property HasInteractiveSelectors: Boolean read FHasInteractiveSelectors;
     property HasPseudo: Boolean read FHasPseudo;
     property CustomProps: TDictionary<string, string> read FCustomProps;
+    { @import URLs found while parsing (in encounter order). The host fetches
+      each like a <link rel=stylesheet> and AddCSS's it (drain until empty for
+      nested imports). }
+    property ImportHrefs: TStringList read FImportHrefs;
   end;
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -559,10 +564,12 @@ begin
   FCustomProps := TDictionary<string, string>.Create;
   FRulesByKey := TObjectDictionary<string, TList<TCSSRule>>.Create([doOwnsValues]);
   FUniversalRules := TList<TCSSRule>.Create;
+  FImportHrefs := TStringList.Create;
 end;
 
 destructor TCSSStyleSheet.Destroy;
 begin
+  FImportHrefs.Free;
   FCustomProps.Free;
   FUniversalRules.Free;
   FRulesByKey.Free;
@@ -725,10 +732,39 @@ begin
   Result := False; // selector(...) and other unknowns degrade to unsupported
 end;
 
-procedure TCSSStyleSheet.ParseCSS(const CSSText: string);
-var S: string; I, EndComment: Integer;
+{ Pull the URL out of an "@import ..." statement body (the text after @import,
+  before its ';'): url(...) or a "..." / '...' string, ignoring a trailing media
+  query. '' if none. }
+function ExtractImportUrl(const Stmt: string): string;
+var t: string; p, q: Integer; qc: Char;
 begin
-  // Strip CSS comments /* ... */, then parse the top-level block (no @media).
+  Result := '';
+  t := Trim(Copy(Stmt, Length('@import') + 1, MaxInt));
+  if t = '' then Exit;
+  if LowerCase(Copy(t, 1, 4)) = 'url(' then
+  begin
+    p := Pos('(', t); q := Pos(')', t);
+    if (p > 0) and (q > p) then t := Trim(Copy(t, p + 1, q - p - 1));
+  end;
+  if t = '' then Exit;
+  if (t[1] = '"') or (t[1] = '''') then
+  begin
+    qc := t[1]; q := 0;
+    for p := 2 to Length(t) do if t[p] = qc then begin q := p; Break; end;
+    if q > 1 then Result := Copy(t, 2, q - 2);
+  end
+  else
+  begin
+    p := Pos(' ', t);                      // bare token up to a space / media query
+    if p > 0 then Result := Copy(t, 1, p - 1) else Result := t;
+  end;
+  Result := Trim(Result);
+end;
+
+procedure TCSSStyleSheet.ParseCSS(const CSSText: string);
+var S, low, url: string; I, EndComment, semi, cut: Integer;
+begin
+  // Strip CSS comments /* ... */
   S := CSSText;
   I := S.IndexOf('/*');
   while I >= 0 do
@@ -737,6 +773,23 @@ begin
     if EndComment >= 0 then S := S.Remove(I, EndComment - I + 2)
     else S := S.Remove(I);
     I := S.IndexOf('/*');
+  end;
+  // @import "sheet.css"; / @import url(sheet.css) media; — record the URL (host
+  // fetches + AddCSS's it) and strip the statement, which has no {} block so the
+  // brace parser below can't see it.
+  low := LowerCase(S);
+  I := low.IndexOf('@import');
+  while I >= 0 do
+  begin
+    semi := S.IndexOf(';', I);
+    if semi < 0 then semi := Length(S);
+    url := ExtractImportUrl(S.Substring(I, semi - I));
+    if (url <> '') and (FImportHrefs <> nil) then FImportHrefs.Add(url);
+    cut := semi - I + 1;
+    if I + cut > Length(S) then cut := Length(S) - I;
+    S := S.Remove(I, cut);
+    low := LowerCase(S);
+    I := low.IndexOf('@import');
   end;
   ParseBlock(S, '');
 end;

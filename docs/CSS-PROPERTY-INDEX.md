@@ -166,7 +166,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | `@font-face` | ✅ | downloadable fonts: parse family + `src url()`, fetch (async/disk-cached like `<img>`) + register on all 3 shells (Cocoa/iOS CoreText, Android Typeface); CSS family aliased to the face's real name |
 | `@keyframes` | ✅ | parsed into named stops; drives `animation` |
 | `@supports` | ✅ | feature query evaluated at parse time (`and`/`or`/`not`, parenthesised tests); the block's rules apply only if supported. The oracle answers yes for our broad feature set and no for the props we still lack (mask, background-blend-mode, perspective, transform-style, 3D transforms). Nests inside `@media` |
-| `@import` | ❌ | skipped with the @-rule block |
+| `@import` | ✅ | `@import "x.css"` / `url(...)` (+ trailing media ignored) — the URL is recorded and fetched like a `<link rel=stylesheet>`, then parsed; drained until empty so nested imports load. macOS host does remote+relative; the shared Win/Linux path does local files |
 | clamp(), min(), max() | ✅ | evaluated via the calc() engine (nestable, same unit support) |
 | env() | ✅ | `env(<name>, <fallback>)` resolves to its fallback — safe-area insets are 0 on desktop, so the named value is unavailable. Usable bare or inside calc() |
 
@@ -199,8 +199,7 @@ mode renderer doesn't yet have):
     `direction`/`unicode-bidi` + full vertical block-flow (single-line
     `writing-mode` done).
 4. **user-select / resize** (need a selection model / drag-resize handle);
-    **background-blend-mode** (per-background-layer compositing); `@import`
-    (core parses the CSS; needs host-side fetch wiring like `<link>`, per OS).
+    **background-blend-mode** (per-background-layer compositing).
 
 
 Each item ships with a reftest under `examples/compliance/` and flips its row

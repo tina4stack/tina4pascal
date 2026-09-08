@@ -1044,6 +1044,35 @@ begin
   for i := 0 to Viewer.Parser.StyleBlocks.Count - 1 do
     Viewer.Sheet.AddCSS(Viewer.Parser.StyleBlocks[i]);
 
+  // @import: fetch each imported sheet like a <link> and AddCSS it. Draining by
+  // index (not a for) picks up nested @imports added while parsing earlier ones.
+  i := 0;
+  while i < Viewer.Sheet.ImportHrefs.Count do
+  begin
+    CSSFile := Viewer.Sheet.ImportHrefs[i];
+    if (Pos('http://', LowerCase(CSSFile)) = 1) or (Pos('https://', LowerCase(CSSFile)) = 1) then
+    begin
+      CSSCacheDir := ExtractFilePath(ParamStr(0)) + 'csscache/';
+      ForceDirectories(CSSCacheDir);
+      CSSFile := CSSCacheDir +
+        ExtractFileName(StringReplace(Viewer.Sheet.ImportHrefs[i], '?', '_', [rfReplaceAll]));
+      if not FileExists(CSSFile) then
+        if not Viewer.Shell.FetchToFile(Viewer.Sheet.ImportHrefs[i], CSSFile) then
+        begin Inc(i); Continue; end;
+    end
+    else if not FileExists(CSSFile) then
+      CSSFile := ExtractFilePath(FileName) + CSSFile;
+    if FileExists(CSSFile) then
+    begin
+      SL := TStringList.Create;
+      SL.LoadFromFile(CSSFile);
+      Viewer.Sheet.AddCSS(SL.Text);
+      SL.Free;
+      WriteLn('[css] @import ', CSSFile);
+    end;
+    Inc(i);
+  end;
+
   WriteLn('Loaded ', FileName);
 
   { @font-face: register downloadable fonts before the first layout so text

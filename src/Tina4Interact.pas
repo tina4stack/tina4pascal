@@ -774,7 +774,7 @@ begin
 end;
 
 procedure ParseDoc(W: Single);
-var i: Integer;
+var i: Integer; GImportSL: TStringList;
 begin
   BlurAll;
   GActiveTag := nil; GHoverTag := nil;   // old DOM about to be freed — drop refs
@@ -787,6 +787,19 @@ begin
   GSheet := TCSSStyleSheet.Create;
   for i := 0 to GParser.StyleBlocks.Count - 1 do
     GSheet.AddCSS(GParser.StyleBlocks[i]);
+  // @import: best-effort local-file load (drain by index → nested imports too).
+  // Remote @import is served by the desktop host that owns the fetch cache.
+  i := 0;
+  while i < GSheet.ImportHrefs.Count do
+  begin
+    if FileExists(GSheet.ImportHrefs[i]) then
+    begin
+      GImportSL := TStringList.Create;
+      try GImportSL.LoadFromFile(GSheet.ImportHrefs[i]); GSheet.AddCSS(GImportSL.Text);
+      finally GImportSL.Free; end;
+    end;
+    Inc(i);
+  end;
   GSheet.SetMediaContext(W, GDarkMode);   // @media: viewport width + dark scheme
   LoadFontFaces;                          // @font-face: register downloadable fonts
   GEngine := TLayoutEngine.Create(GCanvas, GSheet);
