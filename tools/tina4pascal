@@ -220,6 +220,45 @@ build_prog() {
   if [ -d "$PWD/fonts" ]; then mkdir -p "$outdir/fonts"; cp "$PWD/fonts/"*.ttf "$outdir/fonts/" 2>/dev/null || true; fi
 }
 
+# Authenticode-sign a Windows .exe with osslsigncode (cross-platform, so we sign
+# straight from the Mac cross-build). No-op — not an error — when no cert is
+# configured, so unsigned dev builds still work. Secrets stay in env, never the
+# repo, mirroring the Android keystore contract:
+#   TINA4_WIN_CERT       path to the PKCS#12 (.pfx/.p12) code-signing cert  [required to sign]
+#   TINA4_WIN_CERT_PASS  its password                                       [optional]
+#   TINA4_WIN_TS         RFC3161 timestamp URL   [default DigiCert]
+#   TINA4_WIN_SIGN_NAME  signature description   [default Tina4Pascal]
+#   TINA4_WIN_SIGN_URL   signature URL           [default https://tina4.com]
+sign_windows_exe() {
+  exe="$1"
+  if [ -z "${TINA4_WIN_CERT:-}" ]; then
+    warn "Windows exe UNSIGNED — set TINA4_WIN_CERT (PKCS#12) to Authenticode-sign it"
+    return 0
+  fi
+  [ -f "$TINA4_WIN_CERT" ] || die "TINA4_WIN_CERT not found: $TINA4_WIN_CERT"
+  command -v osslsigncode >/dev/null 2>&1 || die "osslsigncode not installed (brew install osslsigncode)"
+  ts="${TINA4_WIN_TS:-http://timestamp.digicert.com}"
+  nm="${TINA4_WIN_SIGN_NAME:-Tina4Pascal}"
+  url="${TINA4_WIN_SIGN_URL:-https://tina4.com}"
+  tmp="${exe}.signed"
+  say "${D}osslsigncode sign (sha256, RFC3161 $ts)${Z}"
+  if [ -n "${TINA4_WIN_CERT_PASS:-}" ]; then
+    osslsigncode sign -pkcs12 "$TINA4_WIN_CERT" -pass "$TINA4_WIN_CERT_PASS" \
+      -h sha256 -n "$nm" -i "$url" -ts "$ts" -in "$exe" -out "$tmp" \
+      || die "Authenticode signing failed"
+  else
+    osslsigncode sign -pkcs12 "$TINA4_WIN_CERT" \
+      -h sha256 -n "$nm" -i "$url" -ts "$ts" -in "$exe" -out "$tmp" \
+      || die "Authenticode signing failed"
+  fi
+  mv -f "$tmp" "$exe"
+  if osslsigncode verify -in "$exe" >/dev/null 2>&1; then
+    ok "signed + timestamped: $(basename "$exe")"
+  else
+    warn "signed but verify was inconclusive (often just an untrusted local CA store) — check on Windows"
+  fi
+}
+
 cmd_build() {
   target="${1:-macos}"
   case "$target" in
@@ -243,6 +282,7 @@ cmd_build() {
         warn "fpcres not found at $FPC_HOME/bin — Windows build will have no app icon"
       fi
       build_prog windows "$hvdir/htmlviewer_win.pas"
+      sign_windows_exe "$BUILD/windows/htmlviewer_win.exe"
       ok "Windows host → $BUILD/windows/htmlviewer_win.exe  (run it on Windows)" ;;
     linux|linux-arm64)
       build_prog "$target" "$ROOT/examples/htmlviewer/htmlviewer_x11.pas"

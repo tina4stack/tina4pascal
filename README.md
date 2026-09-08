@@ -267,6 +267,22 @@ PPC_CONFIG_PATH=$HOME/fpc/etc $HOME/fpc/bin/fpc -Mdelphi -Twin64 -Px86_64 \
   -FE/tmp/w -FU/tmp/w -Fusrc examples/htmlviewer/htmlviewer_win.pas
 ```
 
+**Code signing (Authenticode).** `tina4pascal build win64` signs the `.exe` when a
+code-signing certificate is configured — via `osslsigncode`, so it signs straight
+from the Mac cross-build (no Windows box needed). Secrets stay in the environment,
+never the repo:
+
+```sh
+export TINA4_WIN_CERT=/path/to/codesign.p12   # PKCS#12 (.pfx/.p12); required to sign
+export TINA4_WIN_CERT_PASS=…                   # its password (optional)
+# optional overrides: TINA4_WIN_TS (RFC3161 TSA, default DigiCert),
+#                     TINA4_WIN_SIGN_NAME (default Tina4Pascal), TINA4_WIN_SIGN_URL
+./tools/tina4pascal build win64                # → SHA-256 + RFC3161-timestamped exe
+```
+
+With no `TINA4_WIN_CERT` set the build prints an `UNSIGNED` notice and proceeds, so
+dev builds still work. Needs `brew install osslsigncode` (already on the build Mac).
+
 ### What's next on Windows
 
 The GDI+ shell renders shapes, ClearType text, clipping, `clip-path`, 2D
