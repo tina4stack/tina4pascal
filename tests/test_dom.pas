@@ -246,6 +246,7 @@ var
   LsiParser: THTMLParser;
   LsiUl: THTMLTag;
   LsiStyle: TComputedStyle;
+  DecoStyle: TComputedStyle;
   Edges: TEdgeValues;
   DeclPair: TPair<string, string>;
 begin
@@ -560,6 +561,19 @@ begin
     CheckEqualsHex(TAlphaColors.Null, TComputedStyle.ParseColor('transparent'), 'ParseColor transparent');
     CheckEqualsHex(TAlphaColors.Black, TComputedStyle.ParseColor('no-such-colour'),
       'NEGATIVE: unknown colour falls back to black');
+
+    // text-decoration shorthand: line + style + colour in any order
+    Decls := TCSSDeclarations.Create;
+    try
+      Decls.AddOrSetValue('text-decoration', 'underline wavy #ff5aa0');
+      DecoStyle := TComputedStyle.Default;
+      TComputedStyle.ApplyDeclarations(Decls, DecoStyle, TComputedStyle.Default);
+      CheckEqualsStr('underline', DecoStyle.TextDecoration, 'decoration shorthand keeps line');
+      CheckEqualsStr('wavy', DecoStyle.TextDecorationStyle, 'decoration shorthand parses style');
+      CheckEqualsHex($FFFF5AA0, DecoStyle.TextDecorationColor, 'decoration shorthand parses colour');
+    finally
+      Decls.Free;
+    end;
 
     CheckEqualsF(10, TComputedStyle.ParseLength('10px'), 'ParseLength px');
     CheckEqualsF(28, TComputedStyle.ParseLength('2em', 14), 'ParseLength em uses EmSize');

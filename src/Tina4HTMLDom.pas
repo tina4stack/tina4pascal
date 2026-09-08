@@ -282,6 +282,8 @@ type
     Color: TAlphaColor;
     BackgroundColor: TAlphaColor;
     TextDecoration: string;
+    TextDecorationStyle: string;      // 'solid'|'double'|'dotted'|'dashed'|'wavy'
+    TextDecorationColor: TAlphaColor;  // 0 => use text color
     TextAlign: TTextAlign;
     TextJustify: Boolean;      // text-align: justify (spread slack across gaps)
     LineHeight: Single;
@@ -2291,6 +2293,8 @@ begin
   Result.Color := TAlphaColors.Black;
   Result.BackgroundColor := TAlphaColors.Null;
   Result.TextDecoration := 'none';
+  Result.TextDecorationStyle := 'solid';
+  Result.TextDecorationColor := 0;
   Result.TextAlign := TTextAlign.Leading;
   Result.TextJustify := False;
   Result.LineHeight := 1.4;
@@ -2771,6 +2775,8 @@ begin
   // Non-inherited defaults
   Result.BackgroundColor := TAlphaColors.Null;
   Result.TextDecoration := 'none';
+  Result.TextDecorationStyle := 'solid';
+  Result.TextDecorationColor := 0;
   Result.Margin.Clear;
   Result.Padding.Clear;
   Result.SetBorderColor(TAlphaColors.Black);
@@ -3602,6 +3608,7 @@ var
   GColors: array of TAlphaColor;
   TfStr, FnName, ArgStr, AStr: string;
   TfPos, NameStart, ArgStart: Integer;
+  tdTok, tdLine: string;
 
   function ShouldSkip(const V: string): Boolean;
   var TV: string;
@@ -3667,7 +3674,30 @@ begin
   if Decls.TryGetValue('font-style', Temp) and not ShouldSkip(Temp) then
     Style.Italic := SameText(Temp, 'italic') or SameText(Temp, 'oblique');
   if Decls.TryGetValue('text-decoration', Temp) and not ShouldSkip(Temp) then
+  begin
+    // shorthand: line(s) + style + color in any order, e.g. "underline wavy #f5a"
+    tdLine := '';
+    for tdTok in Temp.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+    begin
+      if (tdTok = 'none') or (tdTok = 'underline') or (tdTok = 'overline') or
+         (tdTok = 'line-through') or (tdTok = 'blink') then
+      begin
+        if tdLine = '' then tdLine := tdTok else tdLine := tdLine + ' ' + tdTok;
+      end
+      else if (tdTok = 'solid') or (tdTok = 'double') or (tdTok = 'dotted') or
+              (tdTok = 'dashed') or (tdTok = 'wavy') then
+        Style.TextDecorationStyle := tdTok
+      else
+        Style.TextDecorationColor := ParseColor(tdTok);   // color token
+    end;
+    if tdLine <> '' then Style.TextDecoration := tdLine;
+  end;
+  if Decls.TryGetValue('text-decoration-line', Temp) and not ShouldSkip(Temp) then
     Style.TextDecoration := Temp.ToLower;
+  if Decls.TryGetValue('text-decoration-style', Temp) and not ShouldSkip(Temp) then
+    Style.TextDecorationStyle := Temp.ToLower;
+  if Decls.TryGetValue('text-decoration-color', Temp) and not ShouldSkip(Temp) then
+    Style.TextDecorationColor := ParseColor(Temp);
   if Decls.TryGetValue('text-align', Temp) and not ShouldSkip(Temp) then
   begin
     Temp := Temp.ToLower;
