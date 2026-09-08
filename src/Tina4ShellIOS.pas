@@ -712,24 +712,37 @@ begin
   Result := True;
 end;
 
+{ CoreGraphics frees the pixel buffer via this callback once it is truly done with
+  the CGImage — which on iOS is DEFERRED (the layer rasterises the display list
+  later), so the buffer must outlive this call. }
+procedure ReleaseRGBAData(info: Pointer; data: Pointer; size: NativeUInt); cdecl;
+begin
+  if data <> nil then FreeMem(data);
+end;
+
 { Composite a straight-$AARRGGBB buffer via a CGImage (premultiplied for CG),
-  flipped like DrawImage. Powers the base soft/inset box-shadow blit on iOS. }
+  flipped like DrawImage. Powers the base soft/inset box-shadow blit on iOS. The
+  pixel data is heap-allocated and owned by the data provider (freed in the
+  callback) because drawRect draws lazily — a stack buffer would be freed before
+  CoreGraphics reads it (EXC_BAD_ACCESS). }
 procedure TIOSCanvas.DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single);
 var
-  src: PCardinal; rgba: array of Byte; i, n, a, cr, cg, cb: Integer; c: Cardinal;
+  src: PCardinal; dst: PByte; i, n, a, cr, cg, cb: Integer; c: Cardinal;
   prov: CGDataProviderRef; img: CGImageRef;
 begin
   if (FCtx = nil) or (Buf = nil) or (BW <= 0) or (BH <= 0) then Exit;
-  src := PCardinal(Buf); n := BW * BH; SetLength(rgba, n * 4);
+  src := PCardinal(Buf); n := BW * BH;
+  GetMem(dst, n * 4);
   for i := 0 to n - 1 do
   begin
     c := src[i]; a := (c shr 24) and $FF;
     cr := ((c shr 16) and $FF) * a div 255;   // premultiply for CG compositing
     cg := ((c shr 8) and $FF) * a div 255;
     cb := (c and $FF) * a div 255;
-    rgba[i * 4 + 0] := cr; rgba[i * 4 + 1] := cg; rgba[i * 4 + 2] := cb; rgba[i * 4 + 3] := a;
+    dst[i * 4 + 0] := cr; dst[i * 4 + 1] := cg; dst[i * 4 + 2] := cb; dst[i * 4 + 3] := a;
   end;
-  prov := CGDataProviderCreateWithData(nil, @rgba[0], n * 4, nil);
+  prov := CGDataProviderCreateWithData(nil, dst, n * 4, @ReleaseRGBAData);
+  if prov = nil then begin FreeMem(dst); Exit; end;   // provider owns dst from here on
   img := CGImageCreate(BW, BH, 8, 32, BW * 4, FSpace,
     kCGImageAlphaPremultipliedLast, prov, nil, 0, kCGRenderingIntentDefault);
   if img <> nil then
@@ -741,7 +754,7 @@ begin
     CGContextRestoreGState(FCtx);
     CGImageRelease(img);
   end;
-  CGDataProviderRelease(prov);
+  CGDataProviderRelease(prov);   // when the deferred draw is done, frees dst via the callback
 end;
 
 { ---- offscreen filter / blend / 3D compositing (shared Tina4Compositor) ---- }
