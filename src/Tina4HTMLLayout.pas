@@ -75,6 +75,7 @@ type
     FViewportW: Single;            // for <picture>/srcset media + sizes eval
     FContainingH: Single;          // containing block's definite content height, or -1
                                    // (auto) — the % base for a child's height:NN%
+    FSynthTags: TList<THTMLTag>;   // anonymous flex-item wrappers (freed each layout)
     FFloats: array of TFloatBand;  // active float context (absolute coords)
     function FontStylesOf(const St: TComputedStyle): TTina4FontStyles;
     function LineHeightOf(const St: TComputedStyle): Single;
@@ -100,8 +101,11 @@ type
     function LayoutGrid(Parent: TLayoutBox; Tag: THTMLTag;
       const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
     procedure CollectInlineText(Tag: THTMLTag; SB: TStringBuilder);
+    procedure FreeSynthTags;
+    function MakeAnonTextItem(Parent: THTMLTag; const S: string): THTMLTag;
   public
     constructor Create(Canvas: TTina4Canvas; Sheet: TCSSStyleSheet);
+    destructor Destroy; override;
     function Build(Root: THTMLTag; ViewportW: Single; ViewportH: Single = 0): TLayoutBox;
     { Recompute styles only (hover/active/focus flips) without relayout —
       geometry is untouched, so this is cheap enough for mouse-move. }
@@ -344,6 +348,42 @@ constructor TLayoutEngine.Create(Canvas: TTina4Canvas; Sheet: TCSSStyleSheet);
 begin
   FCanvas := Canvas;
   FSheet := Sheet;
+  FSynthTags := TList<THTMLTag>.Create;
+end;
+
+destructor TLayoutEngine.Destroy;
+begin
+  FreeSynthTags;
+  FSynthTags.Free;
+  inherited Destroy;
+end;
+
+{ Free the anonymous flex-item wrapper tags from the previous layout. Safe here
+  because the box tree that referenced them has been rebuilt/discarded. Each
+  wrapper owns a private #text copy, so this never touches real DOM nodes. }
+procedure TLayoutEngine.FreeSynthTags;
+var i: Integer;
+begin
+  if FSynthTags = nil then Exit;
+  for i := 0 to FSynthTags.Count - 1 do FSynthTags[i].Free;
+  FSynthTags.Clear;
+end;
+
+{ Wrap a text run in an anonymous inline element so it becomes an anonymous flex
+  item (CSS: contiguous text in a flex container). Owns a private #text copy and
+  is freed on the next layout, so it never touches real DOM nodes. }
+function TLayoutEngine.MakeAnonTextItem(Parent: THTMLTag; const S: string): THTMLTag;
+var tx: THTMLTag;
+begin
+  Result := THTMLTag.Create;
+  Result.TagName := 'span';
+  Result.Parent := Parent;
+  tx := THTMLTag.Create;
+  tx.TagName := '#text';
+  tx.Text := S;
+  tx.Parent := Result;
+  Result.Children.Add(tx);
+  FSynthTags.Add(Result);
 end;
 
 function TLayoutEngine.FontStylesOf(const St: TComputedStyle): TTina4FontStyles;
@@ -1483,6 +1523,7 @@ var
   items: TObjectList<TLayoutBox>;
   itemTags: TList<THTMLTag>;
   c: THTMLTag;
+  runText: string;   // accumulates a contiguous text run → anonymous flex item
   mL, mR, mT, mB, availInner, ew, eh: Single;
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
   isCol: Boolean;
@@ -1540,13 +1581,18 @@ begin
   items := TObjectList<TLayoutBox>.Create(False);
   itemTags := TList<THTMLTag>.Create;
   try
+    runText := '';
     for c in Tag.Children do
     begin
-      if IsTextNode(c) then Continue;
+      if IsTextNode(c) then begin runText := runText + c.Text; Continue; end;
       cs := TComputedStyle.ForTag(c, st, FSheet);
       if LowerCase(cs.Display) = 'none' then Continue;
+      // a contiguous text run before this element is its own anonymous flex item
+      if Trim(runText) <> '' then itemTags.Add(MakeAnonTextItem(Tag, runText));
+      runText := '';
       itemTags.Add(c);
     end;
+    if Trim(runText) <> '' then itemTags.Add(MakeAnonTextItem(Tag, runText));   // trailing run
     // `order`: stable insertion-sort by the item's order (default 0)
     for i := 1 to itemTags.Count - 1 do
     begin
@@ -3726,6 +3772,7 @@ begin
   SetLength(FFloats, 0);   // fresh float context per layout
   if ViewportH <= 0 then ViewportH := ViewportW * 0.66;   // rough default when unknown
   FContainingH := ViewportH;   // the initial containing block (viewport) height for height:NN%
+  FreeSynthTags;               // discard last layout's anonymous flex-item wrappers
   SetCalcContext(ViewportW, ViewportH);   // vw/vh + reset deferred calc() table
   GAnimSheet := FSheet;                    // @keyframes lookup for paint-time animation
   body := FindBody(Root);
