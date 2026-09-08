@@ -1,0 +1,258 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  :root{
+    --blue:#2b41e6; --blue-deep:#1a2aa8; --blue-soft:#e4e8ff;
+    --pink:#ff5aa0; --pink-deep:#d63884; --pink-soft:#ffe1ee;
+    --yellow:#ffd23c; --yellow-soft:#fff4cf;
+    --paper:#fbfaf7; --surface:#fff; --surface-2:#f3f2fb;
+    --ink:#15162e; --muted:#5b5c78; --faint:#9698b4; --border:#e6e5f0;
+    --radius:16px; --shadow:0 1px 2px rgba(21,22,46,.06),0 14px 40px rgba(43,65,230,.10);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font:15px/1.55 "Hanken Grotesk",system-ui,sans-serif}
+  h1,h2,h3{font-family:"Gabarito","Hanken Grotesk",sans-serif;letter-spacing:-.02em;margin:0}
+  code,.mono{font-family:"Space Mono",monospace}
+
+  header{background:linear-gradient(120deg,var(--blue-deep),var(--pink));color:#fff;padding:34px 28px}
+  header h1{font-size:30px;font-weight:800}
+  header p{margin:6px 0 0;opacity:.9}
+  nav{position:sticky;top:0;z-index:50;background:rgba(251,250,247,.96);
+      border-bottom:1px solid var(--border);padding:10px 20px;display:flex;flex-wrap:wrap;gap:8px}
+  nav a{font:700 11px "Space Mono",monospace;text-transform:uppercase;letter-spacing:.06em;
+        color:var(--blue);background:var(--blue-soft);padding:5px 9px;border-radius:8px;text-decoration:none}
+
+  section{padding:26px 28px;border-bottom:1px solid var(--border)}
+  section>h2{font-size:20px;margin-bottom:4px}
+  .lead{color:var(--muted);margin:0 0 18px}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .g3{grid-template-columns:repeat(3,1fr)} .g2{grid-template-columns:repeat(2,1fr)}
+  .cell{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;
+        box-shadow:var(--shadow);min-height:118px;display:flex;flex-direction:column;gap:8px}
+  .cap{font:700 9px "Space Mono",monospace;text-transform:uppercase;letter-spacing:.07em;color:var(--faint)}
+  .demo{flex:1;display:flex;align-items:center;justify-content:center;position:relative}
+  .swatch{width:76px;height:52px;border-radius:8px}
+
+  /* typography */
+  .t-weights b{font-weight:800}.t-weights i{font-style:italic}
+  .u-wavy{text-decoration:underline wavy var(--pink)}
+  .u-dot{text-decoration:underline dotted var(--blue)}
+  .u-dash{text-decoration:underline dashed var(--pink-deep)}
+  .u-dbl{text-decoration:underline double var(--blue)}
+  .strike{text-decoration:line-through}
+  .tshadow{font-family:"Gabarito";font-weight:800;font-size:26px;color:#fff;
+           text-shadow:2px 2px 0 var(--pink),4px 4px 0 var(--blue)}
+  .clip-text{font-family:"Gabarito";font-weight:800;font-size:26px;
+             background:linear-gradient(90deg,var(--pink),var(--blue));
+             -webkit-background-clip:text;background-clip:text;color:transparent}
+  .ellip{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}
+  .vmode{writing-mode:vertical-rl;font-weight:800;color:var(--blue);font-size:16px}
+  pre.tabs{tab-size:4;font:13px "Space Mono",monospace;background:var(--surface-2);
+           padding:8px;border-radius:8px;margin:0}
+  .last-line{text-align-last:center;width:100%}
+
+  /* gradients */
+  .g-lin{background:linear-gradient(60deg,var(--pink),var(--yellow),var(--blue))}
+  .g-rad{background:radial-gradient(circle at 40% 40%,var(--yellow),var(--blue))}
+  .g-con{width:56px;height:56px;border-radius:50%;
+         background:conic-gradient(from 0deg,var(--pink),var(--yellow),var(--blue),var(--pink))}
+  .g-rep{background:repeating-linear-gradient(45deg,var(--blue) 0 8px,var(--yellow) 8px 16px)}
+
+  /* box model */
+  .r-corners{width:76px;height:52px;background:var(--blue);border-radius:4px 22px 4px 22px}
+  .r-circle{width:56px;height:56px;border-radius:50%;background:var(--pink)}
+  .b-dashed{width:76px;height:52px;border:3px dashed var(--pink-deep);border-radius:8px}
+  .b-double{width:76px;height:52px;border:4px double var(--blue);border-radius:8px}
+  .sh-soft{width:70px;height:48px;background:var(--surface);border-radius:10px;
+           box-shadow:0 10px 24px rgba(43,65,230,.35)}
+  .sh-inset{width:70px;height:48px;background:var(--surface-2);border-radius:10px;
+            box-shadow:inset 0 4px 10px rgba(43,65,230,.4)}
+  .sh-multi{width:70px;height:48px;background:var(--surface);border-radius:10px;
+            box-shadow:3px 3px 0 var(--pink),6px 6px 0 var(--blue)}
+  .outline{width:66px;height:44px;background:var(--yellow-soft);outline:3px dotted var(--pink);outline-offset:3px}
+
+  /* layout */
+  .flex-row{display:flex;flex-flow:row wrap;gap:6px;align-items:center;justify-content:center}
+  .flex-row span{width:20px;height:20px;border-radius:5px;background:var(--blue)}
+  .flex-row .a{background:var(--pink)}.flex-row .b{background:var(--yellow);order:-1}
+  .mini-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;width:80px}
+  .mini-grid span{height:20px;background:var(--blue);border-radius:4px}
+  .mini-grid .w{grid-column:1/4;background:var(--pink)}
+  .ar{width:70px;aspect-ratio:16/9;background:var(--blue);border-radius:6px}
+  .scroller{width:100%;height:70px;overflow:auto;background:var(--surface-2);border-radius:8px;padding:6px}
+  .scroller div{height:26px;margin-bottom:4px;background:var(--blue-soft);border-radius:5px}
+
+  /* transforms + effects */
+  .tf-rot{width:52px;height:38px;background:var(--blue);transform:rotate(18deg)}
+  .tf-skew{width:48px;height:38px;background:var(--pink);transform:skewX(-16deg) scale(1.05)}
+  .tf-3d{width:52px;height:44px;background:linear-gradient(var(--blue),var(--pink));transform:rotateY(45deg) rotateX(12deg)}
+  .fx-blur{width:56px;height:42px;background:var(--blue);filter:blur(3px)}
+  .fx-gray{width:56px;height:42px;background:linear-gradient(45deg,var(--pink),var(--blue));filter:grayscale(1)}
+  .fx-drop{width:0;height:0;border-left:26px solid transparent;border-right:26px solid transparent;
+           border-bottom:42px solid var(--blue);filter:drop-shadow(3px 4px 2px rgba(0,0,0,.5))}
+  .blend{position:relative;width:70px;height:52px}
+  .blend i{position:absolute;width:42px;height:42px;border-radius:50%;mix-blend-mode:multiply;top:5px}
+  .blend .a{background:var(--pink);left:0}.blend .b{background:var(--blue);left:22px}
+  .clip-tri{width:56px;height:56px;background:var(--pink);clip-path:polygon(50% 0,100% 100%,0 100%)}
+  .masked{width:76px;height:52px;background:var(--blue);
+          -webkit-mask-image:linear-gradient(90deg,#000,transparent);
+          mask-image:linear-gradient(90deg,#000,transparent)}
+
+  /* generated content */
+  .star::before{content:"★ ";color:var(--yellow)}
+  .badge{width:60px;height:44px;background:var(--yellow);border-radius:8px;position:relative}
+  .badge::after{content:"";position:absolute;right:-5px;top:-5px;width:15px;height:15px;
+                background:var(--pink);border-radius:50%}
+
+  /* lists + tables */
+  ul.demo-list{margin:0;padding-left:18px}
+  table.tbl{border-collapse:collapse;font-size:13px;width:100%}
+  table.tbl caption{caption-side:top;font:700 10px "Space Mono",monospace;color:var(--muted);
+                    text-transform:uppercase;letter-spacing:.06em;padding-bottom:4px}
+  table.tbl th,table.tbl td{border:1px solid var(--border);padding:4px 8px;text-align:left}
+  table.tbl th{background:var(--blue-soft)}
+
+  /* forms */
+  .form-row{display:flex;flex-direction:column;gap:8px}
+  input,select{border:1px solid var(--border);border-radius:9px;padding:7px 9px;font:14px "Hanken Grotesk",sans-serif}
+  input:focus{outline:none;box-shadow:0 0 0 3px var(--blue-soft);border-color:var(--blue)}
+  .btn{border:0;border-radius:10px;padding:8px 14px;font-weight:700;background:var(--blue);color:#fff}
+  .chk{display:flex;gap:10px;align-items:center}
+
+  footer{padding:26px 28px;color:var(--muted);font-size:13px}
+  footer b{color:var(--ink)}
+</style></head>
+<body>
+  <header>
+    <h1>Tina4Pascal — the whole kitchen sink</h1>
+    <p>A pure-software HTML/CSS engine. Everything below is rendered by Pascal, no browser.</p>
+  </header>
+
+  <nav>
+    <a href="#type">Type</a><a href="#grad">Gradients</a><a href="#box">Box model</a>
+    <a href="#layout">Layout</a><a href="#fx">Transforms &amp; FX</a><a href="#gen">Generated</a>
+    <a href="#data">Tables</a><a href="#forms">Forms</a>
+  </nav>
+
+  <section id="type">
+    <h2>Typography</h2>
+    <p class="lead">Weights, spacing, decoration styles, shadow, gradient text, tabs, vertical &amp; more.</p>
+    <div class="grid">
+      <div class="cell"><div class="cap">weights + italic</div><div class="demo t-weights" style="text-align:center">Regular <b>Bold</b> <i>Italic</i></div></div>
+      <div class="cell"><div class="cap">decoration styles</div><div class="demo" style="flex-direction:column;gap:2px;font-size:15px">
+        <span class="u-wavy">wavy</span><span class="u-dot">dotted</span><span class="u-dash">dashed</span><span class="u-dbl">double</span><span class="strike">strike</span></div></div>
+      <div class="cell"><div class="cap">text-shadow</div><div class="demo"><span class="tshadow">Aa</span></div></div>
+      <div class="cell"><div class="cap">background-clip:text</div><div class="demo"><span class="clip-text">Gradient</span></div></div>
+      <div class="cell"><div class="cap">text-overflow</div><div class="demo"><span class="ellip">This line is far too long to fit and ellipses</span></div></div>
+      <div class="cell"><div class="cap">writing-mode</div><div class="demo"><span class="vmode">Vertical</span></div></div>
+      <div class="cell"><div class="cap">tab-size:4</div><div class="demo"><pre class="tabs">a	b	c
+xx	y	z</pre></div></div>
+      <div class="cell"><div class="cap">text-align-last</div><div class="demo"><span class="last-line">centred<br>last line</span></div></div>
+    </div>
+  </section>
+
+  <section id="grad">
+    <h2>Colour &amp; gradients</h2>
+    <p class="lead">Linear (angle + stops), radial, conic sweep, repeating stripes.</p>
+    <div class="grid">
+      <div class="cell"><div class="cap">linear</div><div class="demo"><div class="swatch g-lin"></div></div></div>
+      <div class="cell"><div class="cap">radial</div><div class="demo"><div class="swatch g-rad"></div></div></div>
+      <div class="cell"><div class="cap">conic</div><div class="demo"><div class="g-con"></div></div></div>
+      <div class="cell"><div class="cap">repeating</div><div class="demo"><div class="swatch g-rep"></div></div></div>
+    </div>
+  </section>
+
+  <section id="box">
+    <h2>Box model</h2>
+    <p class="lead">Per-corner radius, border styles, soft/inset/multiple shadows, outline.</p>
+    <div class="grid">
+      <div class="cell"><div class="cap">per-corner radius</div><div class="demo"><div class="r-corners"></div></div></div>
+      <div class="cell"><div class="cap">50% circle</div><div class="demo"><div class="r-circle"></div></div></div>
+      <div class="cell"><div class="cap">border dashed</div><div class="demo"><div class="b-dashed"></div></div></div>
+      <div class="cell"><div class="cap">border double</div><div class="demo"><div class="b-double"></div></div></div>
+      <div class="cell"><div class="cap">shadow soft</div><div class="demo"><div class="sh-soft"></div></div></div>
+      <div class="cell"><div class="cap">shadow inset</div><div class="demo"><div class="sh-inset"></div></div></div>
+      <div class="cell"><div class="cap">shadow multiple</div><div class="demo"><div class="sh-multi"></div></div></div>
+      <div class="cell"><div class="cap">outline dotted</div><div class="demo"><div class="outline"></div></div></div>
+    </div>
+  </section>
+
+  <section id="layout">
+    <h2>Layout</h2>
+    <p class="lead">Flexbox (flex-flow, order, gap), grid + span, aspect-ratio, overflow scroll.</p>
+    <div class="grid">
+      <div class="cell"><div class="cap">flex-flow + order</div><div class="demo"><div class="flex-row"><span></span><span class="a"></span><span class="b"></span><span></span></div></div></div>
+      <div class="cell"><div class="cap">grid + span</div><div class="demo"><div class="mini-grid"><span class="w"></span><span></span><span></span><span></span></div></div></div>
+      <div class="cell"><div class="cap">aspect-ratio 16/9</div><div class="demo"><div class="ar"></div></div></div>
+      <div class="cell"><div class="cap">overflow scroll</div><div class="demo"><div class="scroller"><div></div><div></div><div></div><div></div></div></div></div>
+    </div>
+  </section>
+
+  <section id="fx">
+    <h2>Transforms &amp; effects</h2>
+    <p class="lead">2D + 3D transforms, filters, drop-shadow, mix-blend, clip-path, gradient mask.</p>
+    <div class="grid">
+      <div class="cell"><div class="cap">rotate</div><div class="demo"><div class="tf-rot"></div></div></div>
+      <div class="cell"><div class="cap">skew + scale</div><div class="demo"><div class="tf-skew"></div></div></div>
+      <div class="cell"><div class="cap">3D rotate</div><div class="demo"><div class="tf-3d"></div></div></div>
+      <div class="cell"><div class="cap">filter blur</div><div class="demo"><div class="fx-blur"></div></div></div>
+      <div class="cell"><div class="cap">grayscale</div><div class="demo"><div class="fx-gray"></div></div></div>
+      <div class="cell"><div class="cap">drop-shadow</div><div class="demo"><div class="fx-drop"></div></div></div>
+      <div class="cell"><div class="cap">mix-blend multiply</div><div class="demo"><div class="blend"><i class="a"></i><i class="b"></i></div></div></div>
+      <div class="cell"><div class="cap">clip-path</div><div class="demo"><div class="clip-tri"></div></div></div>
+      <div class="cell"><div class="cap">gradient mask</div><div class="demo"><div class="masked"></div></div></div>
+    </div>
+  </section>
+
+  <section id="gen">
+    <h2>Generated content &amp; lists</h2>
+    <p class="lead">::before / ::after pseudo-elements, list styles.</p>
+    <div class="grid g3">
+      <div class="cell"><div class="cap">::before star</div><div class="demo"><span class="star">favourite</span></div></div>
+      <div class="cell"><div class="cap">::after badge</div><div class="demo"><div class="badge"></div></div></div>
+      <div class="cell"><div class="cap">list-style</div><div class="demo"><ul class="demo-list"><li>disc one</li><li>disc two</li><li>disc three</li></ul></div></div>
+    </div>
+  </section>
+
+  <section id="data">
+    <h2>Tables</h2>
+    <p class="lead">Collapsed borders, caption, header row, alignment.</p>
+    <div class="grid g2">
+      <div class="cell" style="min-height:0;display:block">
+        <table class="tbl"><caption>Quarterly</caption>
+          <tr><th>Quarter</th><th>Revenue</th><th>Δ</th></tr>
+          <tr><td>Q1</td><td>$1.2M</td><td>+4%</td></tr>
+          <tr><td>Q2</td><td>$1.5M</td><td>+25%</td></tr>
+          <tr><td>Q3</td><td>$1.4M</td><td>−7%</td></tr>
+        </table></div>
+      <div class="cell" style="min-height:0;display:block">
+        <table class="tbl"><caption>Team</caption>
+          <tr><th>Name</th><th>Role</th></tr>
+          <tr><td>Andre</td><td>Maintainer</td></tr>
+          <tr><td>Claude</td><td>Engine work</td></tr>
+        </table></div>
+    </div>
+  </section>
+
+  <section id="forms">
+    <h2>Forms</h2>
+    <p class="lead">Inputs, select, checkbox/radio, button — drawn by the engine, state in the DOM.</p>
+    <div class="grid g3">
+      <div class="cell"><div class="cap">text input</div><div class="demo form-row" style="align-items:stretch">
+        <input placeholder="your name"><input value="typed value"></div></div>
+      <div class="cell"><div class="cap">select</div><div class="demo form-row" style="align-items:stretch">
+        <select><option>Choose…</option><option>Blue</option><option>Pink</option></select>
+        <button class="btn">Submit</button></div></div>
+      <div class="cell"><div class="cap">checkbox / radio</div><div class="demo form-row">
+        <label class="chk"><input type="checkbox" checked> Subscribed</label>
+        <label class="chk"><input type="radio" name="p" checked> Monthly</label>
+        <label class="chk"><input type="radio" name="p"> Yearly</label></div></div>
+    </div>
+  </section>
+
+  <footer>
+    Rendered by <b>Tina4Pascal</b> — one immediate-mode engine, six targets (macOS · Windows ·
+    Linux · Android · iOS), zero GPU. Also does 3D (ThreePascal), live SSE/WebSocket data
+    binding, notifications, and <code>@import</code>.
+  </footer>
+</body></html>
