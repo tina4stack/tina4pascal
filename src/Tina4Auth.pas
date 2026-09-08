@@ -60,9 +60,16 @@ function  TinaClaim(const Path: string): string;
 
 procedure TinaAuthLogout;
 
+{ Install/remove the engine's RBAC guard so data-role/data-perm elements the user
+  lacks are hidden. Call after configuring + login; then TinaInvalidateLayout to
+  re-cascade. Removed guard = everything visible. }
+procedure TinaAuthInstallGuard;
+procedure TinaAuthRemoveGuard;
+
 implementation
 
-uses SysUtils, Classes, StrUtils, DateUtils, fpjson, jsonparser, Tina4Crypto;
+uses SysUtils, Classes, StrUtils, DateUtils, fpjson, jsonparser,
+  Tina4HTMLDom, Tina4Crypto;
 
 var
   GCfg: TTina4AuthConfig;
@@ -248,6 +255,15 @@ begin
   if GClaims <> nil then begin GClaims.Free; GClaims := nil; end;
   EnsureLists; GRoles.Clear; GPerms.Clear;
 end;
+
+{ allowed when every stated requirement is met (role and/or perm). }
+function AuthAccessCheck(const Role, Perm: string): Boolean;
+begin
+  Result := ((Role = '') or TinaHasRole(Role)) and ((Perm = '') or TinaCan(Perm));
+end;
+
+procedure TinaAuthInstallGuard; begin GAccessCheck := @AuthAccessCheck; end;
+procedure TinaAuthRemoveGuard;  begin GAccessCheck := nil; end;
 
 finalization
   if GClaims <> nil then GClaims.Free;

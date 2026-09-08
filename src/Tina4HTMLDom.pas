@@ -442,6 +442,14 @@ procedure SetCalcContext(VpW, VpH: Single);
   evaluate it now against PctBase; otherwise return V unchanged. }
 function ResolveCalc(V, PctBase: Single): Single;
 
+type
+  { RBAC access hook: return True if the current user may see an element gated by
+    `data-role`/`data-perm` (either may be ''). Injected so the portable core
+    stays auth-agnostic — nil means allow everything. Tina4Auth installs it. }
+  TTina4AccessCheck = function(const Role, Perm: string): Boolean;
+var
+  GAccessCheck: TTina4AccessCheck = nil;
+
 implementation
 
 // UTF-8 encoder used by entity decoding (Delphi appended UTF-16 code units;
@@ -3151,6 +3159,14 @@ begin
         Result.BorderRadius := 6;   // 0.375rem ~ 6px
     end;
   end;
+
+  { RBAC guard: an element gated by data-role/data-perm the user lacks is hidden
+    (display:none → not laid out, not hit-tested). Uses the injected hook so the
+    core needs no auth dependency; nil hook = everything allowed. }
+  if Assigned(GAccessCheck) and
+     ((Tag.GetAttribute('data-role', '') <> '') or (Tag.GetAttribute('data-perm', '') <> '')) and
+     (not GAccessCheck(Tag.GetAttribute('data-role', ''), Tag.GetAttribute('data-perm', ''))) then
+    Result.Display := 'none';
 end;
 
 class procedure TComputedStyle.ExtractBgImageUrl(const Value: string; out Url: string);
