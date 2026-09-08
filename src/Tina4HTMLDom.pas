@@ -178,6 +178,7 @@ type
     FCustomProps: TDictionary<string, string>;
     FOnParseError: TCSSStyleSheetParseError;
     FHasInteractiveSelectors: Boolean;  // any rule uses :hover/:active/:focus?
+    FHasPseudo: Boolean;                // any rule targets ::before / ::after
     // Indexed cascade — rules grouped by their routing key so a tag
     // with class "btn" only checks rules that could plausibly match it.
     // (FPC note: declared as TObjectDictionary because FPC's rtl-generics
@@ -212,6 +213,10 @@ type
     procedure AddCSS(const CSSText: string);
     procedure Clear;
     procedure ApplyTo(Tag: THTMLTag; Declarations: TCSSDeclarations);
+    { Merge the declarations of every `base::Which` (or `:Which`) rule that matches
+      Tag into Decls (source order). Which is 'before' or 'after'. Returns True if
+      any matched. Used to synthesise ::before/::after generated-content boxes. }
+    function CollectPseudoStyle(Tag: THTMLTag; const Which: string; Decls: TCSSDeclarations): Boolean;
     { Set the live @media evaluation context (viewport width + dark scheme).
       Call before a cascade pass; rules/vars behind @media react to it. }
     procedure SetMediaContext(ViewportW: Single; Dark: Boolean);
@@ -241,6 +246,7 @@ type
     /// stylesheet rule cares about interactive state.
     /// </summary>
     property HasInteractiveSelectors: Boolean read FHasInteractiveSelectors;
+    property HasPseudo: Boolean read FHasPseudo;
     property CustomProps: TDictionary<string, string> read FCustomProps;
   end;
 
@@ -588,6 +594,8 @@ begin
   // Pre-tokenize the selector. Lowercase once, split-by-space once.
   Rule.SelectorLower := Rule.Selector.Trim.ToLower;
   Rule.SelectorParts := Rule.SelectorLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+  if Rule.SelectorLower.EndsWith(':before') or Rule.SelectorLower.EndsWith(':after') then
+    FHasPseudo := True;   // covers ::before/::after too (they end with :before/:after)
 
   Sel := Rule.Selector.Trim;
   // Find the last descendant-separated part. Trim trailing combinators.
@@ -1356,6 +1364,37 @@ begin
   end;
 
   Result := True;
+end;
+
+function TCSSStyleSheet.CollectPseudoStyle(Tag: THTMLTag; const Which: string; Decls: TCSSDeclarations): Boolean;
+var
+  rule, temp: TCSSRule; sl, baseSel, k, v: string; suf2, suf1: string;
+begin
+  Result := False;
+  suf2 := '::' + Which; suf1 := ':' + Which;
+  for rule in FRules do
+  begin
+    sl := rule.SelectorLower;
+    if not (sl.EndsWith(suf2) or sl.EndsWith(suf1)) then Continue;
+    if sl.EndsWith(suf2) then baseSel := Copy(sl, 1, Length(sl) - Length(suf2))
+    else baseSel := Copy(sl, 1, Length(sl) - Length(suf1));
+    baseSel := Trim(baseSel);
+    if baseSel = '' then baseSel := '*';
+    if (rule.MediaCond <> '') and not MatchesMedia(rule.MediaCond) then Continue;
+    temp := TCSSRule.Create;
+    try
+      temp.SelectorLower := baseSel;
+      temp.SelectorParts := baseSel.Split([' '], TStringSplitOptions.ExcludeEmpty);
+      if SelectorMatches(temp, Tag) then
+      begin
+        for k in rule.Declarations.Keys do
+          if rule.Declarations.TryGetValue(k, v) then Decls.AddOrSetValue(k, v);  // later wins
+        Result := True;
+      end;
+    finally
+      temp.Free;
+    end;
+  end;
 end;
 
 function TCSSStyleSheet.SelectorMatches(Rule: TCSSRule; Tag: THTMLTag): Boolean;

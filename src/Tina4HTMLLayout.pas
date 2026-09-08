@@ -105,6 +105,8 @@ type
     procedure CollectInlineText(Tag: THTMLTag; SB: TStringBuilder);
     procedure FreeSynthTags;
     function MakeAnonTextItem(Parent: THTMLTag; const S: string): THTMLTag;
+    function PseudoTag(Tag: THTMLTag; const Which: string): THTMLTag;
+    procedure InjectPseudo(Tag: THTMLTag);
   public
     constructor Create(Canvas: TTina4Canvas; Sheet: TCSSStyleSheet);
     destructor Destroy; override;
@@ -394,6 +396,101 @@ begin
   tx.Parent := Result;
   Result.Children.Add(tx);
   FSynthTags.Add(Result);
+end;
+
+{ Strip the CSS content quotes; empty for the non-generating keywords. }
+function UnquoteContent(const S: string): string;
+var t: string;
+begin
+  t := Trim(S);
+  if (t = '') or SameText(t, 'none') or SameText(t, 'normal') then Exit('');
+  if (Length(t) >= 2) and (t[1] = '"') and (t[Length(t)] = '"') then
+    Exit(Copy(t, 2, Length(t) - 2));
+  if (Length(t) >= 2) and (t[1] = '''') and (t[Length(t)] = '''') then
+    Exit(Copy(t, 2, Length(t) - 2));
+  Result := t;
+end;
+
+{ Build a synthetic ::before/::after element for Tag if a matching rule sets a
+  generating `content`. The pseudo's declarations are baked into .Style (applied
+  last by ForTag), and the unquoted content becomes a #text child. Returns nil
+  when no pseudo is generated. Marked 'tina4::<which>' so InjectPseudo can find
+  and free it on the next layout. }
+function TLayoutEngine.PseudoTag(Tag: THTMLTag; const Which: string): THTMLTag;
+var
+  decls: TCSSDeclarations;
+  cv, txt, k, v, pos: string;
+  p, tx: THTMLTag;
+begin
+  Result := nil;
+  if FSheet = nil then Exit;
+  decls := TCSSDeclarations.Create;
+  try
+    if not FSheet.CollectPseudoStyle(Tag, Which, decls) then Exit;
+    if not decls.TryGetValue('content', cv) then Exit;   // no content => no box
+    if SameText(Trim(cv), 'none') or SameText(Trim(cv), 'normal') then Exit;
+    p := THTMLTag.Create;
+    p.TagName := 'tina4::' + Which;
+    p.Parent := Tag;
+    // CSS default display for ::before/::after is inline; an absolutely
+    // positioned pseudo with no explicit display gets a block box so width/
+    // height apply (the ::after badge dot).
+    if not decls.ContainsKey('display') then
+    begin
+      if decls.TryGetValue('position', pos) and
+         (SameText(Trim(pos), 'absolute') or SameText(Trim(pos), 'fixed')) then
+        p.Style.AddOrSetValue('display', 'block')
+      else
+        p.Style.AddOrSetValue('display', 'inline');
+    end;
+    for k in decls.Keys do
+      if decls.TryGetValue(k, v) then p.Style.AddOrSetValue(k, v);
+    txt := UnquoteContent(cv);
+    if txt <> '' then
+    begin
+      tx := THTMLTag.Create;
+      tx.TagName := '#text';
+      tx.Text := txt;
+      tx.Parent := p;
+      p.Children.Add(tx);
+    end;
+    Result := p;
+  finally
+    decls.Free;
+  end;
+end;
+
+{ Recursively inject ::before/::after generated-content elements into the real
+  DOM tree. Runs every layout: previously injected 'tina4::' children are freed
+  first so re-layout stays idempotent, then real children are recursed, then
+  this tag's own pseudos are inserted (before at index 0, after appended). }
+procedure TLayoutEngine.InjectPseudo(Tag: THTMLTag);
+var
+  i: Integer;
+  c, pb, pa: THTMLTag;
+  kids: TList<THTMLTag>;
+begin
+  if Tag = nil then Exit;
+  for i := Tag.Children.Count - 1 downto 0 do
+    if Tag.Children[i].TagName.StartsWith('tina4::') then
+    begin
+      Tag.Children[i].Free;
+      Tag.Children.Delete(i);
+    end;
+  kids := TList<THTMLTag>.Create;
+  try
+    for c in Tag.Children do kids.Add(c);
+    for c in kids do
+      if (c.TagName <> '#text') and not c.TagName.StartsWith('tina4::') then
+        InjectPseudo(c);
+  finally
+    kids.Free;
+  end;
+  if (Tag.TagName = '#text') or (Tag.TagName = 'root') then Exit;
+  pb := PseudoTag(Tag, 'before');
+  if pb <> nil then Tag.Children.Insert(0, pb);
+  pa := PseudoTag(Tag, 'after');
+  if pa <> nil then Tag.Children.Add(pa);
 end;
 
 function TLayoutEngine.FontStylesOf(const St: TComputedStyle): TTina4FontStyles;
@@ -3819,6 +3916,7 @@ begin
   GAnimSheet := FSheet;                    // @keyframes lookup for paint-time animation
   body := FindBody(Root);
   if body = nil then body := Root;
+  if (FSheet <> nil) and FSheet.HasPseudo then InjectPseudo(body);
   Result := TLayoutBox.Create;
   Result.Tag := body;
   Result.Style := TComputedStyle.ForTag(body, base, FSheet);

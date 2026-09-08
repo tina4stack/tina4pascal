@@ -48,8 +48,7 @@
         // ThreePascal demo: drive the walking ram continuously (the scene renders
         // in pure software into the drawRect context, so we just need a steady
         // vsync-paced setNeedsDisplay).
-        self.sheepLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(sheepTick)];
-        [self.sheepLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+        // (sheep demo display-link disabled — rendering the HTML shadow test instead)
     }
     return self;
 }
@@ -82,7 +81,7 @@
     // invalidated just the animated region) — not the whole view — repaint only
     // that region; the layer retains the rest. A full invalidate (input, scroll,
     // relayout) coalesces to ~the full bounds → full repaint.
-    tina4_sheep_frame(ctx, w, h, 1.0f);   // ThreePascal demo: the walking ram
+    tina4_frame(ctx, w, h, 1.0f);   // HTML page (shadow/border-radius test)
     CGContextRestoreGState(ctx);
     // overlay/position native <video> players over their poster boxes. Do this
     // OFF the drawRect pass — mutating the layer tree (addSublayer) inside
