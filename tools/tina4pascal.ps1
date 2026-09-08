@@ -238,14 +238,19 @@ end.
 program $name;
 {`$mode objfpc}{`$H+}
 {`$IFDEF WINDOWS}{`$apptype gui}{`$ENDIF}   // windowed app — no console window
+{`$IFDEF WINDOWS}{`$R app.rc}{`$ENDIF}      // embed app.ico as MAINICON (Explorer + window + taskbar)
 uses Tina4App;
 begin
-  // window/taskbar icon + the on-screen logo both come from assets/icon.png,
-  // so the project builds on any host for any target with no icon tooling.
+  // The window/taskbar icon comes from the embedded MAINICON (app.ico); the
+  // on-screen logo is assets/icon.png. Replace app.ico to rebrand the exe.
   RunApp('$Title', 'src/templates', 'index.twig', '{"name":"World"}', 'assets/icon.png', 900, 640);
 end.
 "@
-  # app icon: copy the framework brand as a starter (used at runtime + in the UI)
+  # embedded exe icon: app.rc -> MAINICON from app.ico (starter = framework brand)
+  Write-File (Join-Path $proj 'app.rc') "MAINICON ICON `"app.ico`""
+  $brandIco = Join-Path $Root 'branding\icon.ico'
+  if (Test-Path $brandIco) { Copy-Item $brandIco (Join-Path $proj 'app.ico') -Force }
+  # app icon png: on-screen logo + a starter for per-platform launcher icons
   $brand = Join-Path $Root 'branding\icon.png'
   if (Test-Path $brand) {
     New-Item -ItemType Directory -Force -Path (Join-Path $proj 'assets') | Out-Null
