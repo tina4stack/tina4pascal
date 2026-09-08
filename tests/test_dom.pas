@@ -629,6 +629,17 @@ begin
     finally
       Decls.Free;
     end;
+
+    // background-blend-mode: normal clears, a real mode is kept (first of a list)
+    Decls := TCSSDeclarations.Create;
+    try
+      Decls.AddOrSetValue('background-blend-mode', 'multiply, screen');
+      DecoStyle := TComputedStyle.Default;
+      TComputedStyle.ApplyDeclarations(Decls, DecoStyle, TComputedStyle.Default);
+      CheckEqualsStr('multiply', DecoStyle.BackgroundBlendMode, 'background-blend-mode first layer');
+    finally
+      Decls.Free;
+    end;
     Check(TComputedStyle.Default.TabSize = 8, 'tab-size default 8');
 
     CheckEqualsF(10, TComputedStyle.ParseLength('10px'), 'ParseLength px');

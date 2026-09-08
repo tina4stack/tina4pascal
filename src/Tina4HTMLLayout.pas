@@ -4469,6 +4469,7 @@ var
   gcol: array of TTina4Color;
   gpos: array of Single;
   bg, bd, fg: TTina4Color;
+  bgBlend: Boolean; bgBlendMode: string;
   cv2d: TTina4Canvas2D;
   cvPaint: TCanvasPaintProc;
   lot: TTina4Lottie;
@@ -4701,8 +4702,20 @@ begin
   // real gradient background (linear or radial, multi-stop), when no solid
   // background-color covers it. Stops are opacity-scaled; the backend clips to
   // the corner radius and falls back to a flat fill if it can't gradient.
-  if (not Hidden) and (not st.BackgroundClipText) and ((bg shr 24) = 0) and st.BgGradientActive and (st.GradStopCount >= 2) then
+  // background-blend-mode: blend the gradient with the background-color beneath
+  // it (needs BOTH a colour and a gradient — the normal path skips the gradient
+  // when a solid colour is present, so route through the blend-aware soft path).
+  bgBlend := (st.BackgroundBlendMode <> '') and st.BgGradientActive and (st.GradStopCount >= 2) and ((bg shr 24) > 0);
+  if (not Hidden) and (not st.BackgroundClipText) and st.BgGradientActive and (st.GradStopCount >= 2)
+     and (((bg shr 24) = 0) or bgBlend) then
   begin
+    if bgBlend then   // paint the backdrop colour first; the gradient blends onto it
+    begin
+      if mcr <= 0 then Canvas.FillRect(Box.X, y, Box.W, Box.H, bg)
+      else Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, mcr, bg);
+      bgBlendMode := st.BackgroundBlendMode;
+    end
+    else bgBlendMode := '';
     SetLength(gcol, st.GradStopCount); SetLength(gpos, st.GradStopCount);
     for gi := 0 to st.GradStopCount - 1 do
     begin
@@ -4714,11 +4727,13 @@ begin
         gpos[gi] := st.GradStopPos[gi];
     end;
     if st.BgGradientConic then
-      Canvas.FillGradientSoft(Box.X, y, Box.W, Box.H, mcr, st.BgGradientAngle, 0, 2, gcol, gpos)
+      Canvas.FillGradientSoft(Box.X, y, Box.W, Box.H, mcr, st.BgGradientAngle, 0, 2, gcol, gpos, bgBlendMode, bg)
     else if st.BgGradientRepeating and (st.BgGradientPeriodPx > 0) then
-      Canvas.FillGradientSoft(Box.X, y, Box.W, Box.H, mcr, st.BgGradientAngle, st.BgGradientPeriodPx, 0, gcol, gpos)
-    else if st.BgGradientRadial then
+      Canvas.FillGradientSoft(Box.X, y, Box.W, Box.H, mcr, st.BgGradientAngle, st.BgGradientPeriodPx, 0, gcol, gpos, bgBlendMode, bg)
+    else if st.BgGradientRadial and not bgBlend then
       Canvas.FillRadialGradient(Box.X, y, Box.W, Box.H, mcr, gcol, gpos)
+    else if bgBlend then   // blend needs the soft path (linear; radial approximated as linear)
+      Canvas.FillGradientSoft(Box.X, y, Box.W, Box.H, mcr, st.BgGradientAngle, 0, 0, gcol, gpos, bgBlendMode, bg)
     else
       Canvas.FillLinearGradient(Box.X, y, Box.W, Box.H, mcr,
         st.BgGradientAngle, gcol, gpos);

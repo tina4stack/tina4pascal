@@ -425,6 +425,7 @@ type
     BackdropFilter: string;        // CSS backdrop-filter chain, '' = none
     MaskImage: string;             // CSS mask-image (gradient/url), '' = none
     MixBlendMode: string;          // CSS mix-blend-mode, '' = normal
+    BackgroundBlendMode: string;   // CSS background-blend-mode ('' = normal): blend the bg image/gradient with the bg-color
     TransformOriginX: Single;      // px, or a %-marker (<-1.5); default -50 = 50%
     TransformOriginY: Single;
     // CSS animation (@keyframes-driven). Resolved per frame at paint time.
@@ -2453,7 +2454,7 @@ begin
   Result.Transform3DSet := False;
   Result.Perspective := 0; Result.PerspectiveOriginX := -50; Result.PerspectiveOriginY := -50;
   Result.ClipPath := '';
-  Result.Filter := ''; Result.BackdropFilter := ''; Result.MaskImage := ''; Result.MixBlendMode := '';
+  Result.Filter := ''; Result.BackdropFilter := ''; Result.MaskImage := ''; Result.MixBlendMode := ''; Result.BackgroundBlendMode := '';
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 end;
@@ -2922,7 +2923,7 @@ begin
   Result.Transform3DSet := False;
   Result.Perspective := 0; Result.PerspectiveOriginX := -50; Result.PerspectiveOriginY := -50;
   Result.ClipPath := '';
-  Result.Filter := ''; Result.BackdropFilter := ''; Result.MaskImage := ''; Result.MixBlendMode := '';
+  Result.Filter := ''; Result.BackdropFilter := ''; Result.MaskImage := ''; Result.MixBlendMode := ''; Result.BackgroundBlendMode := '';
   Result.TransformScaleY := 1;
   Result.CSSClear := 'none';
 
@@ -4734,6 +4735,14 @@ begin
   begin
     if SameText(Trim(Temp), 'normal') then Style.MixBlendMode := ''
     else Style.MixBlendMode := LowerCase(Trim(Temp));
+  end;
+  if Decls.TryGetValue('background-blend-mode', Temp) and not ShouldSkip(Temp) then
+  begin
+    // a list (per background layer) — we model one image/gradient layer, take the first
+    Temp := Trim(Temp);
+    if Pos(',', Temp) > 0 then Temp := Trim(Copy(Temp, 1, Pos(',', Temp) - 1));
+    if SameText(Temp, 'normal') then Style.BackgroundBlendMode := ''
+    else Style.BackgroundBlendMode := LowerCase(Temp);
   end;
 end;
 

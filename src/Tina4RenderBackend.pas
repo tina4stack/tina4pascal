@@ -68,7 +68,8 @@ type
       linear (repeating when PeriodPx>0), 2 conic (AngleDeg = `from` angle). Positions
       are 0..1 (within one period for repeating). Falls back to a flat fill without RGBA. }
     procedure FillGradientSoft(X, Y, W, H, Radius, AngleDeg, PeriodPx: Single; Kind: Integer;
-      const Colors: array of TTina4Color; const Positions: array of Single);
+      const Colors: array of TTina4Color; const Positions: array of Single;
+      const BlendMode: string = ''; BlendColor: TTina4Color = 0);
     { A soft (blurred) drop shadow for a rounded rect — CSS box-shadow. The base
       class draws a hard-edged rect so simple backends still show a shadow. }
     procedure FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color); virtual;
@@ -747,8 +748,51 @@ begin
          or (Cardinal(Round(g0+(g1-g0)*f)) shl 8) or Cardinal(Round(b0+(b1-b0)*f));
 end;
 
+{ One channel of a separable CSS blend mode. cs = source (top layer), cb =
+  backdrop (layer below), both 0..1; result 0..1. Non-separable modes
+  (hue/saturation/color/luminosity) fall back to normal (cs). }
+function BlendChannel(cs, cb: Single; const Mode: string): Single;
+begin
+  if Mode = 'multiply' then Result := cs * cb
+  else if Mode = 'screen' then Result := cs + cb - cs * cb
+  else if Mode = 'darken' then Result := Min(cs, cb)
+  else if Mode = 'lighten' then Result := Max(cs, cb)
+  else if Mode = 'difference' then Result := Abs(cs - cb)
+  else if Mode = 'exclusion' then Result := cs + cb - 2 * cs * cb
+  else if Mode = 'overlay' then
+  begin if cb <= 0.5 then Result := 2 * cs * cb else Result := 1 - 2 * (1 - cs) * (1 - cb); end
+  else if Mode = 'hard-light' then
+  begin if cs <= 0.5 then Result := 2 * cs * cb else Result := 1 - 2 * (1 - cs) * (1 - cb); end
+  else if Mode = 'color-dodge' then
+  begin if cb <= 0 then Result := 0 else if cs >= 1 then Result := 1 else Result := Min(1, cb / (1 - cs)); end
+  else if Mode = 'color-burn' then
+  begin if cb >= 1 then Result := 1 else if cs <= 0 then Result := 0 else Result := 1 - Min(1, (1 - cb) / cs); end
+  else if Mode = 'soft-light' then
+  begin
+    if cs <= 0.5 then Result := cb - (1 - 2 * cs) * cb * (1 - cb)
+    else if cb <= 0.25 then Result := cb + (2 * cs - 1) * (((16 * cb - 12) * cb + 4) * cb - cb)
+    else Result := cb + (2 * cs - 1) * (Sqrt(cb) - cb);
+  end
+  else Result := cs;   // normal + non-separable fallback
+  if Result < 0 then Result := 0 else if Result > 1 then Result := 1;
+end;
+
+{ Blend a source colour over an opaque backdrop with a CSS blend mode (separable,
+  per RGB channel). Alpha is taken from Src. }
+function BlendRGB(Src, Dst: TTina4Color; const Mode: string): TTina4Color;
+var sr, sg, sb, dr, dg, db: Single;
+begin
+  sr := ((Src shr 16) and $FF) / 255; sg := ((Src shr 8) and $FF) / 255; sb := (Src and $FF) / 255;
+  dr := ((Dst shr 16) and $FF) / 255; dg := ((Dst shr 8) and $FF) / 255; db := (Dst and $FF) / 255;
+  Result := (Src and $FF000000)
+    or (Cardinal(Round(BlendChannel(sr, dr, Mode) * 255)) shl 16)
+    or (Cardinal(Round(BlendChannel(sg, dg, Mode) * 255)) shl 8)
+    or  Cardinal(Round(BlendChannel(sb, db, Mode) * 255));
+end;
+
 procedure TTina4Canvas.FillGradientSoft(X, Y, W, H, Radius, AngleDeg, PeriodPx: Single; Kind: Integer;
-  const Colors: array of TTina4Color; const Positions: array of Single);
+  const Colors: array of TTina4Color; const Positions: array of Single;
+  const BlendMode: string; BlendColor: TTina4Color);
 var
   iw, ih, px, py, i: Integer; rgba: array of Cardinal;
   a, dx, dy, cx, cy, L, proj, t, ang, cov, sdf: Single; col: TTina4Color;
@@ -777,6 +821,9 @@ begin
         if t < 0 then t := 0; if t > 1 then t := 1;
       end;
       col := GradSample(t, Colors, Positions);
+      // background-blend-mode: blend this gradient pixel against the layer below
+      // (the background-color), per CSS separable blend modes
+      if BlendMode <> '' then col := BlendRGB(col, BlendColor, BlendMode);
       // clip to the rounded box
       sdf := RRectSDF(X + px + 0.5, Y + py + 0.5, X + W/2, Y + H/2, W/2, H/2, Min(Radius, Min(W/2, H/2)));
       cov := 0.5 - sdf; if cov < 0 then cov := 0; if cov > 1 then cov := 1;
