@@ -681,7 +681,10 @@ begin
     end;
     if actual <> '' then
     begin
-      FontAliasMap.Values[LowerCase(Trim(Family))] := actual;
+      // add only a NEW alias — rewriting Values[] for an existing key crashes a
+      // sorted TStringList (multi-weight @font-face re-registers the same family)
+      if FontAliasMap.IndexOfName(LowerCase(Trim(Family))) < 0 then
+        FontAliasMap.Values[LowerCase(Trim(Family))] := actual;
       Result := True;
     end;
   finally

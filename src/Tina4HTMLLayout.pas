@@ -1554,7 +1554,6 @@ var
   itemTags: TList<THTMLTag>;
   c: THTMLTag;
   runText: string;   // accumulates a contiguous text run → anonymous flex item
-  hadDefW: Boolean;  // item had a definite width before flex-basis override
   mL, mR, mT, mB, availInner, ew, eh: Single;
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
   isCol: Boolean;
@@ -1722,7 +1721,6 @@ begin
       for i := 0 to itemTags.Count - 1 do
       begin
         cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
-        hadDefW := ResolveSize(cs.ExplicitWidth, contentW) >= 0;   // definite BEFORE the override
         targetW := baseW[i];
         // grow only when NOT wrapping (wrapped items keep their base size)
         if (growF[i] > 0) and (sumGrow > 0) and
@@ -1738,10 +1736,12 @@ begin
         cb := MakeReplacedBox(itemTags[i], cs, contentW);
         if (cb = nil) and IsFormControlTag(itemTags[i].TagName) then
           cb := MakeControl(itemTags[i], cs, contentW)   // control, not a box
-        // item is itself a flex/grid container AND had a definite width (so
-        // LayoutFlex's recomputed width matches the forced main size) → honour its display
-        else if (cb = nil) and IsFlexOrGrid(cs) and hadDefW then
-          cb := MakeContainerBox(itemTags[i], st, contentW, LowerCase(cs.Display))
+        // item is itself a flex/grid container AND was NOT grown/shrunk (so
+        // LayoutFlex's natural size matches the flex main size) → honour its display.
+        // Pass targetW (the item's flex basis) as the available width so a width-less
+        // flex item stays content-sized instead of filling the row like a block.
+        else if (cb = nil) and IsFlexOrGrid(cs) and (targetW = baseW[i]) then
+          cb := MakeContainerBox(itemTags[i], st, targetW, LowerCase(cs.Display))
         else if cb = nil then
         begin
           cb := MakeInlineContainer(itemTags[i], cs, contentW);

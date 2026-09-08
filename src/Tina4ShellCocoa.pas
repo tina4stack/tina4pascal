@@ -303,7 +303,12 @@ begin
     end;
     if actual <> '' then
     begin
-      FontAliasMap.Values[LowerCase(Trim(Family))] := actual;
+      // Only add a NEW alias — rewriting Values[] for an existing key crashes a
+      // sorted TStringList ("Operation not allowed on sorted list"), which is
+      // exactly what a multi-weight @font-face (Gabarito 500/700/800) triggers.
+      // Extra weights of the same family resolve to the same name, so skipping is safe.
+      if FontAliasMap.IndexOfName(LowerCase(Trim(Family))) < 0 then
+        FontAliasMap.Values[LowerCase(Trim(Family))] := actual;
       Result := True;
     end;
   finally
