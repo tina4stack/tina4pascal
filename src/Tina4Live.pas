@@ -3,17 +3,27 @@ unit Tina4Live;
 { Declarative live-data binding for the HTML app model — the "reactive surface".
 
   Registers HTML actions that connect an SSE or WebSocket stream and route each
-  message to a DOM element by id, with zero Pascal glue:
+  message to the DOM with zero Pascal glue:
 
     <button onclick="sse.connect('http://host/stream', 'ticker')">subscribe</button>
-    <button onclick="ws.connect('ws://host/socket', 'chat')">connect</button>
+    <button onclick="ws.connect('ws://host/socket', 'log', 'append')">connect</button>
+    <input id="msg"><button onclick="ws.send('#msg')">send</button>
     <button onclick="live.close()">disconnect</button>
 
-  Each incoming message replaces the text of the target element (SetElementText)
-  and marks the DOM dirty so the host relayouts + repaints. Connections run on
-  worker threads; the host pumps them by calling LiveDrain from its ticker (the
-  same main-thread pump used for momentum/caret), so every handler runs on the
-  UI thread and may safely touch the DOM.
+  Message routing (per incoming message):
+    - JSON object  -> each top-level field updates the element whose id == the
+      key (a "price"/"chg" object fills #price and #chg). One stream drives a
+      whole UI, declaratively, by id.
+    - otherwise (or no field matched) -> the whole message goes to the connect
+      target element: replaces its text, or with mode 'append' adds a child line
+      (chat/log).
+
+  Two-way: `ws.send('literal')` sends a literal; `ws.send('#id')` sends the value
+  of the input with that id over the most-recently-opened WebSocket.
+
+  Connections run on worker threads; the host pumps them by calling LiveDrain from
+  its ticker (the same main-thread pump used for momentum/caret), so every handler
+  runs on the UI thread and may safely touch the DOM.
 
   Threading note: a host that links this unit must pull in a thread driver
   (`cthreads` first in the program uses on Unix) for the SSE/WS worker threads. }
@@ -22,8 +32,14 @@ unit Tina4Live;
 
 interface
 
-{ Register sse.connect / ws.connect / live.close with Tina4Events. Call once. }
+{ Register sse.connect / ws.connect / ws.send / live.close with Tina4Events. }
 procedure RegisterLiveActions;
+
+{ Route one incoming message against the current DOM (BuiltinsRoot): a JSON
+  object updates elements by id (field name == id); otherwise the whole message
+  goes to Target (replace, or append a child line when AppendMode). Marks the
+  DOM dirty. The transport handlers call this; exposed for tests. }
+procedure RouteMessage(const Target, Text: string; AppendMode: Boolean);
 
 { Fire any queued messages from every open connection onto their bound DOM
   elements (UI thread). Call from the shell ticker each frame. }
@@ -35,12 +51,15 @@ procedure CloseAllLive;
 implementation
 
 uses
-  SysUtils, Classes, Tina4HTMLDom, Tina4Events, Tina4Builtins, Tina4SSE, Tina4WebSocket;
+  SysUtils, Classes, fpjson, jsonparser,
+  Tina4HTMLDom, Tina4Events, Tina4Builtins, Tina4SSE, Tina4WebSocket;
 
 type
-  { one bound connection: a stream + the element id its messages update }
+  { one bound connection: a stream + the element id its whole-message text
+    updates, plus whether that update appends (log) or replaces }
   TLiveConn = class
     Target: string;
+    Append: Boolean;
     SSE: TTina4SSE;
     WS: TTina4WebSocketClient;
     procedure Apply(const Text: string);
@@ -51,12 +70,74 @@ type
 var
   GConns: array of TLiveConn;
 
-procedure TLiveConn.Apply(const Text: string);
+{ Append a message as a new child line under Target (chat/log), rather than
+  replacing its text. The line is a plain <div> holding a #text node. }
+procedure AppendLine(Target: THTMLTag; const S: string);
+var line, tx: THTMLTag;
+begin
+  line := THTMLTag.Create;
+  line.TagName := 'div';
+  line.Parent := Target;
+  tx := THTMLTag.Create;
+  tx.TagName := '#text';
+  tx.Text := S;
+  tx.Parent := line;
+  line.Children.Add(tx);
+  Target.Children.Add(line);
+end;
+
+{ Stringify a JSON value for display: scalars as-is, objects/arrays compact. }
+function JsonValueText(D: TJSONData): string;
+begin
+  if D = nil then Exit('');
+  case D.JSONType of
+    jtString, jtNumber: Result := D.AsString;
+    jtBoolean: Result := D.AsJSON;   // 'true'/'false' lowercase (JSON spec), not Pascal 'True'
+    jtNull: Result := '';
+  else
+    Result := D.AsJSON;   // nested object/array -> compact JSON
+  end;
+end;
+
+{ Route a JSON-object message to elements by id (id == field name). Returns True
+  if the text parsed as a JSON object AND at least one field matched an element. }
+function RouteJson(const Text: string): Boolean;
+var d: TJSONData; o: TJSONObject; i: Integer; el: THTMLTag;
+begin
+  Result := False;
+  d := nil;
+  try
+    try d := GetJSON(Text) except d := nil end;
+    if (d = nil) or not (d is TJSONObject) then Exit;
+    o := TJSONObject(d);
+    for i := 0 to o.Count - 1 do
+    begin
+      el := FindById(BuiltinsRoot, o.Names[i]);
+      if el <> nil then
+      begin
+        SetElementText(el, JsonValueText(o.Items[i]));
+        Result := True;
+      end;
+    end;
+  finally
+    d.Free;
+  end;
+end;
+
+procedure RouteMessage(const Target, Text: string; AppendMode: Boolean);
 var el: THTMLTag;
 begin
-  el := FindById(BuiltinsRoot, Target);
-  if el <> nil then begin SetElementText(el, Text); BuiltinsDirty := True; end;
+  if not RouteJson(Text) then        // JSON object -> by-id field routing
+  begin                              // plain text (or no field matched) -> target
+    el := FindById(BuiltinsRoot, Target);
+    if el <> nil then
+      if AppendMode then AppendLine(el, Text) else SetElementText(el, Text);
+  end;
+  BuiltinsDirty := True;
 end;
+
+procedure TLiveConn.Apply(const Text: string);
+begin RouteMessage(Target, Text, Append); end;
 
 procedure TLiveConn.OnSSE(const EventName, Data, Id: string);
 begin Apply(Data); end;
@@ -64,49 +145,88 @@ begin Apply(Data); end;
 procedure TLiveConn.OnWS(const Text: string);
 begin Apply(Text); end;
 
-{ split "'url', 'target'" into its two unquoted parts }
-procedure TwoArgs(const Args: string; out A, B: string);
-var s: string; i, depth, comma: Integer; inq: Char;
+{ Split "'a', 'b', 'c'" into its top-level comma-separated, unquoted parts. }
+function SplitArgs(const Args: string): TArray<string>;
+var s: string; i, start, depth: Integer; inq: Char;
+  procedure Push(const Raw: string);
+  var n: Integer;
+  begin n := Length(Result); SetLength(Result, n + 1); Result[n] := Unquote(Trim(Raw)); end;
 begin
-  s := Trim(Args); comma := 0; depth := 0; inq := #0;
+  SetLength(Result, 0);
+  s := Trim(Args);
+  if s = '' then Exit;
+  start := 1; depth := 0; inq := #0;
   for i := 1 to Length(s) do
   begin
     if inq <> #0 then begin if s[i] = inq then inq := #0; end
     else if (s[i] = '''') or (s[i] = '"') then inq := s[i]
     else if s[i] = '(' then Inc(depth)
     else if s[i] = ')' then Dec(depth)
-    else if (s[i] = ',') and (depth = 0) then begin comma := i; Break; end;
+    else if (s[i] = ',') and (depth = 0) then
+    begin Push(Copy(s, start, i - start)); start := i + 1; end;
   end;
-  if comma > 0 then begin A := Unquote(Trim(Copy(s, 1, comma - 1))); B := Unquote(Trim(Copy(s, comma + 1, MaxInt))); end
-  else begin A := Unquote(s); B := ''; end;
+  Push(Copy(s, start, MaxInt));
 end;
 
 procedure Track(C: TLiveConn);
 var n: Integer;
 begin n := Length(GConns); SetLength(GConns, n + 1); GConns[n] := C; end;
 
-procedure ActSSEConnect(const Args: string);
-var url, target: string; c: TLiveConn;
+{ Read the value an input/element carries, for ws.send('#id'): the 'value'
+  attribute (inputs), else the element's first text node. }
+function ElementValue(const Id: string): string;
+var el, c: THTMLTag; i: Integer;
 begin
-  TwoArgs(Args, url, target);
-  if (url = '') or (target = '') then Exit;
-  c := TLiveConn.Create; c.Target := target;
-  c.SSE := TTina4SSE.Create(url);
+  Result := '';
+  el := FindById(BuiltinsRoot, Id);
+  if el = nil then Exit;
+  Result := el.GetAttribute('value');
+  if Result <> '' then Exit;
+  for i := 0 to el.Children.Count - 1 do
+  begin
+    c := el.Children[i];
+    if c.TagName = '#text' then Exit(c.Text);
+  end;
+end;
+
+procedure ActSSEConnect(const Args: string);
+var a: TArray<string>; c: TLiveConn;
+begin
+  a := SplitArgs(Args);
+  if (Length(a) < 1) or (a[0] = '') then Exit;
+  c := TLiveConn.Create;
+  if Length(a) >= 2 then c.Target := a[1];
+  c.Append := (Length(a) >= 3) and SameText(a[2], 'append');
+  c.SSE := TTina4SSE.Create(a[0]);
   c.SSE.OnEvent := c.OnSSE;
   c.SSE.Open;
   Track(c);
 end;
 
 procedure ActWSConnect(const Args: string);
-var url, target: string; c: TLiveConn;
+var a: TArray<string>; c: TLiveConn;
 begin
-  TwoArgs(Args, url, target);
-  if (url = '') or (target = '') then Exit;
-  c := TLiveConn.Create; c.Target := target;
-  c.WS := TTina4WebSocketClient.Create(url);
+  a := SplitArgs(Args);
+  if (Length(a) < 1) or (a[0] = '') then Exit;
+  c := TLiveConn.Create;
+  if Length(a) >= 2 then c.Target := a[1];
+  c.Append := (Length(a) >= 3) and SameText(a[2], 'append');
+  c.WS := TTina4WebSocketClient.Create(a[0]);
   c.WS.OnMessage := c.OnWS;
   c.WS.Connect;
   Track(c);
+end;
+
+{ ws.send('literal') or ws.send('#inputId') → most-recently-opened WebSocket. }
+procedure ActWSSend(const Args: string);
+var a: TArray<string>; msg: string; i: Integer;
+begin
+  a := SplitArgs(Args);
+  if Length(a) < 1 then Exit;
+  msg := a[0];
+  if (msg <> '') and (msg[1] = '#') then msg := ElementValue(Copy(msg, 2, MaxInt));
+  for i := High(GConns) downto 0 do
+    if GConns[i].WS <> nil then begin GConns[i].WS.Send(msg); Break; end;
 end;
 
 procedure ActLiveClose(const Args: string);
@@ -138,6 +258,7 @@ procedure RegisterLiveActions;
 begin
   RegisterAction('sse.connect', @ActSSEConnect);
   RegisterAction('ws.connect', @ActWSConnect);
+  RegisterAction('ws.send', @ActWSSend);
   RegisterAction('live.close', @ActLiveClose);
 end;
 

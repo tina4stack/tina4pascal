@@ -1,49 +1,90 @@
 program test_live;
-{ End-to-end: an HTML sse.connect / ws.connect action binds a live stream to a
-  DOM element by id; after pumping LiveDrain, the element's text is the last
-  message. Needs a local SSE server (:8099) and a WS push server (:9098). }
+{ Deterministic tests for the reactive live-data routing (no sockets): JSON
+  field->id binding, plain-text-to-target, JSON fallback, and append mode. }
 {$mode delphi}{$H+}
 
-uses
-  {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, Classes, Tina4HTMLDom, Tina4Events, Tina4Builtins, Tina4Live;
-
-function ElemText(Root: THTMLTag; const Id: string): string;
-var el: THTMLTag; i: Integer;
-begin
-  Result := ''; el := FindById(Root, Id); if el = nil then Exit;
-  for i := 0 to el.Children.Count - 1 do
-    if el.Children[i].TagName = '#text' then Result := Result + el.Children[i].Text;
-end;
+uses SysUtils, Tina4HTMLDom, Tina4Builtins, Tina4Live;
 
 var Fails: Integer = 0; Total: Integer = 0;
 procedure Check(Cond: Boolean; const Msg: string);
-begin Inc(Total); if Cond then WriteLn('  ok   ', Msg) else begin WriteLn('  FAIL ', Msg); Inc(Fails); end; end;
-
-var P: THTMLParser; i: Integer; tickTxt, chatTxt: string;
 begin
-  P := THTMLParser.Create;
-  P.Parse('<div><span id="ticker">idle</span><span id="chat">idle</span></div>');
-  BuiltinsRoot := P.Root;
-  RegisterLiveActions;
+  Inc(Total);
+  if Cond then WriteLn('  ok   ', Msg) else begin WriteLn('  FAIL ', Msg); Inc(Fails); end;
+end;
 
-  WriteLn('=== sse.connect / ws.connect ===');
+{ first #text child's text, '' if none }
+function TextOf(Root: THTMLTag; const Id: string): string;
+var el, c: THTMLTag; i: Integer;
+begin
+  Result := '';
+  el := FindById(Root, Id);
+  if el = nil then Exit;
+  for i := 0 to el.Children.Count - 1 do
+  begin
+    c := el.Children[i];
+    if c.TagName = '#text' then Exit(c.Text);
+  end;
+end;
 
-  DispatchAction('sse.connect(''http://127.0.0.1:8099/stream'', ''ticker'')');
-  DispatchAction('ws.connect(''ws://127.0.0.1:9098/'', ''chat'')');
+function ChildDivCount(Root: THTMLTag; const Id: string): Integer;
+var el, c: THTMLTag; i: Integer;
+begin
+  Result := 0;
+  el := FindById(Root, Id);
+  if el = nil then Exit;
+  for i := 0 to el.Children.Count - 1 do
+  begin
+    c := el.Children[i];
+    if c.TagName = 'div' then Inc(Result);
+  end;
+end;
 
-  // pump like a shell ticker for ~3s
-  for i := 1 to 60 do begin LiveDrain; Sleep(50); end;
+const HTML =
+  '<body>' +
+  '  <span id="price"></span><span id="chg"></span>' +
+  '  <div id="status"></div>' +
+  '  <div id="log"></div>' +
+  '</body>';
 
-  tickTxt := ElemText(P.Root, 'ticker');
-  chatTxt := ElemText(P.Root, 'chat');
-  WriteLn('  #ticker="', tickTxt, '"   #chat="', chatTxt, '"');
-  Check(Pos('count', tickTxt) > 0, 'SSE updated #ticker with a streamed value');
-  Check(chatTxt = 'ws hello', 'WebSocket updated #chat with the pushed message');
+var Parser: THTMLParser;
+begin
+  WriteLn('=== reactive live-data routing ===');
+  Parser := THTMLParser.Create;
+  try
+    Parser.Parse(HTML);
+    BuiltinsRoot := Parser.Root;
 
-  CloseAllLive;
-  WriteLn;
-  if Fails = 0 then WriteLn('ALL ', Total, ' LIVE TESTS PASS')
-  else WriteLn(Fails, ' of ', Total, ' FAILED');
-  Halt(Ord(Fails <> 0));
+    // 1. JSON object -> elements by id (field name == id)
+    RouteMessage('', '{"price":"189.2","chg":"+2%"}', False);
+    Check(TextOf(Parser.Root, 'price') = '189.2', 'JSON field #price = 189.2');
+    Check(TextOf(Parser.Root, 'chg')   = '+2%',   'JSON field #chg = +2%');
+
+    // 2. numbers/booleans stringify
+    RouteMessage('', '{"price":42,"chg":true}', False);
+    Check(TextOf(Parser.Root, 'price') = '42',   'JSON number stringified');
+    Check(TextOf(Parser.Root, 'chg')   = 'true', 'JSON bool stringified');
+
+    // 3. plain text -> the connect target element
+    RouteMessage('status', 'connected', False);
+    Check(TextOf(Parser.Root, 'status') = 'connected', 'plain text -> #status');
+
+    // 4. JSON with no matching id falls back to the target (raw text)
+    RouteMessage('status', '{"nope":"x"}', False);
+    Check(TextOf(Parser.Root, 'status') = '{"nope":"x"}', 'unmatched JSON -> target raw');
+
+    // 5. append mode adds child lines instead of replacing
+    RouteMessage('log', 'line 1', True);
+    RouteMessage('log', 'line 2', True);
+    Check(ChildDivCount(Parser.Root, 'log') = 2, 'append mode: two <div> lines under #log');
+
+    // 6. a matched field wins over the target (target untouched)
+    RouteMessage('status', '{"price":"7"}', False);
+    Check(TextOf(Parser.Root, 'price')  = '7',            'matched field routed');
+    Check(TextOf(Parser.Root, 'status') = '{"nope":"x"}', 'target untouched when a field matched');
+  finally
+    Parser.Free;
+  end;
+
+  WriteLn(Total - Fails, '/', Total, ' assertions passed.');
+  if Fails = 0 then WriteLn('ALL TESTS PASS') else begin WriteLn('FAILURES: ', Fails); Halt(1); end;
 end.

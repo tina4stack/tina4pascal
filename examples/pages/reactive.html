@@ -1,0 +1,62 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  :root{
+    --blue:#2b41e6; --blue-soft:#e4e8ff; --pink:#ff5aa0; --pink-soft:#ffe1ee;
+    --yellow:#ffd23c; --paper:#fbfaf7; --surface:#fff; --ink:#15162e;
+    --muted:#5b5c78; --border:#e6e5f0; --radius:16px;
+    --shadow:0 1px 2px rgba(21,22,46,.06), 0 14px 40px rgba(43,65,230,.10);
+  }
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font:14px/1.5 "Hanken Grotesk",system-ui,sans-serif;padding:24px}
+  h1{font-family:"Gabarito",system-ui,sans-serif;font-weight:800;letter-spacing:-.02em;
+     font-size:24px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 20px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:760px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+        box-shadow:var(--shadow);padding:16px;display:flex;flex-direction:column;gap:12px}
+  .tag{font:700 10px "Space Mono",monospace;text-transform:uppercase;letter-spacing:.08em;
+       color:var(--blue)}
+  .quote{display:flex;align-items:baseline;gap:10px}
+  #price{font-family:"Gabarito",sans-serif;font-weight:800;font-size:34px}
+  #chg{font:700 15px "Space Mono",monospace;color:var(--pink)}
+  .log{height:120px;overflow-y:auto;background:var(--blue-soft);border-radius:11px;
+       padding:8px 10px;font:13px "Space Mono",monospace;display:flex;flex-direction:column;gap:2px}
+  .row{display:flex;gap:8px}
+  input{flex:1;border:1px solid var(--border);border-radius:11px;padding:8px 10px;
+        font:14px "Hanken Grotesk",sans-serif}
+  input:focus{outline:none;box-shadow:0 0 0 3px var(--blue-soft);border-color:var(--blue)}
+  button{border:0;border-radius:11px;padding:8px 14px;font-weight:700;cursor:pointer}
+  .primary{background:var(--blue);color:#fff}
+  .accent{background:var(--pink);color:#fff}
+  .ghost{background:var(--surface);color:var(--ink);border:1px solid var(--border)}
+  .hint{font:12px "Space Mono",monospace;color:var(--muted);word-break:break-all}
+</style></head>
+<body>
+  <h1>Tina4 live data</h1>
+  <p class="sub">SSE &amp; WebSocket streams bound to the DOM by id — no glue code.</p>
+
+  <div class="grid">
+    <div class="card">
+      <span class="tag">SSE · JSON → by id</span>
+      <div class="quote"><span id="price">—</span><span id="chg">—</span></div>
+      <div class="hint">a JSON message with price + chg fills #price and #chg</div>
+      <div class="row">
+        <button class="primary" onclick="sse.connect('http://localhost:877/ticker')">Subscribe</button>
+        <button class="ghost" onclick="live.close()">Stop</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <span class="tag">WebSocket · append + send</span>
+      <div id="log" class="log"></div>
+      <div class="row">
+        <input id="msg" placeholder="say something…">
+        <button class="accent" onclick="ws.send('#msg')">Send</button>
+      </div>
+      <div class="row">
+        <button class="primary" onclick="ws.connect('ws://localhost:877/chat', 'log', 'append')">Connect</button>
+        <button class="ghost" onclick="live.close()">Disconnect</button>
+      </div>
+    </div>
+  </div>
+</body></html>
