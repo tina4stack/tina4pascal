@@ -16,7 +16,12 @@ uses
   jni,
   Tina4RenderBackend, Tina4ShellAndroid, Tina4Interact,
   Tina4Http, Tina4HttpAndroid,
-  ThreePascal, RamModel;
+  ThreePascal, RamModel
+  { A project's own units (declared as "appUnits" in tina4.json) are spliced in
+    here by the android build. Each registers its named actions in its own
+    initialization, so the app's Pascal logic ships in libtina4.so without
+    editing this shell. Defaults to empty (app_units.inc below). }
+  {$I app_units.inc} ;
 
 var
   GCanvas: TAndroidCanvas = nil;

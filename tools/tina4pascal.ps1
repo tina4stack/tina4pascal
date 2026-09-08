@@ -494,6 +494,18 @@ function Build-ProjectAndroid($proj) {
   $picon = Join-Path $proj 'assets\icon.png'
   if (Test-Path $picon) { Get-ChildItem (Join-Path $appdir 'res') -Recurse -Filter 'ic_launcher*.png' | ForEach-Object { Copy-Item $picon $_.FullName -Force } }
 
+  # project app-units: Pascal units (declared as "appUnits" in tina4.json) that
+  # register the app's onclick actions. Splice them into the staged JNI uses
+  # clause (app_units.inc) and add their source dirs to the fpc path, so the
+  # app's logic links into libtina4.so without editing the shared shell.
+  $appUnits = @(); $appUnitDirs = @()
+  try { $cfg = Get-Content (Join-Path $proj 'tina4.json') -Raw | ConvertFrom-Json; if ($cfg.appUnits) { $appUnits = @($cfg.appUnits) } } catch {}
+  $incPath = Join-Path $host_ 'jni\app_units.inc'
+  # BOM-free: FPC refuses to {$I} a file that begins with a UTF-8 BOM.
+  $incText = if ($appUnits.Count -gt 0) { ($appUnits | ForEach-Object { ", $_" }) -join "`n" } else { '' }
+  [System.IO.File]::WriteAllText($incPath, $incText, (New-Object System.Text.UTF8Encoding($false)))
+  foreach ($d in @($proj,(Join-Path $proj 'src'),(Join-Path $proj 'src\app'),(Join-Path $proj 'src\services'))) { if (Test-Path $d) { $appUnitDirs += "-Fu$d" } }
+
   # 3. native lib per ABI: fpc cross -> libtina4.so
   foreach ($abi in $abis) {
     $o = Join-Path $appdir "jniLibs\$abi"; New-Item -ItemType Directory -Force -Path $o | Out-Null
@@ -501,18 +513,32 @@ function Build-ProjectAndroid($proj) {
     Write-Host "  fpc $abi -> libtina4.so" -ForegroundColor DarkGray
     $fa = @('-Mdelphi') + (Fpc-AbiFlags $abi) + @('-Tandroid','-O2','-Xs',
            "-XP$prefix","-FD$bindir","-Fl$syslib","-Fu$Src",
+           "-Fu$(Join-Path $Root '3d')","-Fu$(Join-Path $Root 'examples\sheep3d')") + $appUnitDirs + @(
            "-FE$o","-FU$o","-o$o\libtina4.so",(Join-Path $host_ 'jni\tina4jni.pas'))
     & $fpc @fa 2>&1 | Where-Object { $_ -match 'Error|Fatal|Can''t find' } | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
     if (-not (Test-Path (Join-Path $o 'libtina4.so'))) { Write-Host "native build produced no .so ($abi)" -ForegroundColor Red; return $null }
   }
 
-  # 4. java -> dex
+  # 4. java -> dex. Bundled Java libs (android\libs\*.jar, e.g. ZXing for the
+  #    barcode scanner) join the javac classpath and are dex'd into the app.
+  #    The pinned ZXing core jar is fetched on first build (not committed).
+  $libdir = Join-Path $Root 'android\libs'
+  $zxjar = Join-Path $libdir 'zxing-core-3.5.3.jar'
+  if (-not (Test-Path $zxjar)) {
+    New-Item -ItemType Directory -Force -Path $libdir | Out-Null
+    Write-Host "  fetching ZXing core 3.5.3 (barcode scanner dep) ..." -ForegroundColor DarkGray
+    try { Invoke-WebRequest -Uri 'https://repo1.maven.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar' -OutFile $zxjar -UseBasicParsing -TimeoutSec 90 }
+    catch { Write-Host "    ZXing fetch failed: $($_.Exception.Message)" -ForegroundColor Red }
+  }
   Write-Host "  javac + d8" -ForegroundColor DarkGray
   $javac = Join-Path $jdk 'bin\javac.exe'
   $javas = Get-ChildItem (Join-Path $appdir 'java') -Recurse -Filter '*.java' | ForEach-Object { $_.FullName }
-  & $javac --release 21 -classpath $jar -d (Join-Path $aout 'classes') @javas 2>&1 | Where-Object { $_ -match 'error:' } | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+  $libjars = @()
+  if (Test-Path $libdir) { $libjars = @(Get-ChildItem $libdir -Filter '*.jar' | ForEach-Object { $_.FullName }) }
+  $cp = (@($jar) + $libjars) -join ';'
+  & $javac --release 21 -classpath $cp -d (Join-Path $aout 'classes') @javas 2>&1 | Where-Object { $_ -match 'error:' } | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
   $classes = Get-ChildItem (Join-Path $aout 'classes') -Recurse -Filter '*.class' | ForEach-Object { $_.FullName }
-  & (Join-Path $bt 'd8.bat') --min-api $minsdk --lib $jar --output $aout @classes 2>&1 | Where-Object { $_ -match 'error|Exception' } | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+  & (Join-Path $bt 'd8.bat') --min-api $minsdk --lib $jar --output $aout @classes @libjars 2>&1 | Where-Object { $_ -match 'error|Exception' } | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
   if (-not (Test-Path (Join-Path $aout 'classes.dex'))) { Write-Host "d8 produced no dex" -ForegroundColor Red; return $null }
 
   # 5. resources + manifest (rename applicationId to the project bundleId)

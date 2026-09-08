@@ -1361,6 +1361,37 @@ begin
   Result := GHtml;
 end;
 
+{ First box in the tree whose element is <TagName> (depth-first). }
+function FindBoxByTag(Box: TLayoutBox; const TagName: string): TLayoutBox;
+var i: Integer;
+begin
+  Result := nil;
+  if Box = nil then Exit;
+  if (Box.Tag <> nil) and SameText(Box.Tag.TagName, TagName) then Exit(Box);
+  for i := 0 to Box.Children.Count - 1 do
+  begin
+    Result := FindBoxByTag(Box.Children[i], TagName);
+    if Result <> nil then Exit;
+  end;
+end;
+
+{ The colour that fills the whole viewport behind the page — CSS's "canvas
+  background". It comes from the root <html> background if that is painted,
+  otherwise it propagates up from <body>. Only when neither paints a background
+  do we fall back to the UA default. This is why a page with a dark <body> fills
+  the window dark instead of showing the shell's clear colour. Requires the
+  document to be laid out first (GRoot valid). }
+function DocCanvasBg: TTina4Color;
+var hb, bb: TLayoutBox;
+begin
+  Result := BodyBg;
+  if GRoot = nil then Exit;
+  hb := FindBoxByTag(GRoot, 'html');
+  if (hb <> nil) and ((hb.Style.BackgroundColor shr 24) <> 0) then Exit(hb.Style.BackgroundColor);
+  bb := FindBoxByTag(GRoot, 'body');
+  if (bb <> nil) and ((bb.Style.BackgroundColor shr 24) <> 0) then Exit(bb.Style.BackgroundColor);
+end;
+
 procedure TinaFrame(WPx, HPx: Integer; Density: Single);
 var cssW, cssH: Single;
 begin
@@ -1370,12 +1401,17 @@ begin
   GViewH := cssH;
   PaintDeviceScale := GDensity;               // core rasterizes <lottie> at native res
   GCanvas.Scale(GDensity, GDensity);          // CSS px → physical px
-  GCanvas.FillRect(0, 0, cssW, cssH, BodyBg);
+  { lay the document out BEFORE clearing, so the clear can use the page's own
+    background (canvas-background propagation) rather than a fixed colour. }
+  if GHtml <> '' then
+  begin
+    if GDocDirty or (Abs(GLayoutW - cssW) > 0.5) then
+      ParseDoc(cssW)
+    else if GLayoutDirty then
+      LayoutDoc(cssW);
+  end;
+  GCanvas.FillRect(0, 0, cssW, cssH, DocCanvasBg);
   if GHtml = '' then Exit;
-  if GDocDirty or (Abs(GLayoutW - cssW) > 0.5) then
-    ParseDoc(cssW)
-  else if GLayoutDirty then
-    LayoutDoc(cssW);
   ScrollFocusedIntoView;
   ClampScroll;
   AnimResetActive;   // paint re-marks it if animated content (<lottie>) is on screen
@@ -1416,7 +1452,7 @@ begin
   AnimResetActive;                            // paint re-marks the region this frame
   PaintClipActive := True;                    // cull boxes wholly outside the region
   PaintClipX0 := rx; PaintClipY0 := ry; PaintClipX1 := rx + rw; PaintClipY1 := ry + rh;
-  GCanvas.FillRect(rx, ry, rw, rh, BodyBg);   // region ground (clipped)
+  GCanvas.FillRect(rx, ry, rw, rh, DocCanvasBg);   // region ground (clipped)
   try
     if GRoot <> nil then PaintBox(GCanvas, GRoot, GScrollY);
   finally

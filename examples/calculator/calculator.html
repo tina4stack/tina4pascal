@@ -1,0 +1,85 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  /* dark on the root so it fills the whole window (canvas background), and on
+     body; centre the calc with margin:auto rather than flex centring */
+  html { background: #0b0b0f; }
+  body {
+    margin: 0; background: #0b0b0f; color: #fff;
+    font-family: "Segoe UI", Helvetica, Arial, sans-serif;
+    text-align: center;                 /* centres the inline-block calc */
+  }
+  .calc {
+    display: inline-block; text-align: left; vertical-align: top;
+    width: 380px; padding: 14px 14px 18px;
+  }
+
+  /* readout */
+  .screen { padding: 20px 14px 12px; text-align: right; }
+  .expr {
+    min-height: 22px; font-size: 17px; font-weight: 600;
+    color: #8a8a91; letter-spacing: .5px; word-break: break-all;
+  }
+  .display {
+    font-size: 62px; font-weight: 300; line-height: 1.05;
+    letter-spacing: -1px; word-break: break-all;
+  }
+
+  /* keypad — fl: rows of flex:1 keys */
+  .row { display: flex; gap: 11px; margin-top: 11px; }
+  .key {
+    flex: 1; height: 62px; border-radius: 31px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; font-weight: 500; color: #fff;
+    background: #2a2a2e; cursor: pointer; user-select: none;
+  }
+  /* single-class rules layered after .key — the engine matches one class per
+     simple selector, so these override .key by source order, not .key.op */
+  .func { background: #4a4a50; color: #fff; font-weight: 600; }
+  .op   { background: linear-gradient(180deg,#ffb340,#ff9500); color: #fff; font-weight: 600; }
+  .wide { flex: 2.16; justify-content: flex-start; padding-left: 28px; }
+  .eq   { background: linear-gradient(180deg,#ff9f5a,#ff7a00); }
+</style>
+</head>
+<body>
+  <div class="calc">
+    <div class="screen">
+      <div class="expr" id="expr">&nbsp;</div>
+      <div class="display" id="display">0</div>
+    </div>
+
+    <div class="row">
+      <div class="key func" onclick="calc.clear()">AC</div>
+      <div class="key func" onclick="calc.neg()">+/&minus;</div>
+      <div class="key func" onclick="calc.pct()">%</div>
+      <div class="key op"   onclick="calc.op(/)">&divide;</div>
+    </div>
+    <div class="row">
+      <div class="key" onclick="calc.digit(7)">7</div>
+      <div class="key" onclick="calc.digit(8)">8</div>
+      <div class="key" onclick="calc.digit(9)">9</div>
+      <div class="key op" onclick="calc.op(*)">&times;</div>
+    </div>
+    <div class="row">
+      <div class="key" onclick="calc.digit(4)">4</div>
+      <div class="key" onclick="calc.digit(5)">5</div>
+      <div class="key" onclick="calc.digit(6)">6</div>
+      <div class="key op" onclick="calc.op(-)">&minus;</div>
+    </div>
+    <div class="row">
+      <div class="key" onclick="calc.digit(1)">1</div>
+      <div class="key" onclick="calc.digit(2)">2</div>
+      <div class="key" onclick="calc.digit(3)">3</div>
+      <div class="key op" onclick="calc.op(+)">+</div>
+    </div>
+    <div class="row">
+      <div class="key wide" onclick="calc.digit(0)">0</div>
+      <div class="key" onclick="calc.dot()">.</div>
+      <div class="key op eq" onclick="calc.eq()">=</div>
+    </div>
+  </div>
+</body>
+</html>

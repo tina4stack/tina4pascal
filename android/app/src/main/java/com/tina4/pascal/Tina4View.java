@@ -37,7 +37,7 @@ public class Tina4View extends View implements Runnable {
     private native void nativeSheepPaint(Canvas canvas, int w, int h, float density); // ThreePascal demo: walking ram
     // ThreePascal 3D demo: when true onDraw renders the walking ram (pure-software
     // 3D) instead of the HTML page, self-invalidating each vsync for animation.
-    public static final boolean SHEEP_DEMO = true;
+    public static final boolean SHEEP_DEMO = false;
     private native int  nativeTouch(int action, float x, float y);
     private native int  nativeTick();
     private native int  nativeAnimActive();   // 1 if last paint has live animation

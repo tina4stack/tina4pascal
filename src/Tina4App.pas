@@ -57,6 +57,11 @@ begin
       try sl.LoadFromFile(path); body := sl.Text; finally sl.Free; end;
       TinaRenderTemplate(body, JsonContext);
     end
+    { Not a file — treat the argument itself as the template/markup. This lets an
+      app EMBED its UI (a compiled-in HTML string) and stay a standalone binary,
+      with no external asset to ship alongside the exe. }
+    else if Pos('<', Template) > 0 then
+      TinaRenderTemplate(Template, JsonContext)
     else
       TinaSetHtml('<h1 style="font-family:sans-serif;padding:24px;color:#c0392b">Template not found: ' + Template + '</h1>');
   end

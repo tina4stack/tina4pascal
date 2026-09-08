@@ -30,3 +30,9 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 }
+
+dependencies {
+    // ZXing: barcode decoding for the native <barcode-scanner> (Tina4Scanner).
+    // Vendored so the FPC-based CLI build (tools/tina4pascal.ps1) can dex it too.
+    implementation files("$rootDir/libs/zxing-core-3.5.3.jar")
+}
