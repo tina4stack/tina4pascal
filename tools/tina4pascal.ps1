@@ -353,6 +353,35 @@ function Build-Project($proj, $t) {
 # Build with DWARF symbols (no optimise/strip) into build\<t>-debug\ for gdb.
 function Build-ProjectDebug($proj, $t) { return Build-ProjectWin $proj $t $true }
 
+# Authenticode-sign a Windows .exe the WINDOWS-native way: signtool.exe (from the
+# Windows 10/11 SDK) using the Certum EV cert that SimplySign Desktop mounts as a
+# virtual smart card in Cert:\CurrentUser\My. This is a DIFFERENT mechanism from
+# the macOS/Linux CLI, which signs the SAME cloud cert through the SimplySign
+# PKCS#11 module with osslsigncode — here it's CryptoAPI + a cert thumbprint.
+# Opportunistic: warns and returns $false (leaving the exe unsigned) when the SDK
+# or the unlocked cert isn't available, so dev builds still work.
+#   TINA4_WIN_THUMBPRINT  pick a specific cert (default: first code-signing cert)
+#   TINA4_WIN_TS          RFC3161 timestamp URL (default DigiCert)
+function Sign-WindowsExe($exe) {
+  $ts   = if ($env:TINA4_WIN_TS) { $env:TINA4_WIN_TS } else { 'http://timestamp.digicert.com' }
+  $desc = if ($env:TINA4_WIN_SIGN_NAME) { $env:TINA4_WIN_SIGN_NAME } else { 'Tina4Pascal' }
+  $st = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+  if (-not $st) { Write-Host "  signtool.exe not found - install the Windows 10/11 SDK to Authenticode-sign; leaving UNSIGNED" -ForegroundColor Yellow; return $false }
+  $tp = $env:TINA4_WIN_THUMBPRINT
+  if (-not $tp) {
+    $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $cert) { Write-Host "  no code-signing cert in Cert:\CurrentUser\My - start SimplySign Desktop and authenticate (or set TINA4_WIN_THUMBPRINT); leaving UNSIGNED" -ForegroundColor Yellow; return $false }
+    $tp = $cert.Thumbprint
+  }
+  Write-Host "  signtool sign (sha256, RFC3161 $ts) - Certum EV via SimplySign smart card"
+  & $st.FullName sign /fd sha256 /sha1 $tp /tr $ts /td sha256 /d $desc $exe
+  if ($LASTEXITCODE -ne 0) { Write-Host "  signtool failed - is SimplySign Desktop authenticated?" -ForegroundColor Yellow; return $false }
+  & $st.FullName verify /pa /q $exe | Out-Null
+  Ok "signed + timestamped: $(Split-Path -Leaf $exe)"
+  return $true
+}
+
 # ── Android (native, from Windows) ────────────────────────────────────
 # Every path below is resolved explicitly (env var, then well-known location) so
 # the build never depends on what happens to be on PATH. The one thing stock FPC
@@ -634,6 +663,18 @@ if ($cmd -eq 'doctor') {
   $pr = Project-Root
   if ($pr) { Build-Project $pr $target | Out-Null }   # inside a project: build the app
   else { Invoke-Build $target | Out-Null }             # inside the framework: build the viewer
+} elseif ($cmd -eq 'release') {
+  # release win64 — build the project's .exe and Authenticode-sign it with the
+  # Certum EV cert via SimplySign + signtool (Windows SDK). Same cert as the Mac
+  # CLI's osslsigncode path, different signing front-end (see Sign-WindowsExe).
+  $pr = Project-Root
+  if (-not $pr) { Write-Host "release: run inside a project dir" -ForegroundColor Red }
+  elseif ($target -and $target -ne 'win64' -and $target -ne 'windows') {
+    Write-Host "release win64  (Windows signs win64 only; android/ios release via the Mac CLI or your keystore)" -ForegroundColor Red
+  } else {
+    $exe = Build-Project $pr 'win64'
+    if ($exe) { Sign-WindowsExe $exe | Out-Null; Ok "Windows release -> $exe" }
+  }
 } elseif ($cmd -eq 'run') {
   $pr = Project-Root
   if ($pr) {
@@ -723,5 +764,5 @@ if ($cmd -eq 'doctor') {
     }
   }
 } else {
-  Write-Host "unknown command '$cmd' (doctor | setup android | init (alias: new) | build [win64|win32|linux|android|all] | run (alias: dev) | render | dom | boxes | inspect | debug | script | where)"
+  Write-Host "unknown command '$cmd' (doctor | setup android | init (alias: new) | build [win64|win32|linux|android|all] | release win64 | run (alias: dev) | render | dom | boxes | inspect | debug | script | where)"
 }

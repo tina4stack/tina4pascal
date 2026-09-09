@@ -412,16 +412,20 @@ build_project() {
         extra="-Fl$TINA4_HOME/xstub -k-L$TINA4_HOME/xstub"
       fi ;;
   esac
+  # Windows executables must carry the .exe extension (FPC's -o writes exactly the
+  # name given and does NOT append it) — otherwise the artifact can't run on
+  # Windows and signtool/osslsigncode won't treat it as a PE.
+  outname="$name"; case "$target" in windows|win64) outname="$name.exe";; esac
   say "${D}fpc $opts $flags $main${Z}"
   # project unit dirs: root + src, src/app, src/services (the same set the mobile
   # staging adds, so a unit like src/AppLogic.pas is found on every target);
   # src/routes, src/orm are legacy tina4-web layouts, kept for compatibility.
   "$FPC" -Mdelphi $opts $flags -Fu"$SRC" -Fu. -Fusrc -Fusrc/app -Fusrc/services \
     -Fusrc/routes -Fusrc/orm $extra \
-    -FE"$out" -FU"$out" -o"$name" "$main" 2>&1 | grep -Ei "error|fatal" && die "build failed" || true
+    -FE"$out" -FU"$out" -o"$outname" "$main" 2>&1 | grep -Ei "error|fatal" && die "build failed" || true
   # bundle the project's fonts next to the executable (renderer loads them first)
   [ -d "$PWD/fonts" ] && { mkdir -p "$out/fonts"; cp "$PWD"/fonts/*.ttf "$out/fonts/" 2>/dev/null || true; }
-  ok "$name ($target${bpmode:+ debug}) -> build/$bsub/$name"
+  ok "$name ($target${bpmode:+ debug}) -> build/$bsub/$outname"
 }
 
 # Render the project's entry template (Twig, with {% include %}/{% extends %}
@@ -1160,10 +1164,37 @@ cmd_keygen() {
 # release for a scaffolded project: android → Play-ready signed AAB.
 proj_release() {
   case "${1:-android}" in
-    android) TINA4_AAB=1 build_project android ;;
-    ios)     proj_ios_release ;;
-    *) die "release <android|ios>" ;;
+    android)       TINA4_AAB=1 build_project android ;;
+    ios)           proj_ios_release ;;
+    win64|windows) proj_win_release ;;
+    *) die "release <android|ios|win64>" ;;
   esac
+}
+
+# release win64 — cross-build the project's Windows .exe and Authenticode-sign it.
+# NOTE — Windows signing differs by HOST, but the cert is the same Certum EV key
+# (in Certum's cloud HSM, reached through SimplySign; SimplySign Desktop must be
+# logged in). This POSIX CLI runs on macOS/Linux, so it signs with osslsigncode
+# via the SimplySign PKCS#11 module (sign_windows_exe). On a Windows host the
+# native path is different: SimplySign mounts the cert as a virtual smart card in
+# Cert:\CurrentUser\My and signtool.exe (Windows SDK) signs it by thumbprint —
+# that lives in tools/tina4pascal.ps1 / toolchain/sign-release.ps1. Same cert +
+# timestamp, two signing front-ends.
+proj_win_release() {
+  build_project windows                      # → build/windows/<name>.exe (release opts)
+  name="$(jget name "$(basename "$PWD")")"
+  exe="$PWD/build/windows/$name.exe"
+  [ -f "$exe" ] || die "no Windows exe at build/windows/$name.exe"
+  sign_windows_exe "$exe"                     # opportunistic: no-op (warns) if unsigned
+  # A signature's PRESENCE, not local trust: osslsigncode verify exits non-zero on
+  # macOS whenever the Certum EV chain isn't in the local CA store, even for a
+  # perfectly valid signature — so key off "Signature Index" in the output, which
+  # is absent only when the file is genuinely unsigned.
+  if osslsigncode verify -in "$exe" 2>&1 | grep -q "Signature Index"; then
+    ok "signed Windows release → build/windows/$name.exe  (Certum EV; RFC3161 timestamped)"
+  else
+    ok "Windows release → build/windows/$name.exe  (UNSIGNED — see the hint above)"
+  fi
 }
 
 # deploy <android|ios|macos> for a scaffolded project — build + install + launch.
@@ -1549,6 +1580,9 @@ ${B}store builds${Z}  (inside a project dir)
   build android|ios          debug APK / unsigned device .app (compile+link check)
   release android            Play-ready signed AAB   (TINA4_KEYSTORE/KEY_ALIAS/KS_PASS)
   release ios                App Store signed IPA     (TINA4_IOS_TEAM)
+  release win64              Authenticode-signed .exe (SimplySign Desktop logged in,
+                             or TINA4_WIN_CERT .p12) — from macOS/Linux via osslsigncode
+                             (on Windows, tina4pascal.ps1 signs via signtool + the SDK)
   publish android            upload the AAB to Play    (TINA4_PLAY_JSON [,TINA4_PLAY_TRACK])
   publish ios                upload the IPA to TestFlight/App Store
                              (TINA4_ASC_KEY_ID / TINA4_ASC_ISSUER + ~/.appstoreconnect key)

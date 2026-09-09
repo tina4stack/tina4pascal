@@ -39,7 +39,34 @@ Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Select Thumbprint, Subject
 The signing scripts never see the credentials or OTP — they only drive
 `signtool` / `Set-AuthenticodeSignature` against the already-unlocked cert.
 
-## Signing a release
+## Signing an app — `release win64` (one command)
+
+A scaffolded project signs its own `.exe` in one step. The **cert is the same**
+Certum EV key (in Certum's cloud HSM, reached through SimplySign — log into
+SimplySign Desktop first); only the signing front-end differs by host:
+
+```sh
+# from macOS/Linux — osslsigncode via the SimplySign PKCS#11 module
+tools/tina4pascal release win64
+```
+```powershell
+# from Windows — signtool.exe (Windows SDK) via the SimplySign virtual smart card
+tools\tina4pascal.ps1 release win64
+```
+
+Both build `build/windows/<name>.exe`, Authenticode-sign it (SHA-256 + RFC3161
+timestamp), and verify. Signing is **opportunistic**: with no SimplySign session
+(or, on Windows, no Windows SDK) the build still produces an *unsigned* exe and
+warns — so dev builds never break. A `.p12`/`.pfx` works too via `TINA4_WIN_CERT`
+(macOS/Linux) or importing it into `Cert:\CurrentUser\My` (Windows).
+
+**Two front-ends, one cert:** the Windows path is CryptoAPI — signtool selects
+the cert by thumbprint from the cert store, where SimplySign mounts it as a
+virtual smart card. The macOS/Linux path is PKCS#11 — osslsigncode talks to the
+SimplySign module directly. Don't assume the Mac `osslsigncode` incantation on
+Windows or vice-versa.
+
+## Signing the toolchain distribution (cross pack + CLI)
 
 ```powershell
 # 1. build (and install) the cross pack — produces the .exe to sign
