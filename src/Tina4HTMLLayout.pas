@@ -1366,10 +1366,10 @@ begin
       end
       else
       begin
-        // native 18px glyph (comfortable tap target); at least as tall as the
-        // text line box so it centres against the label.
-        Result.W := 18;
-        Result.H := Max(18, lineH);
+        // native 16px glyph (matches a browser's default control); at least as
+        // tall as the text line box so it centres against the label.
+        Result.W := 16;
+        Result.H := Max(16, lineH);
         Exit;
       end;
     ckButton:
@@ -4636,23 +4636,30 @@ begin
   // native glyph — it paints as a normal styled box (segmented button) below.
   if (Box.ControlKind in [ckCheckbox, ckRadio]) and not st.AppearanceNone then
   begin
-    gy := y + (Box.H - 18) / 2;
+    gy := y + (Box.H - 16) / 2;
     if Box.ControlKind = ckRadio then
     begin
-      Canvas.FillRoundRect(Box.X, gy, 18, 18, 9, $FFFFFFFF);
-      Canvas.StrokeRoundRect(Box.X, gy, 18, 18, 9, 1.5, TC_BORDER);
+      Canvas.FillRoundRect(Box.X, gy, 16, 16, 8, $FFFFFFFF);
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
-        Canvas.FillRoundRect(Box.X + 5, gy + 5, 8, 8, 4, AccentOf(Box));
+      begin
+        Canvas.StrokeRoundRect(Box.X, gy, 16, 16, 8, 1, AccentOf(Box));   // accent ring when on
+        Canvas.FillRoundRect(Box.X + 4, gy + 4, 8, 8, 4, AccentOf(Box));  // centred dot
+      end
+      else
+        Canvas.StrokeRoundRect(Box.X, gy, 16, 16, 8, 1, TC_BORDER);
     end
     else
     begin
       if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
-        Canvas.FillRoundRect(Box.X, gy, 18, 18, 4, AccentOf(Box))
+      begin
+        Canvas.FillRoundRect(Box.X, gy, 16, 16, 3, AccentOf(Box));
+        Canvas.DrawText(Box.X + 2.5, gy + 0.5, '✓', 12, [tfsBold], $FFFFFFFF);
+      end
       else
-        Canvas.FillRoundRect(Box.X, gy, 18, 18, 4, $FFFFFFFF);
-      Canvas.StrokeRoundRect(Box.X, gy, 18, 18, 4, 1.5, TC_BORDER);
-      if (Box.Tag <> nil) and Box.Tag.HasAttribute('checked') then
-        Canvas.DrawText(Box.X + 3, gy + 0.5, '✓', 13, [tfsBold], $FFFFFFFF);
+      begin
+        Canvas.FillRoundRect(Box.X, gy, 16, 16, 3, $FFFFFFFF);
+        Canvas.StrokeRoundRect(Box.X, gy, 16, 16, 3, 1, TC_BORDER);
+      end;
     end;
     Exit;
   end;
