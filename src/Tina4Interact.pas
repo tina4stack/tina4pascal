@@ -185,7 +185,7 @@ implementation
 
 uses
   SysUtils, Classes, Math, DateUtils, Generics.Collections, fpjson, jsonparser,
-  Tina4HTMLDom, Tina4HTMLLayout, Tina4Events, Tina4Frond, Tina4Http, Tina4Services,
+  Tina4HTMLDom, Tina4HTMLLayout, Tina4Elements, Tina4Events, Tina4Frond, Tina4Http, Tina4Services,
   Tina4Canvas2D, Tina4Builtins;
 
 type
@@ -801,6 +801,9 @@ begin
   GParser := THTMLParser.Create;
   GParser.Parse(GHtml);
   GSheet := TCSSStyleSheet.Create;
+  // registered custom elements' default CSS goes in FIRST (UA-like) so author
+  // rules override it
+  if ElementsDefaultCSS <> '' then GSheet.AddCSS(ElementsDefaultCSS);
   for i := 0 to GParser.StyleBlocks.Count - 1 do
     GSheet.AddCSS(GParser.StyleBlocks[i]);
   // @import: best-effort local-file load (drain by index → nested imports too).
@@ -1582,13 +1585,18 @@ begin
     ckButton:
       begin
         BlurAll; GLayoutDirty := True; Result := TINA_HIDE_KBD;
+        // a <button onclick=…> runs its handler (the generic onclick walk below
+        // only fires for non-control tags, so a real <button> would otherwise
+        // swallow its own click)
+        if Ctrl.HasAttribute('onclick') then DispatchAction(Ctrl.GetAttribute('onclick'));
       end;
   end;
 end;
 
 function TinaTouch(Action: Integer; X, Y: Single): Integer;
 var
-  hit, ctrl: THTMLTag;
+  hit, ctrl, ne: THTMLTag;
+  neTap: TElemTapProc;
   sb: TLayoutBox;
   cx, cy, dx, dy: Single;
 begin
@@ -1677,6 +1685,20 @@ begin
          // a tap: a <label> activates its control; otherwise walk up to the
          // nearest control or onclick handler under the finger
          hit := HitTest(GRoot, cx, cy + GScrollY);
+         // Tier-2 custom element: a registered native element with an OnTap hook
+         // handles the tap itself (walk up to the nearest one). If it reports
+         // handled, relayout and stop — takes precedence over generic onclick.
+         ne := hit;
+         while ne <> nil do
+         begin
+           neTap := ElementTapProc(ne.TagName);
+           if Assigned(neTap) then
+           begin
+             if neTap(ne) then begin GLayoutDirty := True; Exit; end;
+             Break;
+           end;
+           ne := ne.Parent;
+         end;
          // <summary> toggles its parent <details> open/closed
          ctrl := hit;
          while (ctrl <> nil) and not SameText(ctrl.TagName, 'summary') do ctrl := ctrl.Parent;

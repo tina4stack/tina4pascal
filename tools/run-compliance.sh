@@ -52,7 +52,7 @@ JOBS="${TINA4_REFTEST_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 TESTS="$REPO/tests"
 UBUILD="$OUT/unit"; mkdir -p "$UBUILD"
 if [ "${TINA4_SKIP_UNIT:-0}" != "1" ]; then
-  for u in test_dom test_pseudo_rebuild test_interact; do
+  for u in test_dom test_pseudo_rebuild test_interact test_elements; do
     if ! "$HOME/fpc/bin/fpc" -Mdelphi -Fu"$REPO/src" \
            -FE"$UBUILD" -FU"$UBUILD" "$TESTS/$u.pas" >"$UBUILD/$u.build.log" 2>&1; then
       echo "UNIT-FAIL $u (build) — see $UBUILD/$u.build.log"; exit 1

@@ -12,7 +12,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}   // SSE/WS worker threads (Tina4Live) need a thread driver
   SysUtils, StrUtils, Classes, Math, Generics.Collections,
   Tina4HTMLDom, Tina4RenderBackend, Tina4ShellCocoa, Tina4HTMLLayout, Tina4Canvas2D,
-  Tina4Lottie, Tina4Events, Tina4Builtins, Tina4Live;
+  Tina4Lottie, Tina4Events, Tina4Builtins, Tina4Live, Tina4Elements;
 
 var
   GLottie: TTina4Lottie = nil;
@@ -46,6 +46,33 @@ end;
 
 { Demo <canvas> painter (pure Pascal, no JS) — registered for id="demo" so a page
   with <canvas id="demo"> draws this scene. }
+{ Tier-2 custom element demo: <ratingstars value="N"> paints five dots, the
+  first N gold. Registered via RegisterNativeElement — no core edit. }
+procedure DrawRating(const Tag: THTMLTag; X, Y, W, H: Single;
+  Canvas: TTina4Canvas; const St: TComputedStyle);
+var i, val: Integer; sz, gap, dx, dy: Single;
+begin
+  val := StrToIntDef(Tag.GetAttribute('value'), 0);
+  sz := H * 0.6;
+  gap := (W - 5 * sz) / 6; if gap < 2 then gap := 2;
+  dy := Y + (H - sz) / 2;
+  for i := 0 to 4 do
+  begin
+    dx := X + gap + i * (sz + gap);
+    if i < val then Canvas.FillRoundRect(dx, dy, sz, sz, sz * 0.3, $FFFFD23C)
+    else Canvas.FillRoundRect(dx, dy, sz, sz, sz * 0.3, $FFE6E5F0);
+  end;
+end;
+
+{ Tap cycles the rating 0..5. }
+function TapRating(const Tag: THTMLTag): Boolean;
+var val: Integer;
+begin
+  val := (StrToIntDef(Tag.GetAttribute('value'), 0) + 1) mod 6;
+  Tag.Attributes.AddOrSetValue('value', IntToStr(val));
+  Result := True;
+end;
+
 procedure CanvasDemo(ctx: TTina4Canvas2D);
 var i: Integer; bh: Single;
 const bars: array[0..4] of Single = (0.5, 0.8, 0.35, 0.95, 0.6);
@@ -643,6 +670,19 @@ begin
 
   hit := HitTest(RootBox, X, Y + ScrollY);
 
+  // Tier-2 custom element: a registered native element with an OnTap hook
+  // handles the tap itself (walk up to the nearest one).
+  t := hit;
+  while t <> nil do
+  begin
+    if Assigned(ElementTapProc(t.TagName)) then
+    begin
+      if ElementTapProc(t.TagName)(t) then begin Rebuild; Exit; end;
+      Break;
+    end;
+    t := t.Parent;
+  end;
+
   // a click on a <label> acts on the control it labels
   t := LabelControl(Parser.Root, hit);
   if t <> nil then hit := t;
@@ -1053,7 +1093,18 @@ begin
   RegisterLiveActions;    // sse.connect / ws.connect / live.close
   BuiltinsRoot := Viewer.Parser.Root;
   RecalcOutputs(BuiltinsRoot);            // seed <output> values before first paint
+  // custom-element registry demos: a Tier-1 template button and a Tier-2 native
+  // element. Registered ONCE here; the engine expands/paints/dispatches them.
+  RegisterElement('nicebutton',
+    '<button class="nb nb-{variant}" onclick="{onclick}">{children}</button>',
+    '.nb{display:inline-block;padding:10px 18px;border:0;border-radius:11px;' +
+    'font-weight:700;color:#fff;background:#2b41e6;cursor:pointer}' +
+    '.nb-pink{background:#ff5aa0}.nb-ghost{background:#f3f2fb;color:#2b41e6}');
+  RegisterNativeElement('ratingstars', @DrawRating, @TapRating,
+    'ratingstars{display:inline-block;width:150px;height:32px;cursor:pointer}');
+
   Viewer.Sheet := TCSSStyleSheet.Create;
+  if ElementsDefaultCSS <> '' then Viewer.Sheet.AddCSS(ElementsDefaultCSS);  // UA-like defaults first
   Viewer.Shell := TCocoaShell.Create;            // created early: fetches remote <link> CSS
   Tina4SetNotifyHandler(@NotifyBridge);          // notify.show(...) → native banner
   RegisterCanvasPainter('demo', @CanvasDemo);   // <canvas id="demo"> → the Pascal painter

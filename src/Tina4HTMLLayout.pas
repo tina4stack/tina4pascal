@@ -13,7 +13,7 @@ interface
 uses
   SysUtils, Classes, Math, Generics.Collections,
   Tina4HTMLDom, Tina4RenderBackend, Tina4Theme, Tina4QR, Tina4SVG, Tina4Canvas2D,
-  Tina4Lottie, Tina4RasterCanvas;
+  Tina4Lottie, Tina4RasterCanvas, Tina4Elements;
 
 type
   TTextRun = record
@@ -4028,6 +4028,9 @@ begin
   GAnimSheet := FSheet;                    // @keyframes lookup for paint-time animation
   body := FindBody(Root);
   if body = nil then body := Root;
+  // Tier-1 custom elements: expand registered template tags into their markup
+  // BEFORE pseudos/layout, idempotently each Build (same pattern as InjectPseudo).
+  if HasCustomElements(body) then ExpandCustomElements(body);
   if (FSheet <> nil) and FSheet.HasPseudo then InjectPseudo(body);
   Result := TLayoutBox.Create;
   Result.Tag := body;
@@ -4501,6 +4504,7 @@ var
   bgBlend: Boolean; bgBlendMode: string;
   cv2d: TTina4Canvas2D;
   cvPaint: TCanvasPaintProc;
+  elemPaint: TElemPaintProc;   // Tier-2 registered native-element painter
   lot: TTina4Lottie;
   lotF: Double;
   lotTotal, lotFrame, lotFit, lsc: Single;
@@ -4818,6 +4822,22 @@ begin
         Canvas.ClearClip;
         Canvas.RestoreState;
       end;
+    end;
+  end;
+  // Tier-2 custom element: a registered native element paints itself here, into
+  // its content box (clipped, save/restore balanced), through the canvas contract
+  // — so it renders on every shell exactly like <canvas>. Registered once via
+  // RegisterNativeElement; no core edit per element.
+  if (not Hidden) and (Box.Tag <> nil) and (Box.W > 0) and (Box.H > 0) then
+  begin
+    elemPaint := ElementPaintProc(Box.Tag.TagName);
+    if Assigned(elemPaint) then
+    begin
+      Canvas.SaveState;
+      Canvas.SetClip(Box.X, y, Box.W, Box.H);
+      try elemPaint(Box.Tag, Box.X, y, Box.W, Box.H, Canvas, st); except end;
+      Canvas.ClearClip;
+      Canvas.RestoreState;
     end;
   end;
   // <lottie>: parse the inline JSON once, render the current frame (time-driven

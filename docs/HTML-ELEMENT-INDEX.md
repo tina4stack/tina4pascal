@@ -81,6 +81,22 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 
 ## Tina4 custom tags
 
+**Custom-element registry** (`src/Tina4Elements.pas`) — invent a tag once and it
+works everywhere, no core `SameText` edits. Two tiers, both proven by
+`tests/test_elements.pas` and rendered live on Cocoa (see the demo `<nicebutton>`
+/ `<ratingstars>` in `examples/htmlviewer`):
+- **Tier 1 — `RegisterElement(name, template, css)`**: a template element expands
+  at Build time (next to InjectPseudo) into plain HTML — brace-attr placeholders
+  filled from attributes, a children placeholder from the element's inner HTML.
+  The host tag is consumed (its `id` carries to the first expanded node); the
+  downstream engine sees only standard elements. Idempotent/stable across
+  rebuilds. Registered default CSS is folded into the sheet (UA-like).
+- **Tier 2 — `RegisterNativeElement(name, paint, ontap, css)`**: the element keeps
+  its own tag and draws itself through the canvas contract (Paint hook in
+  PaintBox, clipped like `<canvas>`) and responds to a tap (OnTap hook in
+  Tina4Interact + the macOS host), sized by its registered CSS. Portable to every
+  shell by construction.
+
 | Element | Status | Note |
 |---|---|---|
 | include[src] | ✅ | fetches HTML + splices in place, caches, nested, per-tag auth headers |
