@@ -47,7 +47,30 @@ the hard way.
 | Linux x64 | `-Tlinux -Px86_64` |
 | Linux arm64 | `-Tlinux -Paarch64` |
 | Android arm64 | `-Tandroid -Paarch64` |
-| iOS arm64 | `-Tios -Paarch64` |
+| iOS arm64 (**device only**) | `-Tios -Paarch64` |
+
+> **iOS is DEVICE-ONLY — there is no Simulator build, and this is the #1 thing
+> agents get stuck on.** FPC 3.2.2 ships exactly one iOS slice: `aarch64-ios`
+> (a physical-iPhone ARM64 build). There is **no** `iphonesim` / simulator slice
+> — simulator arm64 and simulator x86_64 are different platform triples that FPC
+> 3.2.2 cannot emit (`fpc -Piphonesim` falls through to a `ppc386` that isn't
+> installed). Consequences, and the rules that follow:
+> - **Do NOT use the iOS Simulator, or any iOS-Simulator MCP/host tool, for
+>   Tina4Pascal.** The engine static lib is device-arm64; the Simulator SDK
+>   rejects it with an architecture/platform mismatch (often surfacing as an
+>   opaque `xcodebuild` link error, not a clear "no simulator" message). Booting
+>   a simulator and pointing a build at it is a dead end — don't try it.
+> - **The ONLY way to run the iOS app is a paired, unlocked physical iPhone**
+>   via `tools/tina4pascal deploy ios` (needs Xcode + xcodegen + a signing team
+>   in `TINA4_IOS_TEAM` or `tina4.json`). No device or no team ⇒ you can compile
+>   and link-check, but you cannot run it — say so plainly rather than flailing.
+> - **To verify iOS without a device**, link-check the core: `tools/tina4pascal
+>   build ios` (compiles `tests/test_dom.pas` for `-Tios -Paarch64`) or
+>   `fpc -Mdelphi -Tios -Paarch64 -FE<dir> -FU<dir> …`. A green link is the most
+>   an agent can confirm off-device; it does not prove the app runs.
+>
+> This is a known FPC 3.2.2 limitation (device-only iOS + no Android emulator are
+> on the roadmap; the Simulator target is fixed in FPC trunk, not 3.2.2).
 
 Always compile with per-target output dirs (`-FE<dir> -FU<dir>`) — FPC drops
 unit objects in the cwd and a stale object from another target poisons the
@@ -152,10 +175,10 @@ tools/tina4pascal release                        # Android: release-SIGNED APK (
   placeholder box: iOS `AVPlayerViewController`, macOS `AVPlayerView`, Android
   `VideoView`+`MediaController`, all driven by the engine's `TinaEmbed*` query.
 
-- **iOS** deploys to a *physical iPhone* (FPC 3.2.2 is device-only — no
-  Simulator target; that + Android emulator are on the roadmap). `screenshot ios`
-  uses `pymobiledevice3` over the CoreDevice tunnel (iOS 17+, phone unlocked) —
-  this is how you SEE the app on device; capture then `Read` the PNG.
+- **iOS** deploys to a *physical iPhone only* — no Simulator (see the device-only
+  callout under the toolchain table; do not reach for a simulator). `screenshot
+  ios` uses `pymobiledevice3` over the CoreDevice tunnel (iOS 17+, phone
+  unlocked) — this is how you SEE the app on device; capture then `Read` the PNG.
 - Live input (`tap/swipe/text`) is wired for **Android** today; on iOS/macOS
   `deploy`/`debug`/`screenshot` work now, live input needs a WebDriverAgent /
   in-app bridge (roadmap). `win64`/`linux` cross-compile only (shells pending).

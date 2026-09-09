@@ -335,9 +335,12 @@ cmd_build() {
       ok "$target host → $BUILD/$target/htmlviewer_x11  (run it on Linux)" ;;
     ios)
       # iOS ships as a device app via Xcode (tina4pascal ios / release ios); here
-      # just link-check the core for the target.
+      # just link-check the core for the target. iOS is DEVICE-ONLY — FPC 3.2.2
+      # emits aarch64-ios (physical iPhone) and has no Simulator slice, so this
+      # link-check is the most you can verify off-device; there is no simulator
+      # to run it on.
       build_prog ios "$ROOT/tests/test_dom.pas"
-      ok "iOS core builds (device app: tina4pascal ios / release ios)" ;;
+      ok "iOS core links for DEVICE arm64 (no Simulator exists). Run on a physical iPhone: tina4pascal deploy ios" ;;
     all)
       for t in $ALL_TARGETS; do say "${B}— $t —${Z}"; cmd_build "$t"; done ;;
     *) die "build: unknown target '$target' ($ALL_TARGETS | all)" ;;
@@ -1129,8 +1132,12 @@ proj_android_deploy() {
 }
 
 proj_ios_deploy() {
-  [ -n "${TINA4_IOS_TEAM:-}" ] || die "set TINA4_IOS_TEAM (your Apple Team ID) for a signed device install"
-  udid="$(ios_udid)"; [ -n "$udid" ] || die "no iOS device attached (idevice_id / devicectl)"
+  # iOS is DEVICE-ONLY: FPC 3.2.2 builds one iOS slice (aarch64-ios, physical
+  # iPhone). There is NO Simulator build — the engine lib is device-arm64 and a
+  # simulator would reject it. So a real iPhone + a signing team are required;
+  # there is no simulator fallback to offer.
+  [ -n "${TINA4_IOS_TEAM:-}" ] || die "iOS is device-only (no Simulator): set TINA4_IOS_TEAM (your Apple Team ID) for a signed device install"
+  udid="$(ios_udid)"; [ -n "$udid" ] || die "no iOS device found — iOS is device-only (no Simulator build exists). Pair + unlock a physical iPhone (xcrun devicectl list devices). To verify off-device, link-check with: tools/tina4pascal build ios"
   proj_ios_stage    # sets ihost/iname/ibundle/iwork
   say "${D}xcodebuild build (device, signed)${Z}"
   xcodebuild -project "$ihost/Tina4Pascal.xcodeproj" -scheme Tina4Pascal \
