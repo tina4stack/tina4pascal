@@ -11,9 +11,16 @@
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SRC="$HERE/../src"
-WORK="$HERE/build"
-OUT="$HERE/app/libtina4ios.a"
+# Env overrides let the CLI build a per-project STAGED host (its own tina4ios.pas
+# + app_units.inc + app/ output dir) while still pointing at the repo engine
+# sources. Unset ⇒ the reference in-repo build, byte-for-byte as before.
+ENG="${TINA4_IOS_ENG_DIR:-$HERE}"          # dir holding tina4ios.pas, app_units.inc, app/
+SRC="${TINA4_SRC:-$HERE/../src}"           # shared engine units
+THREED="${TINA4_3D:-$HERE/../3d}"
+SHEEP="${TINA4_SHEEP:-$HERE/../examples/sheep3d}"
+APP_UNIT_DIRS="${TINA4_APP_UNIT_DIRS:-}"   # extra -Fu dirs for a project's own units
+WORK="$ENG/build"
+OUT="$ENG/app/libtina4ios.a"
 
 export PPC_CONFIG_PATH="${PPC_CONFIG_PATH:-$HOME/fpc/etc}"
 export PATH="$HOME/fpc/bin:$PATH"
@@ -23,8 +30,9 @@ rm -rf "$WORK"; mkdir -p "$WORK"
 echo "compiling Pascal for arm64 iOS…"
 # -Cn: compile only, skip FPC's own link (the app links); it still writes the
 # linkfiles*.res listing every object we must archive.
+# shellcheck disable=SC2086
 fpc -Mdelphi -Tios -Paarch64 -O2 -Cn \
-    -FE"$WORK" -FU"$WORK" -Fu"$SRC" -Fu"$HERE/../3d" -Fu"$HERE/../examples/sheep3d" "$HERE/tina4ios.pas" \
+    -FE"$WORK" -FU"$WORK" -Fu"$SRC" -Fu"$THREED" -Fu"$SHEEP" $APP_UNIT_DIRS "$ENG/tina4ios.pas" \
     2>&1 | grep -Ei "error|fatal" && { echo "COMPILE FAILED"; exit 1; } || true
 
 RES="$(ls "$WORK"/linkfiles*.res 2>/dev/null | head -1)"

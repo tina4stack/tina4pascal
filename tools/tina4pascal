@@ -37,6 +37,24 @@ jget() { # jget <key> [default]  (reads ./tina4.json in $PWD)
   printf '%s' "$_v"
 }
 
+# jget_list <key> — echo the string entries of a top-level JSON array in
+# ./tina4.json, one per line (e.g. "appUnits": ["Tina4CalcApp"]). Empty if absent.
+jget_list() {
+  _k="$1"; _f="$PWD/tina4.json"
+  [ -f "$_f" ] || return 0
+  if command -v jq >/dev/null 2>&1; then
+    sed 's://.*$::' "$_f" | jq -r --arg k "$_k" '(.[$k] // []) | .[]' 2>/dev/null && return 0
+  fi
+  # fallback: pull the [...] after the key, split on commas, strip quotes
+  sed 's://.*$::' "$_f" \
+    | tr '\n' ' ' \
+    | grep -oE "\"$_k\"[[:space:]]*:[[:space:]]*\[[^]]*\]" \
+    | sed -E "s/.*\[([^]]*)\].*/\1/" \
+    | tr ',' '\n' \
+    | sed -E 's/^[[:space:]]*"?//; s/"?[[:space:]]*$//' \
+    | grep -v '^$'
+}
+
 # ---- FPC (env → ~/.tina4/toolchains/fpc → ~/fpc → PATH) ----------------------
 _resolve_fpc_home() {
   [ -n "${FPC_HOME:-}" ] && { printf '%s' "$FPC_HOME"; return; }
@@ -620,13 +638,27 @@ proj_ios_stage() {
     case "$jt" in ''|*'${'*) : ;; *) iteam="$jt" ;; esac
   fi
   ivname="$(jget versionName 1.0)"; ivcode="$(jget_num versionCode 1)"
-  say "→ building iOS engine (libtina4ios.a)…"
-  PPC_CONFIG_PATH="$FPC_HOME/etc" PATH="$FPC_HOME/bin:$PATH" sh "$ROOT/ios/build.sh" >/dev/null 2>&1 \
-    || die "iOS engine build failed (run ios/build.sh to see errors)"
+  # stage the reference iOS host, then build the ENGINE from the STAGED copy so a
+  # project's own action units splice in without touching the repo.
   rm -rf "$ihost"; mkdir -p "$ihost"; cp -R "$ROOT/ios/." "$ihost/"
   rm -rf "$ihost/build" "$ihost/Tina4Pascal.xcodeproj"
+  # project app-units (tina4.json "appUnits") → the staged app_units.inc, spliced
+  # into tina4ios.pas's uses; their source dirs join the FPC path. Each unit's
+  # initialization registers its onclick actions into libtina4ios.a. Mirrors the
+  # Android JNI path (android/jni/app_units.inc).
+  iappinc=""; iappdirs=""
+  for u in $(jget_list appUnits); do iappinc="$iappinc, $u"; done
+  printf '%s' "$iappinc" > "$ihost/app_units.inc"      # BOM-free; empty ⇒ reference shell
+  for d in "$PWD" "$PWD/src" "$PWD/src/app" "$PWD/src/services"; do
+    [ -d "$d" ] && iappdirs="$iappdirs -Fu$d"
+  done
+  say "→ building iOS engine (libtina4ios.a)…"
+  PPC_CONFIG_PATH="$FPC_HOME/etc" PATH="$FPC_HOME/bin:$PATH" \
+    TINA4_IOS_ENG_DIR="$ihost" TINA4_SRC="$ROOT/src" \
+    TINA4_3D="$ROOT/3d" TINA4_SHEEP="$ROOT/examples/sheep3d" \
+    TINA4_APP_UNIT_DIRS="$iappdirs" sh "$ihost/build.sh" >/dev/null 2>&1 \
+    || die "iOS engine build failed (run: TINA4_IOS_ENG_DIR=\"$ihost\" TINA4_SRC=\"$ROOT/src\" sh \"$ihost/build.sh\")"
   cp "$iwork/index.html" "$ihost/app/showcase.html"
-  cp "$ROOT/ios/app/libtina4ios.a" "$ihost/app/libtina4ios.a"
   [ -f "$PWD/assets/icon.png" ] && cp "$PWD/assets/icon.png" \
     "$ihost/app/Assets.xcassets/AppIcon.appiconset/icon_1024.png" 2>/dev/null || true
   # bundle the project's assets/ as a FOLDER so a relative <img src="assets/…">

@@ -17,7 +17,12 @@ uses
   ctypes, Math,
   CGContext, CGImage, CGColorSpace, CGDataProvider, CGGeometry,
   Tina4RenderBackend, Tina4ShellIOS, Tina4Interact, Tina4Canvas2D, Tina4Http, Tina4HttpIOS,
-  ThreePascal, RamModel;
+  ThreePascal, RamModel
+  { A project's own units (declared as "appUnits" in tina4.json) are spliced in
+    here by the iOS build. Each registers its named actions in its own
+    initialization, so the app's Pascal logic ships in libtina4ios.a without
+    editing this shell. Defaults to empty (app_units.inc). }
+  {$I app_units.inc} ;
 
 var
   GCanvas: TIOSCanvas = nil;

@@ -13,7 +13,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    NSString *path = [[NSBundle mainBundle] pathForResource:@"shadowtest" ofType:@"html"];
+    NSString *path = [[NSBundle mainBundle] pathForResource:@"showcase" ofType:@"html"];
     NSString *html = [NSString stringWithContentsOfFile:path
         encoding:NSUTF8StringEncoding error:nil];
     if (!html) html = @"<body><h1>showcase.html not found</h1></body>";

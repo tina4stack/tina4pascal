@@ -112,6 +112,46 @@ pymobiledevice3 developer dvt screenshot out.png   # phone must be UNLOCKED
 That is exactly what `tina4pascal screenshot out.png ios` runs. `setup ios`
 installs it (via pipx) alongside `idevice_id` (device listing) and `xcodegen`.
 
+## Shipping your app's Pascal — `appUnits`
+
+Your app's logic (the Pascal units that register `onclick`/action handlers via
+`RegisterAction`) has to link **into the engine library** (`libtina4ios.a`), not
+just the desktop host — otherwise those actions don't exist on the phone. You do
+**not** edit the shared `ios/tina4ios.pas` shell. Instead, list your units in
+`tina4.json`:
+
+```json
+{
+  "name": "calc",
+  "bundleId": "com.tina4.calc",
+  "main": "calculator.pas",
+  "appUnits": ["Tina4CalcApp"]
+}
+```
+
+Each name must be a **unit** (not a program) reachable on the FPC path — the
+build looks in the project root and `src/`, `src/app/`, `src/services/`. A unit
+registers its actions in its own `initialization` block:
+
+```pascal
+unit Tina4CalcApp;
+{$mode delphi}{$H+}
+interface implementation
+uses Tina4Events;
+procedure Press(const Args: string); begin { … } end;
+initialization
+  RegisterAction('calc.press', TTina4ActionProc(@Press));
+end.
+```
+
+On `tina4pascal build ios` (or `deploy` / `release`), the CLI stages a private
+copy of the iOS host, writes the unit list into a staged `app_units.inc` (a
+`{$I app_units.inc}` at the end of `tina4ios.pas`'s `uses`), adds your source
+dirs to the FPC path, and archives the compiled units into `libtina4ios.a`. The
+in‑repo `ios/app_units.inc` stays empty, so the reference build is untouched.
+This is the **exact twin of Android's `android/jni/app_units.inc`** — the same
+`appUnits` key drives both, so one project builds for both phones unchanged.
+
 ## Permissions (both platforms)
 
 Interaction that touches hardware or private data needs a declared permission —
