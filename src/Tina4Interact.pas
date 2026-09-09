@@ -137,6 +137,14 @@ function TinaBoxTree: string;
 { Inspect the element at (X,Y): JSON with the tag, id/class, its box geometry and
   key computed styles — the equivalent of a browser's "inspect element". }
 function TinaHitTestInfo(X, Y: Single): string;
+{ Live DOM attribute of the element with the given id, AFTER interaction has
+  mutated it (e.g. a checkbox's 'checked' set/cleared by a tap). Returns '' when
+  the element or attribute is absent — use TinaHasAttr to tell an empty-valued
+  boolean attribute (checked, selected, open) apart from an absent one. This is
+  the read-back surface interaction tests assert on: TinaCurrentHtml returns the
+  ORIGINAL source, not the mutated tree. }
+function TinaAttr(const Id, Name: string): string;
+function TinaHasAttr(const Id, Name: string): Boolean;
 { When on, TinaFrame outlines every layout box (content in blue, padding green,
   margin orange) on top of the paint — so a snapshot shows the layout, like a
   browser's layout highlighter. }
@@ -1343,6 +1351,24 @@ begin
       + '}';
   end;
   Result := Result + '}';
+end;
+
+function TinaAttr(const Id, Name: string): string;
+var t: THTMLTag;
+begin
+  Result := '';
+  if GParser = nil then Exit;
+  t := FindById(GParser.Root, Id);
+  if t <> nil then Result := t.GetAttribute(Name);
+end;
+
+function TinaHasAttr(const Id, Name: string): Boolean;
+var t: THTMLTag;
+begin
+  Result := False;
+  if GParser = nil then Exit;
+  t := FindById(GParser.Root, Id);
+  if t <> nil then Result := t.HasAttribute(Name);
 end;
 
 procedure PaintDebugOverlay(B: TLayoutBox; ScrollY: Single);
