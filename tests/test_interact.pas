@@ -131,6 +131,9 @@ const PAGE =
   '<select id="fruit" style="display:block;margin-top:8px">' +
     '<option>Apple</option><option>Banana</option><option>Cherry</option>' +
   '</select>' +
+  '<recorder id="mic" onrecord="notify.show(''Saved'',''ok'')" ' +
+    'style="display:block;width:180px;height:40px;margin-top:8px"></recorder>' +
+  '<audio id="rec" controls></audio>' +
   '<p class="tag">done</p>' +
   '</body>';
 
@@ -176,6 +179,25 @@ begin
     Tap(selX + selW / 2, rowCy);                           // pick "Banana"
     Check(TinaAttr('fruit', 'value') = 'Banana',
           'tapping row 1 commits value "Banana" (got "' + TinaAttr('fruit', 'value') + '")');
+
+    // ---- <recorder>: stateful mic toggle (arm -> stop -> file) -----------
+    // No mic in a headless test, so we drive the state machine directly: a tap
+    // arms it (TINA_RECORD_START, 'recording' set), a second tap disarms it
+    // (TINA_RECORD_STOP), and the host's result hand-off stamps the file.
+    Check(not TinaHasAttr('mic', 'recording'), 'recorder starts idle');
+    Check(TapId('mic'), 'recorder hittable');
+    Check(TinaHasAttr('mic', 'recording'), 'first tap arms the recorder (recording set)');
+    TapId('mic');
+    Check(not TinaHasAttr('mic', 'recording'), 'second tap disarms it');
+    Check(TinaAttr('mic', 'value') = '', 'no file until the host delivers one');
+    // host finished capture: hand back a path
+    TinaSetRecording('/tmp/tina4-rec-test.m4a');
+    Frame;
+    Check(TinaAttr('mic', 'value') = 'tina4-rec-test.m4a',
+          'TinaSetRecording stamps the recorder value');
+    Check(TinaAttr('rec', 'src') = '/tmp/tina4-rec-test.m4a',
+          'the clip is routed into <audio id="rec">');
+    Check(not TinaHasAttr('mic', 'recording'), 'recorder is disarmed after delivery');
 
     // ---- survive a burst of rebuilds on the pseudo page ------------------
     for i := 1 to 6 do TapId('agree');    // 6 more Builds, InjectPseudo each time

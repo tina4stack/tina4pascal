@@ -38,6 +38,8 @@ const
   TINA_FLING     = 3;   // begin a momentum fling (drive TinaTick per frame)
   TINA_PICK_FILE = 4;   // an <input type=file> was tapped — open the picker
   TINA_CAPTURE   = 5;   // a <camera> was tapped — open the capture UI
+  TINA_RECORD_START = 6; // a <recorder> was tapped idle — start mic capture
+  TINA_RECORD_STOP  = 7; // a <recorder> was tapped while armed — stop + get file
 
 { Wire up the engine to a shell canvas. Call once, before the first frame. }
 procedure TinaInit(Canvas: TTina4Canvas);
@@ -103,6 +105,12 @@ function TinaFocusNext: Integer;
 procedure TinaSetFile(const Name: string);
 { A captured photo path → <img id="shot"> (and stamps the camera control). }
 procedure TinaSetPhoto(const Path: string);
+{ A finished recording's file path → the <recorder> that was armed: stamps its
+  value (filename shown as the label), clears the 'recording' state, routes the
+  file into an <audio id="rec"> player if the page has one, and fires the
+  recorder's `onrecord` action. Pass '' if capture failed/produced nothing — the
+  control simply disarms. The host calls this after StopAudioCapture returns. }
+procedure TinaSetRecording(const Path: string);
 
 { Set a default HTTP header sent on every request — Http:Get, API calls, and
   <include> fetches. Call once after login, e.g.
@@ -1557,7 +1565,18 @@ begin
     ckFile:
       begin
         BlurAll; GFileTag := Ctrl; GLayoutDirty := True;
-        if SameText(Ctrl.TagName, 'camera') then Result := TINA_CAPTURE
+        if SameText(Ctrl.TagName, 'recorder') then
+        begin
+          // stateful toggle: arm on the first tap, disarm on the next. The
+          // 'recording' attribute both drives the chrome (⏹ Stop) and is how a
+          // second tap knows to stop. Optimistic — if the host's start fails it
+          // reflects that by NOT calling TinaSetRecording and can clear the attr.
+          if Ctrl.HasAttribute('recording') then
+          begin DelAttr(Ctrl, 'recording'); Result := TINA_RECORD_STOP; end
+          else
+          begin SetAttr(Ctrl, 'recording', ''); Result := TINA_RECORD_START; end;
+        end
+        else if SameText(Ctrl.TagName, 'camera') then Result := TINA_CAPTURE
         else Result := TINA_PICK_FILE;
       end;
     ckButton:
@@ -1859,6 +1878,28 @@ begin
   img := FindById(GParser.Root, 'shot');
   if img <> nil then SetAttr(img, 'src', Path);
   if GFileTag <> nil then begin SetAttr(GFileTag, 'value', ExtractFileName(Path)); GFileTag := nil; end;
+  GLayoutDirty := True;
+end;
+
+procedure TinaSetRecording(const Path: string);
+var au: THTMLTag;
+begin
+  if GParser = nil then Exit;
+  if GFileTag <> nil then
+  begin
+    DelAttr(GFileTag, 'recording');            // disarm regardless of outcome
+    if Path <> '' then
+    begin
+      SetAttr(GFileTag, 'value', ExtractFileName(Path));
+      // route the clip into an <audio id="rec" controls> player, like a photo
+      // lands in <img id="shot">
+      au := FindById(GParser.Root, 'rec');
+      if (au <> nil) and SameText(au.TagName, 'audio') then SetAttr(au, 'src', Path);
+      if GFileTag.HasAttribute('onrecord') then
+        DispatchAction(GFileTag.GetAttribute('onrecord'));
+    end;
+    GFileTag := nil;
+  end;
   GLayoutDirty := True;
 end;
 

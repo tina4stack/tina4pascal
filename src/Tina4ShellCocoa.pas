@@ -111,6 +111,8 @@ type
     FCanvas: TCocoaCanvas;
     FCursor: TTina4Cursor;    // last-set cursor (avoid re-setting every move)
     FCursorHidden: Boolean;   // cursor:none hide/unhide is stacked — track it
+    FRecorder: AVAudioRecorder;  // live mic capture, nil when idle
+    FRecPath: string;            // temp file the current recording writes to
   public
     { When non-empty, the next completed paint is written to this PNG path
       (then cleared). Seed of the headless render-to-image mode. }
@@ -133,6 +135,8 @@ type
     procedure StartTicker(IntervalMs: Integer); override;
     function PickFile: string; override;
     function CaptureCamera: string; override;
+    function StartAudioCapture: Boolean; override;
+    function StopAudioCapture: string; override;
     function GetMeasuringCanvas: TTina4Canvas; override;
   end;
 
@@ -1442,6 +1446,56 @@ begin
     Until that lands, fall back to letting the user pick an image file so the
     <camera> element and its value pipeline work end to end. }
   Result := PickFile;
+end;
+
+function TCocoaShell.StartAudioCapture: Boolean;
+{ Real mic capture via AVAudioRecorder → an AAC .m4a in the temp dir. macOS
+  gates the mic through TCC: the FIRST record triggers the system prompt, and a
+  bundled app MUST carry NSMicrophoneUsageDescription in Info.plist or the OS
+  terminates it on access. If permission is denied, record_ returns False here
+  and the <recorder> simply never arms (StartAudioCapture -> False). }
+const
+  kFmtAAC   = 1633772320;   // kAudioFormatMPEG4AAC ('aac ')
+  kQualHigh = 96;           // AVAudioQualityHigh
+var
+  dir, fn: string;
+  url: NSURL;
+  settings: NSMutableDictionary;
+  err: NSError;
+begin
+  Result := False;
+  if FRecorder <> nil then Exit;                 // already recording
+  dir := string(NSTemporaryDirectory.UTF8String);
+  if (dir <> '') and (dir[Length(dir)] <> '/') then dir := dir + '/';
+  fn := dir + 'tina4-rec-' + FormatDateTime('yyyymmdd-hhnnss', Now) + '.m4a';
+  url := NSURL.fileURLWithPath(NSStr(fn));
+  settings := NSMutableDictionary.dictionary;
+  settings.setObject_forKey(NSNumber.numberWithInt(kFmtAAC),   AVFormatIDKey);
+  settings.setObject_forKey(NSNumber.numberWithDouble(44100),  AVSampleRateKey);
+  settings.setObject_forKey(NSNumber.numberWithInt(1),         AVNumberOfChannelsKey);
+  settings.setObject_forKey(NSNumber.numberWithInt(kQualHigh), AVEncoderAudioQualityKey);
+  err := nil;
+  FRecorder := AVAudioRecorder.alloc.initWithURL_settings_error(url, settings, @err);
+  if (FRecorder = nil) or (err <> nil) then
+  begin
+    if FRecorder <> nil then begin FRecorder.release; FRecorder := nil; end;
+    Exit;
+  end;
+  if not FRecorder.record_ then                  // mic denied / busy
+  begin
+    FRecorder.release; FRecorder := nil; Exit;
+  end;
+  FRecPath := fn;
+  Result := True;
+end;
+
+function TCocoaShell.StopAudioCapture: string;
+begin
+  Result := '';
+  if FRecorder = nil then Exit;
+  FRecorder.stop;                                // flushes + closes the file
+  Result := FRecPath;
+  FRecorder.release; FRecorder := nil; FRecPath := '';
 end;
 
 procedure TTina4Ticker.tick(t: NSTimer);

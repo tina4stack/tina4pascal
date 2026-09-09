@@ -562,6 +562,20 @@ begin
   end;
 end;
 
+{ First element (depth-first) with the given id, or nil. }
+function FindTagById(T: THTMLTag; const Id: string): THTMLTag;
+var c: THTMLTag;
+begin
+  Result := nil;
+  if T = nil then Exit;
+  if T.GetAttribute('id') = Id then Exit(T);
+  for c in T.Children do
+  begin
+    Result := FindTagById(c, Id);
+    if Result <> nil then Exit;
+  end;
+end;
+
 { The form control a <label> resolves to: one nested inside it, else its `for`
   target. Lets a click on the label text toggle the checkbox/radio it labels. }
 function LabelControl(Root, Node: THTMLTag): THTMLTag;
@@ -595,7 +609,7 @@ end;
 
 procedure TViewer.MouseUp(X, Y: Single);
 var
-  hit, t, g: THTMLTag;
+  hit, t, g, au: THTMLTag;
   typ, ot, ov, v, picked: string;
   radios: TList<THTMLTag>;
   cb: TLayoutBox;
@@ -643,6 +657,31 @@ begin
     begin
       SetFocus(t);
       OpenSelect := t;
+      Rebuild;
+      Exit;
+    end;
+    if SameText(t.TagName, 'recorder') then
+    begin
+      // stateful mic toggle (the audio analogue of <camera>): arm on first
+      // click, stop + stamp the file on the next.
+      if t.HasAttribute('recording') then
+      begin
+        t.Attributes.Remove('recording');
+        picked := Shell.StopAudioCapture;
+        if picked <> '' then
+        begin
+          t.Attributes.AddOrSetValue('value', picked);
+          // route the clip into an <audio id="rec"> player so it can be played
+          // back, then fire the element's onrecord action
+          au := FindTagById(Parser.Root, 'rec');
+          if (au <> nil) and SameText(au.TagName, 'audio') then
+            au.Attributes.AddOrSetValue('src', picked);
+          if t.HasAttribute('onrecord') then DispatchAction(t.GetAttribute('onrecord'));
+          Event('record ' + t.GetAttribute('name', 'recorder') + '=' + picked);
+        end;
+      end
+      else if Shell.StartAudioCapture then
+        t.Attributes.AddOrSetValue('recording', 'recording');
       Rebuild;
       Exit;
     end;

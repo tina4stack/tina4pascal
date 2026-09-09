@@ -238,6 +238,15 @@ type
     { Capture one still image from the OS camera to a temp file; returns its
       path or '' if unavailable/cancelled. Default ''. }
     function CaptureCamera: string; virtual;
+    { Microphone capture — the audio analogue of CaptureCamera, but stateful
+      because a recording has a duration. StartAudioCapture begins recording to
+      a temp file and returns True if it actually started (mic present +
+      permission granted). StopAudioCapture stops and returns the recorded
+      file's path (or '' on failure). A <recorder> tap toggles between the two.
+      Default: no mic — StartAudioCapture False, StopAudioCapture '' — so a
+      shell without audio-in degrades cleanly (the control just never arms). }
+    function StartAudioCapture: Boolean; virtual;
+    function StopAudioCapture: string; virtual;
     { Text measurement outside a paint cycle (layout needs this). }
     function GetMeasuringCanvas: TTina4Canvas; virtual; abstract;
   end;
@@ -342,6 +351,16 @@ begin
 end;
 
 function TTina4Shell.CaptureCamera: string;
+begin
+  Result := '';
+end;
+
+function TTina4Shell.StartAudioCapture: Boolean;
+begin
+  Result := False;
+end;
+
+function TTina4Shell.StopAudioCapture: string;
 begin
   Result := '';
 end;

@@ -248,8 +248,8 @@ function IsFormControlTag(const Name: string): Boolean;
 begin
   Result := SameText(Name, 'input') or SameText(Name, 'textarea') or
     SameText(Name, 'select') or SameText(Name, 'button') or
-    SameText(Name, 'camera') or SameText(Name, 'progress') or
-    SameText(Name, 'meter');
+    SameText(Name, 'camera') or SameText(Name, 'recorder') or
+    SameText(Name, 'progress') or SameText(Name, 'meter');
 end;
 
 function ToRoman(N: Integer): string;
@@ -634,7 +634,8 @@ begin
   else if SameText(Tag.TagName, 'meter') then Result := ckMeter
   else if typ = 'checkbox' then Result := ckCheckbox
   else if typ = 'radio' then Result := ckRadio
-  else if (typ = 'file') or SameText(Tag.TagName, 'camera') then Result := ckFile
+  else if (typ = 'file') or SameText(Tag.TagName, 'camera')
+       or SameText(Tag.TagName, 'recorder') then Result := ckFile
   else if (typ = 'submit') or (typ = 'button') then Result := ckButton
   else if typ = 'date' then Result := ckDate
   else if typ = 'range' then Result := ckRange
@@ -1395,7 +1396,14 @@ begin
       begin
         // "📎 Choose File" or the selected filename; the value holds the path
         txt := Trim(Tag.GetAttribute('value'));
-        if txt <> '' then txt := #$F0#$9F#$93#$8E' ' + ExtractFileName(txt)
+        if SameText(Tag.TagName, 'recorder') then
+        begin
+          // stateful: ⏹ Stop while armed, 🎙 <file> once captured, else 🎙 Record
+          if Tag.HasAttribute('recording') then txt := #$E2#$8F#$B9' Stop'          // ⏹
+          else if txt <> '' then txt := #$F0#$9F#$8E#$99' ' + ExtractFileName(txt)   // 🎙 file
+          else txt := #$F0#$9F#$8E#$99' Record';                                     // 🎙
+        end
+        else if txt <> '' then txt := #$F0#$9F#$93#$8E' ' + ExtractFileName(txt)
         else if SameText(Tag.TagName, 'camera') then txt := #$F0#$9F#$93#$B7' Take Photo'
         else txt := #$F0#$9F#$93#$8E' Choose File';
       end;
