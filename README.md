@@ -129,8 +129,8 @@ Everything you drive the stack with — by hand, from an IDE, or from an AI agen
 |---|---|---|
 | **`tools/tina4pascal`** | macOS / Linux (POSIX sh) | `setup · doctor · init · build · run · render · dom · boxes · inspect · debug · script · deploy · screenshot · compliance` |
 | **`tools/tina4pascal.ps1`** | Windows (PowerShell) | same surface, native to Windows; `build {win64,win32,linux,android,all}`, `setup android`, `doctor` |
-| **`tools/mcp`** | any (tina4-python) | **MCP server** — exposes the whole loop (`tina4_init/build/run/render/dom/boxes/inspect/script/debug/deploy/screenshot`) so an AI or IDE drives it. See [tools/mcp/README.md](tools/mcp/README.md) |
-| **`skills/tina4pascal-developer`** | Claude Code · Codex · Cursor | agent skill: architecture rules, toolchain formula, verification discipline (`./scripts/install-skills.sh`) |
+| **`tools/mcp`** | any MCP client (tina4-python) | **MCP server** — exposes the whole loop (`tina4_init/build/run/render/dom/boxes/inspect/script/debug/deploy/screenshot`) so any agent or IDE drives it. Tool-agnostic quick-start in [tools/mcp/README.md](tools/mcp/README.md) |
+| **`skills/tina4pascal-developer`** | any skill-aware agent | agent skill: architecture rules, toolchain formula, verification discipline (`./scripts/install-skills.sh`; presets for Claude Code · Codex · Cursor) |
 | **`toolchain/build-crosses.sh`** | macOS / Linux | build every FPC cross-compiler from one host |
 | **`toolchain/build-android-cross.ps1`** | Windows | build the FPC→Android cross pack (arm64/armv7/x86_64) from source + NDK |
 | **`toolchain/sign-release.ps1`** | Windows | EV-sign the pack binaries + CLI via SimplySign ([docs/SIGNING.md](docs/SIGNING.md)) |
@@ -435,14 +435,19 @@ server, and signed Windows + FPC→Android cross-pack artifacts.
 
 ## AI coder skill
 
-The repo ships an agent skill (`skills/tina4pascal-developer/`) that teaches
-Claude Code, Codex, and Cursor the architecture rules, the toolchain formula,
-and the verification discipline for this stack:
+The repo ships an agent skill (`skills/tina4pascal-developer/`) that teaches any
+skill-aware agent the architecture rules, the toolchain formula, and the
+verification discipline for this stack. Presets install it into the common
+tools:
 
 ```sh
-./scripts/install-skills.sh          # all clients
+./scripts/install-skills.sh          # all presets
 ./scripts/install-skills.sh claude   # or: codex, cursor
 ```
+
+To drive the stack live from any agent or IDE, run the tool-agnostic **MCP
+server** in [tools/mcp/](tools/mcp/README.md) — one endpoint, copy-paste client
+setup for Claude Code, Cursor, Windsurf, VS Code, Zed, Codex and more.
 
 ## Status
 

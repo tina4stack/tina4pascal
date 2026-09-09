@@ -6,18 +6,41 @@ or the IDE can build, deploy, debug, screenshot and **drive** apps on
 macOS / iOS / Android — the same commands `tools/tina4pascal` runs by hand.
 
 Every tool shells out to `../tina4pascal`, so the MCP surface and the CLI never
-drift.
+drift. The server speaks plain Streamable-HTTP MCP — it is not tied to any one
+agent or editor. Any MCP client (Claude Code, Cursor, Windsurf, VS Code, Codex,
+Zed, Continue, or your own) connects to the same URL.
 
-## Run it
+## Quick start
+
+Three steps, then jump to [Connect your dev tool](#connect-your-dev-tool).
+
+### 1. Install the two prerequisites
+
+You need the `tina4` CLI (starts the server) and `uv` (installs its one Python
+dep). Everything else is already in this repo.
+
+| OS | Get `tina4` | Get `uv` |
+|---|---|---|
+| **macOS / Linux** | `curl -fsSL https://tina4.com/install.sh \| sh` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` (macOS: `brew install uv`) |
+| **Windows** | `irm https://tina4.com/install.ps1 \| iex` | `powershell -c "irm https://astral.sh/uv/install.ps1 \| iex"` |
+
+The `tina4.com` one-liner is the easiest install (it also runs `tina4 setup` to
+fetch the toolchain). Prefer a package manager? `cargo install tina4` and prebuilt
+release binaries from [tina4.com](https://tina4.com) work too.
+
+### 2. Start the server
 
 ```bash
 cd tools/mcp
-uv sync                 # installs tina4-python (zero other deps)
-TINA4_DEBUG=true tina4 serve   # serves the MCP endpoint on http://localhost:7146/tina4pascal
+uv sync                        # installs tina4-python (its only dependency)
+TINA4_DEBUG=true tina4 serve   # serves MCP on http://localhost:7146/tina4pascal
 ```
 
-(`tina4` is the cross-language Rust CLI — `cargo install tina4` or grab a
-release binary. Never `python app.py`.)
+Leave it running. It prints the endpoint on boot. (Always `tina4 serve` — never
+`python app.py`; the Rust CLI wires up the MCP transport.)
+
+Change host/port in `tools/mcp/.env` (`TINA4_HOST`, `TINA4_PORT`) if `7146` is
+taken — then use the new URL everywhere below.
 
 ## Tools
 
@@ -49,7 +72,108 @@ Live input (`tap`/`swipe`/`text`) is fully wired for **Android** today; on
 iOS/macOS `deploy`/`debug`/`screenshot` work now and live input arrives with a
 WebDriverAgent / in-app automation bridge (see `docs/ROADMAP.md`).
 
-## Point a client at it
+## Connect your dev tool
 
-Streamable-HTTP MCP endpoint: `http://localhost:7146/tina4pascal`.
-For a stdio client, front it with `mcp-remote` or your client's HTTP transport.
+### 3. Point your client at it
+
+One endpoint, every client: **`http://localhost:7146/tina4pascal`** (Streamable
+HTTP, with legacy SSE). There are two ways in:
+
+- **Native HTTP** — modern clients take the URL directly. Preferred.
+- **stdio bridge** — older / stdio-only clients wrap it with
+  [`mcp-remote`](https://www.npmjs.com/package/mcp-remote):
+  `npx -y mcp-remote http://localhost:7146/tina4pascal` (needs Node ≥ 18). This
+  works for **any** MCP client, so it is the universal fallback.
+
+Pick your tool and paste the matching block. Restart the client afterwards.
+
+<details><summary><b>Claude Code</b> (CLI)</summary>
+
+```bash
+claude mcp add --transport http tina4pascal http://localhost:7146/tina4pascal
+```
+</details>
+
+<details><summary><b>Cursor</b> — <code>~/.cursor/mcp.json</code> (or <code>.cursor/mcp.json</code> in the project)</summary>
+
+```json
+{
+  "mcpServers": {
+    "tina4pascal": { "url": "http://localhost:7146/tina4pascal" }
+  }
+}
+```
+</details>
+
+<details><summary><b>Windsurf</b> — <code>~/.codeium/windsurf/mcp_config.json</code></summary>
+
+```json
+{
+  "mcpServers": {
+    "tina4pascal": { "serverUrl": "http://localhost:7146/tina4pascal" }
+  }
+}
+```
+</details>
+
+<details><summary><b>VS Code</b> (Copilot agent mode) — <code>.vscode/mcp.json</code></summary>
+
+```json
+{
+  "servers": {
+    "tina4pascal": { "type": "http", "url": "http://localhost:7146/tina4pascal" }
+  }
+}
+```
+</details>
+
+<details><summary><b>Zed</b> — <code>settings.json</code> → <code>context_servers</code></summary>
+
+```json
+{
+  "context_servers": {
+    "tina4pascal": {
+      "command": { "path": "npx", "args": ["-y", "mcp-remote", "http://localhost:7146/tina4pascal"] }
+    }
+  }
+}
+```
+</details>
+
+<details><summary><b>Claude Desktop / Codex / any stdio-only client</b> — <code>command</code> + <code>args</code></summary>
+
+Claude Desktop: `claude_desktop_config.json`
+(macOS `~/Library/Application Support/Claude/`, Windows `%APPDATA%\Claude\`).
+Codex: `~/.codex/config.toml` under `[mcp_servers.tina4pascal]`. Same idea —
+launch the `mcp-remote` bridge as the server command:
+
+```json
+{
+  "mcpServers": {
+    "tina4pascal": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://localhost:7146/tina4pascal"]
+    }
+  }
+}
+```
+</details>
+
+Once connected, ask your agent to run `tina4_doctor` — it should report the
+toolchain, confirming the tools are live.
+
+## Troubleshooting
+
+- **Client shows no tools / can't connect** — is `tina4 serve` still running in
+  `tools/mcp`? Open `http://localhost:7146/tina4pascal` in a browser; a JSON/SSE
+  response means the server is up. The client must be restarted after editing its
+  config.
+- **`tina4: command not found`** — the CLI isn't on PATH. Reinstall (step 1) or
+  point at the binary's full path.
+- **`mcp-remote` errors** — needs Node ≥ 18 (`node -v`); the server must be
+  running first. Prefer a native-HTTP client block if your tool has one.
+- **Port `7146` in use** — change `TINA4_PORT` in `tools/mcp/.env`, restart the
+  server, and update the URL in every client block.
+- **A tool errors** — the MCP just shells out to `tools/tina4pascal`; run the
+  same command by hand there to see the raw output. Start with `tina4pascal
+  doctor` for a toolchain report.
