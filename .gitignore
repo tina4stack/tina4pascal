@@ -21,6 +21,7 @@ examples/htmlviewer/htmlviewer
 examples/canvas/main
 examples/macos/main
 examples/counter/counter
+examples/calculator/calculator
 toolchain/test/hello
 
 # python caches (tools/mcp)
