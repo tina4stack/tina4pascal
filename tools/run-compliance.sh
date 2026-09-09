@@ -8,6 +8,10 @@
 # threshold) the feature PASSES.
 #
 # Usage: tools/run-compliance.sh [id-glob]     (default: all)
+# Gate: an assertion-based unit phase (test_dom, test_pseudo_rebuild,
+#   test_interact) runs first and aborts the suite on any failure — it catches
+#   interaction/rebuild regressions the pixel diff can't see. Skip with
+#   TINA4_SKIP_UNIT=1.
 # Speed: snapshots fan out across all CPU cores; the verdict needs only our
 #   own test/ref PNGs, so Chrome is OFF by default. Set TINA4_REFTEST_CHROME=1
 #   to also capture Chrome shots for the human report (much slower: one cold
@@ -39,6 +43,28 @@ fi
 GLOB="${1:-*}"
 THRESH="${TINA4_REFTEST_THRESH:-0.5}"   # max %% of pixels allowed to differ
 JOBS="${TINA4_REFTEST_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+
+# --- unit gate: assertion-based DOM/interaction tests ----------------------
+# These prove behaviour the reftests can't see: the pixel diff never drives a
+# click, so it never catches an interaction/rebuild regression (e.g. the
+# InjectPseudo double-delete that crashed opening a <select>). Run them first
+# and abort the whole suite on any failure. Skip with TINA4_SKIP_UNIT=1.
+TESTS="$REPO/tests"
+UBUILD="$OUT/unit"; mkdir -p "$UBUILD"
+if [ "${TINA4_SKIP_UNIT:-0}" != "1" ]; then
+  for u in test_dom test_pseudo_rebuild test_interact; do
+    if ! "$HOME/fpc/bin/fpc" -Mdelphi -Fu"$REPO/src" \
+           -FE"$UBUILD" -FU"$UBUILD" "$TESTS/$u.pas" >"$UBUILD/$u.build.log" 2>&1; then
+      echo "UNIT-FAIL $u (build) — see $UBUILD/$u.build.log"; exit 1
+    fi
+    if "$UBUILD/$u" >"$UBUILD/$u.run.log" 2>&1; then
+      echo "UNIT  $u  $(tail -1 "$UBUILD/$u.run.log")"
+    else
+      echo "UNIT-FAIL $u (run):"; cat "$UBUILD/$u.run.log"; exit 1
+    fi
+  done
+  echo "----------------------------------------"
+fi
 
 ( cd "$VIEW" && "$HOME/fpc/bin/fpc" -Mdelphi -Fu../../src htmlviewer.pas >/dev/null 2>&1 ) \
   || { echo "viewer build failed"; exit 1; }
