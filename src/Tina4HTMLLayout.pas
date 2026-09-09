@@ -1295,8 +1295,21 @@ begin
   end;
   if Focused and (Kind in [ckTextInput, ckTextarea, ckSelect, ckDate]) then
   begin
-    St.SetBorderWidth(TC_FOCUS_W);
-    St.SetBorderColor(TC_ACCENT); // indigo focus (ring not paintable yet)
+    // Focus: keep the border WIDTH (no layout shift / bounce) — only recolour it
+    // to the accent — and add an outside focus ring as a zero-blur spread shadow
+    // (like a browser's box-shadow focus ring), which never affects layout.
+    St.SetBorderColor(TC_ACCENT);
+    if St.BoxShadowCount < Length(St.BoxShadows) then
+    begin
+      St.BoxShadows[St.BoxShadowCount].OffsetX := 0;
+      St.BoxShadows[St.BoxShadowCount].OffsetY := 0;
+      St.BoxShadows[St.BoxShadowCount].BlurRadius := 0;
+      St.BoxShadows[St.BoxShadowCount].SpreadRadius := 3;
+      St.BoxShadows[St.BoxShadowCount].Color := (TC_ACCENT and $00FFFFFF) or $40000000; // 25% accent ring
+      St.BoxShadows[St.BoxShadowCount].Inset := False;
+      St.BoxShadows[St.BoxShadowCount].Active := True;
+      Inc(St.BoxShadowCount);
+    end;
   end;
   if Disabled then
   begin // greyed background + muted text, like a native disabled control
@@ -1902,7 +1915,11 @@ begin
     if isCol then
     begin
       contentH := 0;
-      for i := 0 to items.Count - 1 do contentH := contentH + items[i].H
+      for i := 0 to items.Count - 1 do contentH := contentH + items[i].H;
+      // include the row-gaps between stacked items — items are POSITIONED with
+      // them (curr += cb.H + flexGap), so omitting them left the container short
+      // and the last item overflowed (clipped) its box.
+      if items.Count > 1 then contentH := contentH + flexGap * (items.Count - 1);
     end
     else
     begin
