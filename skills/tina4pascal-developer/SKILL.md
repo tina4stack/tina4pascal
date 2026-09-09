@@ -136,6 +136,49 @@ of a `TInlineItem`/`TTextRun`/style record you construct — including new ones
 you add — and default new style fields in BOTH `TComputedStyle.Default` and the
 inherit path in `ForTag`.
 
+## Building an app (desktop + mobile)
+
+An app is a project folder — scaffold one with `tools/tina4pascal new <name>`
+(a simple name, no slashes/spaces). It generates the shape EVERY app has:
+
+```
+main.pas          # program: uses Tina4App.RunApp — the cross-platform host
+app.html          # the UI (a Frond/Twig template; {{ vars }} from the context)
+src/AppLogic.pas  # your state + actions, as a portable UNIT
+tina4.json        # { name, bundleId, main, appUnits: ["AppLogic"] }
+```
+
+Two rules make one project build for all six targets:
+
+1. **The host must be `Tina4App.RunApp`, not a hand-rolled shell loop.** RunApp
+   is the shared Win/Linux/macOS host AND it implements `--dump-html`, which the
+   mobile build uses to render `app.html` into a static asset the phone bundles.
+   A Cocoa-only `main.pas` (the old starter) can't cross-compile and can't
+   dump-html, so `build ios`/`build android` fail at "rendered HTML is empty".
+   `main.pas` should look for `app.html` in the working dir first (dev + the
+   dump-html run happen from the project root), then next to the binary.
+
+2. **App logic lives in a UNIT listed in `tina4.json` "appUnits", never inline in
+   the program.** The unit registers its `onclick` actions in its `initialization`
+   (via `RegisterAction`) and mutates the DOM through `Tina4Builtins`
+   (`FindById(BuiltinsRoot,'id')` + `SetElementText` + `BuiltinsDirty`), so it is
+   platform-free. On a mobile build the CLI **splices those units into the engine
+   library** — it writes the unit list into a staged `app_units.inc` (a
+   `{$I app_units.inc}` at the end of `tina4ios.pas` / `tina4jni.pas`'s `uses`),
+   adds the project's `src` dirs to the FPC path, and archives the compiled units
+   into `libtina4ios.a` (iOS) / `libtina4.so` (Android). An action that only
+   exists in the desktop `program` does NOT exist on the phone — put it in an
+   appUnit. Inline program logic is fine for desktop-only tools.
+
+`tools/tina4pascal build <target>` targets `macos · windows · linux ·
+linux-arm64 · android · ios` (all six cross-compile from a Mac; `build all`
+sweeps them). Project unit search dirs are the project root + `src`, `src/app`,
+`src/services` on every target — put shared units in `src/`. The mobile builds
+also pull the shared `3d/` units (`ThreePascal`), so keep that path in any new
+engine-staging invocation. iOS is **device-only** (see the callout under the
+toolchain table). The build produces an unsigned `.app` / a debug APK without a
+team or device; signing/install is the device-loop verbs below.
+
 ## Device dev loop — always via `tools/tina4pascal`
 
 Do NOT hand-run `xcodebuild` / `devicectl` / `pymobiledevice3` / `adb` — the CLI
