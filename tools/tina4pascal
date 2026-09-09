@@ -413,7 +413,11 @@ build_project() {
       fi ;;
   esac
   say "${D}fpc $opts $flags $main${Z}"
-  "$FPC" -Mdelphi $opts $flags -Fu"$SRC" -Fu. -Fusrc/routes -Fusrc/orm -Fusrc/services $extra \
+  # project unit dirs: root + src, src/app, src/services (the same set the mobile
+  # staging adds, so a unit like src/AppLogic.pas is found on every target);
+  # src/routes, src/orm are legacy tina4-web layouts, kept for compatibility.
+  "$FPC" -Mdelphi $opts $flags -Fu"$SRC" -Fu. -Fusrc -Fusrc/app -Fusrc/services \
+    -Fusrc/routes -Fusrc/orm $extra \
     -FE"$out" -FU"$out" -o"$name" "$main" 2>&1 | grep -Ei "error|fatal" && die "build failed" || true
   # bundle the project's fonts next to the executable (renderer loads them first)
   [ -d "$PWD/fonts" ] && { mkdir -p "$out/fonts"; cp "$PWD"/fonts/*.ttf "$out/fonts/" 2>/dev/null || true; }
@@ -488,7 +492,19 @@ proj_android_build() {
   [ -f "$PWD/assets/icon.png" ] && find "$APPDIR/res" -name 'ic_launcher*.png' \
     -exec cp "$PWD/assets/icon.png" {} \; 2>/dev/null || true
 
-  # 3. native lib(s) — compile the JNI bridge against the REPO engine (src)
+  # project app-units (tina4.json "appUnits") → the staged app_units.inc, spliced
+  # into tina4jni.pas's uses; their source dirs join the FPC path. Each unit's
+  # initialization registers its onclick actions into libtina4.so. The twin of
+  # the iOS staging (proj_ios_stage) and the Windows CLI's android path.
+  aappinc=""; aappdirs=""
+  for u in $(jget_list appUnits); do aappinc="$aappinc, $u"; done
+  printf '%s' "$aappinc" > "$host/jni/app_units.inc"      # BOM-free; empty ⇒ reference shell
+  for d in "$PWD" "$PWD/src" "$PWD/src/app" "$PWD/src/services"; do
+    [ -d "$d" ] && aappdirs="$aappdirs -Fu$d"
+  done
+
+  # 3. native lib(s) — compile the JNI bridge against the REPO engine (src) plus
+  #    the shared 3d units (ThreePascal) and the project's own app-units.
   for abi in ${ABIS:-arm64-v8a}; do
     case "$abi" in
       arm64-v8a)   af="-Tandroid -Paarch64" ;;
@@ -497,7 +513,7 @@ proj_android_build() {
     esac
     o="$APPDIR/jniLibs/$abi"; mkdir -p "$o"; w="$(mktemp -d)"
     say "${D}fpc $af → libtina4.so ($abi)${Z}"
-    "$FPC" -Mdelphi $af -O2 -Xs -Fu"$SRC" -FE"$w" -FU"$w" \
+    "$FPC" -Mdelphi $af -O2 -Xs -Fu"$SRC" -Fu"$ROOT/3d" -Fu"$ROOT/examples/sheep3d" $aappdirs -FE"$w" -FU"$w" \
       -o"$o/libtina4.so" "$host/jni/tina4jni.pas" 2>&1 | grep -Ei "error|fatal" \
       && { rm -rf "$w"; die "native build failed ($abi)"; } || true
     [ -f "$o/libtina4.so" ] || { rm -rf "$w"; die "native build produced no .so ($abi)"; }
@@ -1077,12 +1093,21 @@ PLIST
 # scaffold a new starter app (HTML + a Pascal host with actions + localStore)
 cmd_new() {
   name="${1:-}"; [ -n "$name" ] || die "usage: tina4pascal new <name>"
+  # a simple folder name only — a name with a slash would be a path and would
+  # also break the sed substitutions below
+  case "$name" in */*|*' '*) die "name must be a simple folder name (no slashes or spaces)";; esac
   [ -e "$name" ] && die "'$name' already exists"
-  mkdir -p "$name"
+  # reverse-DNS-ish bundle id from the name (lower-case, non-[a-z0-9.-] dropped)
+  bid="com.tina4.$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9.-')"
+  mkdir -p "$name/src"
   cp "$ROOT/examples/starter/app.html" "$name/app.html"
-  sed "s/My Tina4 App/$name/" "$ROOT/examples/starter/main.pas" > "$name/main.pas"
-  ok "created ${B}$name/${Z}  (app.html + main.pas)"
-  say "  run it:  ${B}cd $name && tina4pascal dev${Z}"
+  cp "$ROOT/examples/starter/src/AppLogic.pas" "$name/src/AppLogic.pas"
+  sed "s/My Tina4 App/$name/g" "$ROOT/examples/starter/main.pas" > "$name/main.pas"
+  sed -e "s/My Tina4 App/$name/g" -e "s#com\.tina4\.myapp#$bid#" \
+      "$ROOT/examples/starter/tina4.json" > "$name/tina4.json"
+  ok "created ${B}$name/${Z}  (main.pas + app.html + src/AppLogic.pas + tina4.json)"
+  say "  run it:   ${B}cd $name && tina4pascal dev${Z}"
+  say "  mobile:   ${B}tina4pascal build ios${Z}  ·  ${B}tina4pascal build android${Z}"
 }
 
 # build + run an app folder's main.pas on macOS (edit app.html, re-run to see)

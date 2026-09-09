@@ -1,0 +1,6 @@
+{
+  "name": "My Tina4 App",
+  "bundleId": "com.tina4.myapp",
+  "main": "main.pas",
+  "appUnits": ["AppLogic"]
+}
