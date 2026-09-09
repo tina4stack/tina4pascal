@@ -11,9 +11,13 @@ unit Tina4RasterCanvas;
   in-process + a single blit, independent of shape count.
 
   It implements only what time-driven canvas content uses: filled/stroked paths
-  (winding + even-odd), rectangles and lines. Text/images are no-ops (the Lottie
-  subset has neither). Points arrive already in device pixels — TTina4Canvas2D
-  bakes its matrix via Dev() before calling — so this canvas keeps no transform.
+  (winding + even-odd), rectangles and lines. DrawText is a no-op (the Lottie
+  subset has no text layers), but MeasureText returns a proportional advance-width
+  APPROXIMATION — it is the canvas the headless unit tests lay out on, and a real
+  width there keeps inline-block / shrink-to-fit sizing meaningful (a shell canvas
+  with real font metrics is used for on-screen rendering and the reftest suite).
+  Points arrive already in device pixels — TTina4Canvas2D bakes its matrix via
+  Dev() before calling — so this canvas keeps no transform.
 
   AA: 4× vertical supersampling with exact horizontal span coverage; source-over
   compositing of straight (non-premultiplied) ARGB. }
@@ -340,10 +344,53 @@ begin
   // no-op: the time-driven canvas subset (Lottie) has no text layers
 end;
 
+{ Per-character advance in em (fraction of the font size), for the proportional
+  text approximation below. Not a real font metric — a sane spread of narrow /
+  normal / wide glyphs so shrink-to-fit widths are believable headless. }
+function AsciiEm(c: Char): Single;
+begin
+  if c = ' ' then Result := 0.28
+  else if c in ['i', 'j', 'l', '.', ',', ':', ';', '|', '!', '''', '`'] then Result := 0.28
+  else if c in ['f', 't', 'r', 'I', '(', ')', '[', ']', '{', '}', '/', '\'] then Result := 0.34
+  else if c in ['m', 'w', 'M', 'W', '@'] then Result := 0.90
+  else if c in ['A'..'Z'] then Result := 0.70
+  else Result := 0.5;
+end;
+
 function TTina4RasterCanvas.MeasureText(const Text: string; FontSize: Single;
   Styles: TTina4FontStyles): TTina4TextMetrics;
+var
+  i, n: Integer; em, boldf: Single; b: Integer;
 begin
-  Result.Width := 0; Result.Ascent := 0; Result.Descent := 0; Result.LineHeight := 0;
+  { This canvas has no font engine (it exists for the Lottie vector subset), so
+    it estimates advance widths proportionally — like the Linux shell's own
+    no-font fallback, but per-character rather than a flat 0.5em, so a headless
+    <button>/inline-block shrink-wraps to a realistic width instead of collapsing
+    to its padding. The reftest/compliance suite renders through the shell
+    canvases (Cocoa/X11) with real metrics and is unaffected. }
+  em := 0; i := 1; n := Length(Text);
+  while i <= n do
+  begin
+    b := Ord(Text[i]);
+    if b < $80 then
+    begin
+      em := em + AsciiEm(Text[i]);
+      Inc(i);
+    end
+    else
+    begin
+      // one multibyte codepoint ≈ 0.6em; skip its UTF-8 continuation bytes
+      em := em + 0.6;
+      Inc(i);
+      while (i <= n) and ((Ord(Text[i]) and $C0) = $80) do Inc(i);
+    end;
+  end;
+  boldf := 1.0;
+  if tfsBold in Styles then boldf := 1.05;
+  Result.Width := em * FontSize * boldf;
+  Result.Ascent := FontSize * 0.8;
+  Result.Descent := FontSize * 0.2;
+  Result.LineHeight := FontSize;
 end;
 
 procedure TTina4RasterCanvas.SetClip(X, Y, W, H: Single);
