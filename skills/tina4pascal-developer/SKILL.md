@@ -179,6 +179,18 @@ engine-staging invocation. iOS is **device-only** (see the callout under the
 toolchain table). The build produces an unsigned `.app` / a debug APK without a
 team or device; signing/install is the device-loop verbs below.
 
+**Release (signed artifacts):** `release <android|ios|win64>` inside a project.
+`release win64` builds `build/windows/<name>.exe` and Authenticode-signs it with
+the Certum EV cert via SimplySign (log into SimplySign Desktop first) — but the
+signing front-end differs by host and is NOT interchangeable: the POSIX
+`tools/tina4pascal` (macOS/Linux) signs with **osslsigncode + the SimplySign
+PKCS#11 module**, while `tools/tina4pascal.ps1` (Windows) signs with
+**signtool.exe from the Windows SDK** against the cert SimplySign mounts as a
+virtual smart card in `Cert:\CurrentUser\My`. Same cloud cert, two front-ends —
+don't port one's incantation to the other. Signing is opportunistic (unsigned +
+a hint when no session/SDK), so plain `build windows` stays unsigned; only
+`release` signs. See docs/SIGNING.md.
+
 ## Device dev loop — always via `tools/tina4pascal`
 
 Do NOT hand-run `xcodebuild` / `devicectl` / `pymobiledevice3` / `adb` — the CLI
