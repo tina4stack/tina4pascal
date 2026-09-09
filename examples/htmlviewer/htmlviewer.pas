@@ -335,8 +335,8 @@ begin
   if (OpenSelect = nil) or (RootBox = nil) then Exit;
   sb := FindBoxForTag(RootBox, OpenSelect);
   if sb = nil then Exit;
-  oh := 28;
-  oy := sb.Y + sb.H - ScrollY;
+  oh := 30;                          // must match the dropdown paint (30px rows, 4px gap)
+  oy := sb.Y + sb.H - ScrollY + 4;
   for opt in OpenSelect.Children do
   begin
     if not SameText(opt.TagName, 'option') then Continue;
@@ -361,6 +361,7 @@ end;
 procedure TViewer.Paint(Canvas: TTina4Canvas; W, H: Single);
 var
   maxScroll, thumbH, thumbY, oy, oh, ow: Single;
+  dropTop, dropR, dropH: Single;
   sb: TLayoutBox;
   opt: THTMLTag;
   txt, cur: string;
@@ -385,35 +386,45 @@ begin
   // a modal <dialog> (dialog.showModal) paints centred over a dimmed backdrop
   PaintModalOverlay(Canvas, RootBox, W, H);
 
-  // expanded dropdown paints last (top layer)
+  // expanded dropdown paints last (top layer): a rounded, soft-shadowed panel
+  // (matching the rounded select), rows clipped to the panel so the first/last
+  // highlight corners follow the radius; hover/selected rows tinted, no per-row
+  // hairlines. Radius follows the select's own border-radius.
   if OpenSelect <> nil then
   begin
     sb := FindBoxForTag(RootBox, OpenSelect);
     if sb <> nil then
     begin
-      oh := 28;
+      oh := 30;
       ow := Max(sb.W, 160);
-      oy := sb.Y + sb.H - ScrollY;
+      oy := sb.Y + sb.H - ScrollY + 4;                       // small gap under the select
+      dropTop := oy;
+      dropR := Max(6, Min(sb.Style.MaxCornerRadius, 12));    // match the select's rounding
+      dropH := CountOptions(OpenSelect) * oh;
       cur := OpenSelect.GetAttribute('value');
-      // drop shadow + panel
-      Canvas.FillRect(sb.X + 2, oy + 2, ow, CountOptions(OpenSelect) * oh, $22000000);
+      Canvas.FillSoftShadow(sb.X, oy + 3, ow, dropH, dropR, 14, $30151622);   // soft drop shadow
+      Canvas.SaveState;
+      Canvas.ClipRoundRect(sb.X, oy, ow, dropH, dropR);      // clip rows to the rounded panel
+      Canvas.FillRect(sb.X, oy, ow, dropH, $FFFFFFFF);
       for opt in OpenSelect.Children do
       begin
         if not SameText(opt.TagName, 'option') then Continue;
         txt := InnerText(opt);
         if (opt.GetAttribute('value', txt) = cur) or (txt = cur) then
-          Canvas.FillRect(sb.X, oy, ow, oh, $FF0D6EFD)   // selected row
-        else if (HoverOpt >= 0) and (HoverOpt = Round((oy - (sb.Y + sb.H - ScrollY)) / oh)) then
-          Canvas.FillRect(sb.X, oy, ow, oh, $FFEFF3FF)    // hovered row
+        begin
+          Canvas.FillRect(sb.X, oy, ow, oh, $FF2B41E6);      // selected row (Tina4 blue)
+          Canvas.DrawText(sb.X + 12, oy + 6, txt, 15, [], $FFFFFFFF);
+        end
         else
-          Canvas.FillRect(sb.X, oy, ow, oh, $FFFFFFFF);
-        Canvas.StrokeRect(sb.X, oy, ow, oh, 1, $FFD1D5DB);
-        if (opt.GetAttribute('value', txt) = cur) or (txt = cur) then
-          Canvas.DrawText(sb.X + 10, oy + 5, txt, 15, [], $FFFFFFFF)
-        else
-          Canvas.DrawText(sb.X + 10, oy + 5, txt, 15, [], $FF1F2937);
+        begin
+          if (HoverOpt >= 0) and (HoverOpt = Round((oy - dropTop) / oh)) then
+            Canvas.FillRect(sb.X, oy, ow, oh, $FFE4E8FF);    // hovered row (blue-soft)
+          Canvas.DrawText(sb.X + 12, oy + 6, txt, 15, [], $FF15162E);
+        end;
         oy := oy + oh;
       end;
+      Canvas.RestoreState;
+      Canvas.StrokeRoundRect(sb.X, dropTop, ow, dropH, dropR, 1, $FFE6E5F0);  // crisp outline on top
     end;
   end;
 
@@ -467,7 +478,7 @@ begin
     begin
       ho := -1;
       if (X >= sb.X) and (X <= sb.X + Max(sb.W, 160)) then
-        ho := Trunc((Y - (sb.Y + sb.H - ScrollY)) / 28);
+        ho := Trunc((Y - (sb.Y + sb.H - ScrollY + 4)) / 30);   // panel: 4px gap, 30px rows
       if (ho < 0) or (ho >= CountOptions(OpenSelect)) then ho := -1;
       if ho <> HoverOpt then begin HoverOpt := ho; Shell.Invalidate; end;
     end;
