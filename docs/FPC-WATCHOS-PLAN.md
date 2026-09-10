@@ -56,25 +56,50 @@ existing `iphonesim` target. Most bugs will be linker-flag / SDK-path issues.
 ## Phase 2 — physical watch (**arm64_32**)
 
 The real device needs `arm64_32`: the AArch64 instruction set with **32-bit
-pointers** (ILP32). FPC's aarch64 backend assumes 64-bit pointers throughout
-(`ptrsize=8`, PtrInt=Int64, ABI, stack layout), so this is genuine backend work.
-Two routes:
+pointers** (ILP32). Route A (FPC-LLVM) is the way — LLVM already supports
+`arm64_32-apple-watchos`, so LLVM does the codegen and we don't hand-write an
+ILP32 arm64 assembler.
 
-- **Route A — FPC-LLVM backend (recommended).** FPC's LLVM code generator emits
-  LLVM IR and lets LLVM do instruction selection. **LLVM already supports
-  `arm64_32-apple-watchos`** (that's how clang/Swift build watch apps). So the
-  work is: add the `arm64_32` sub-target to FPC-LLVM — the target triple, the
-  ILP32 `llvmdatalayout` (`p:32:32` on the arm64 base), and a `tsysteminfo` with
-  `ptrsize=4` — and let LLVM handle the ABI/codegen. This sidesteps writing an
-  ILP32 arm64 assembler by hand. It does require the FPC-LLVM toolchain and an
-  RTL built for ILP32 (careful with any code assuming `PtrInt=Int64`).
-- **Route B — internal aarch64 codegen.** Teach FPC's own aarch64 backend
-  (`compiler/aarch64/cgcpu.pas`, `cpupara.pas`, `aasmcpu.pas`, node CGs) a
-  32-bit-pointer mode. Deepest option: pointer size, calling convention, address
-  arithmetic, RTL type sizes. High effort, high risk. Only if avoiding LLVM.
+### Progress (verified this session)
 
-Risk: **high** either way; Route A is the lower-risk path because the hard
-codegen is LLVM's. Expect ILP32 RTL foot-guns (anything sizing a pointer as 8).
+- **M1 ✅ FPC-LLVM builds and runs on this host.** A clean `make compiler LLVM=1`
+  built a working LLVM-backed `ppca64` (442,068 lines vs 413,588 native — the
+  delta is the LLVM backend); it answers `-il` with the LLVM/Xcode version list
+  and carries the `-Cl…` LLVM codegen flags. The "does the less-travelled LLVM
+  path even build here" gate is passed. Apple's side was never in doubt: `clang
+  -target arm64_32-apple-watchos` emits a real `arm64_32 · platform WATCHOS`
+  object here.
+- **M2 finding — the real crux, and it's deeper than "a `tsysteminfo` with
+  `ptrsize=4`."** Pointer size on aarch64 is **compile-time**, not a per-target
+  runtime value: `compiler/fpcdefs.inc` unconditionally `{$define cpu64bitaddr}`
+  for `aarch64` (line ~343), and `compiler/aarch64/cpubase.pas` hardcodes
+  `OS_ADDR = OS_64`. So a single aarch64 compiler binary is **always** LP64 — no
+  target record can make it emit 32-bit pointers. **The good news:** FPC already
+  separates `cpu64bitalu` (64-bit registers) from `cpu64bitaddr` (64-bit
+  pointers), which is exactly arm64_32's shape (64-bit ALU, 32-bit ptrs) — so the
+  model *can* express it. **The catch:** no shipping FPC CPU uses
+  `cpu64bitalu` **without** `cpu64bitaddr`, so arm64_32 would be the first — a
+  **novel CPU-ABI variant**, not a config tweak.
+
+### What M2 actually requires
+
+A new AArch64 **ILP32 build variant** (call it `aarch64_ilp32`):
+1. An `fpcdefs.inc` path that defines `cpu64bitalu` but **not** `cpu64bitaddr`,
+   and an `OS_ADDR = OS_32` for it → a **separately-built** compiler binary
+   (LP64 and ILP32 can't be the same `ppca64`).
+2. A `tsysteminfo` for `arm64_32-apple-watchos`: `ptrsize=4`, the ILP32
+   `llvmdatalayout` (`…-p:32:32-i64:64-…-n32:64-S128`), watchOS platform (4).
+3. An audit of every `{$ifdef cpu64bitaddr}` path and the aarch64 backend for
+   ILP32 correctness (much of the codegen is delegated to LLVM, which lowers the
+   risk, but the frontend size/alignment model and the RTL must be clean).
+4. RTL + engine built through FPC-LLVM for the target; link with Apple's `ld`
+   (`-platform_version watchos …`), which already accepts arm64_32.
+
+Risk: **high but bounded** — LLVM owns the hard instruction selection; the work
+is a first-of-its-kind ILP32-on-AArch64 frontend variant plus RTL foot-guns
+(anything assuming `PtrInt=Int64`). Realistically a multi-week focused effort and
+a genuine upstream-FPC-scale contribution — not a config change. Route B (teach
+the internal aarch64 assembler ILP32) is strictly worse; don't.
 
 ## Effort & sequencing
 
