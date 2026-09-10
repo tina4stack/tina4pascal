@@ -1,59 +1,43 @@
 import Foundation
 import SwiftUI
-import WatchConnectivity
 
-// Receives engine-rendered frames from the paired iPhone over WatchConnectivity
-// and forwards taps back. The phone runs the Tina4 engine, renders the watch
-// HTML to RGBA -> JPEG, and sends it here; we never render HTML on the watch
-// (FPC has no watchOS slice — see docs/WATCH.md).
-final class StreamModel: NSObject, ObservableObject, WCSessionDelegate {
+// The watch is a thin display: it polls engine-rendered frames from the Mac
+// render server (examples/watch/watch_server.py) and posts taps back. The Mac
+// runs the Tina4 engine and renders the watch HTML at the watch's exact pixel
+// resolution, so the frame IS the screen — 1:1, no scaling guesswork. On device
+// this transport becomes WatchConnectivity from the paired iPhone; in the
+// simulator, localhost reaches the Mac host directly.
+final class StreamModel: NSObject, ObservableObject {
     static let shared = StreamModel()
 
-    @Published var frame: UIImage?      // latest frame from the phone
-    @Published var reachable = false
-
-    private var session: WCSession?
+    @Published var frame: UIImage?
+    // 127.0.0.1 from the watch simulator reaches the Mac host.
+    private let base = "http://127.0.0.1:8723"
+    private var timer: Timer?
 
     override init() {
         super.init()
-        // Show a bundled demo frame at launch (an engine-rendered PNG) until the
-        // phone starts streaming live frames — so the app is meaningful stand-alone.
+        // bundled first frame until the stream connects
         if let url = Bundle.main.url(forResource: "demo", withExtension: "png"),
-           let data = try? Data(contentsOf: url) {
-            frame = UIImage(data: data)
+           let d = try? Data(contentsOf: url) { frame = UIImage(data: d) }
+        timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            self?.fetch()
         }
-        guard WCSession.isSupported() else { return }
-        let s = WCSession.default
-        s.delegate = self
-        s.activate()
-        session = s
+        fetch()
     }
 
-    // The wrist tapped at (x,y) in points — forward to the phone so its engine
-    // dispatches the tap and pushes the next frame.
+    func fetch() {
+        guard let u = URL(string: base + "/frame") else { return }
+        URLSession.shared.dataTask(with: u) { [weak self] data, _, _ in
+            guard let data = data, let img = UIImage(data: data) else { return }
+            DispatchQueue.main.async { self?.frame = img }
+        }.resume()
+    }
+
+    // A tap on the wrist → post to the Mac; its engine re-renders (the wink) and
+    // the next polled frame shows it.
     func sendTap(x: CGFloat, y: CGFloat) {
-        guard let s = session, s.isReachable else { return }
-        s.sendMessage(["tapX": Double(x), "tapY": Double(y)],
-                      replyHandler: nil, errorHandler: nil)
-    }
-
-    // MARK: WCSessionDelegate
-    func session(_ s: WCSession, activationDidCompleteWith state: WCSessionActivationState, error: Error?) {
-        DispatchQueue.main.async { self.reachable = s.isReachable }
-    }
-    func sessionReachabilityDidChange(_ s: WCSession) {
-        DispatchQueue.main.async { self.reachable = s.isReachable }
-    }
-    // A frame pushed as raw JPEG/PNG bytes.
-    func session(_ s: WCSession, didReceiveMessageData data: Data) {
-        if let img = UIImage(data: data) {
-            DispatchQueue.main.async { self.frame = img }
-        }
-    }
-    // Or as a keyed message carrying the image under "frame".
-    func session(_ s: WCSession, didReceiveMessage message: [String : Any]) {
-        if let data = message["frame"] as? Data, let img = UIImage(data: data) {
-            DispatchQueue.main.async { self.frame = img }
-        }
+        guard let u = URL(string: base + "/tap?x=\(Int(x))&y=\(Int(y))") else { return }
+        URLSession.shared.dataTask(with: u) { [weak self] _, _, _ in self?.fetch() }.resume()
     }
 }

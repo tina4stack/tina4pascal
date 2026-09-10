@@ -14,33 +14,27 @@ struct StreamView: View {
     @EnvironmentObject var model: StreamModel
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                Color.black.ignoresSafeArea()
-                if let img = model.frame {
-                    // the engine-rendered frame from the phone, filling the wrist
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFill()
-                        .ignoresSafeArea()
-                } else {
-                    // before the first frame arrives
-                    VStack(spacing: 6) {
-                        Image(systemName: "waveform")
-                            .font(.system(size: 30, weight: .semibold))
-                            .foregroundStyle(.blue)
-                        Text(model.reachable ? "Waiting for phone…" : "Open Tina4 on iPhone")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding()
+        ZStack {
+            Color.black
+            if let img = model.frame {
+                // the engine-rendered frame, filling the whole watch 1:1
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                VStack(spacing: 6) {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 30, weight: .semibold))
+                        .foregroundStyle(.blue)
+                    Text("Connecting to Tina4…")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
-            // a tap on the wrist is forwarded to the phone's engine (in points)
-            .contentShape(Rectangle())
-            .onTapGesture { loc in model.sendTap(x: loc.x, y: loc.y) }
-            .frame(width: geo.size.width, height: geo.size.height)
         }
+        .ignoresSafeArea()
+        // any tap on the wrist → the Mac engine winks and pushes the next frame
+        .contentShape(Rectangle())
+        .onTapGesture { model.sendTap(x: 0, y: 0) }
     }
 }

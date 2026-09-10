@@ -1,0 +1,4 @@
+{
+  "images": [ { "idiom": "universal", "platform": "watchos", "size": "1024x1024", "filename": "icon1024.png" } ],
+  "info": { "author": "xcode", "version": 1 }
+}
