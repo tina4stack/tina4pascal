@@ -100,7 +100,7 @@ final class EngineModel: ObservableObject {
           \(line(date, topTop, topFS, "#9698b4"))
           \(line(hhmm, bigTop, bigFS, accent))
           \(line(ss, secTop, secFS, "#7d8cff"))
-          \(line("TINA4 WATCH", brandTop, brandFS, "#2b41e6"))
+          \(line("tina watch", brandTop, brandFS, "#2b41e6"))
         </body>
         """
     }

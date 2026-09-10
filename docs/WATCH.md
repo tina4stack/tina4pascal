@@ -48,8 +48,9 @@ draws digits + `:` `.` `-` with a 7-segment font (AA-filled segments) and letter
 A-Z + common punctuation with a stroke (vector) font (AA polylines) — both scale
 crisply. The demo is a live clock (`HH:MM`, seconds, weekday + date, a brand
 label), re-rendered every second — engine-laid-out and rasterized on the watch.
-Lowercase renders as small-caps (mapped to A-Z); a distinct lowercase set is the
-remaining refinement.
+Uppercase and **lowercase** both have distinct glyphs (lowercase with real
+x-height, ascenders and descenders). No bitmap font ships — every glyph is drawn
+from strokes/segments, so text is resolution-independent.
 
 Requires the patched toolchain at `~/fpc-watchos` (or `TINA4_WATCHOS_FPC`); build
 it from [fpc-watchossim.diff](fpc-watchossim.diff). `tools/tina4pascal doctor`
