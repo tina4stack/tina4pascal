@@ -72,19 +72,24 @@ final class EngineModel: ObservableObject {
     private func clock(w: Int, h: Int, accentPink: Bool) -> String {
         let now = Date()
         let cal = Calendar.current
-        let c = cal.dateComponents([.hour, .minute, .second, .month, .day], from: now)
+        let c = cal.dateComponents([.hour, .minute, .second, .month, .day, .weekday], from: now)
         func p2(_ v: Int) -> String { String(format: "%02d", v) }
         let hhmm = "\(p2(c.hour ?? 0)):\(p2(c.minute ?? 0))"
         let ss = p2(c.second ?? 0)
-        let date = "\(p2(c.month ?? 0))-\(p2(c.day ?? 0))"
+        // weekday + date, all rendered by the engine's raster letter/number font
+        let days = ["", "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
+        let dow = days[(c.weekday ?? 1)]
+        let date = "\(dow) \(p2(c.month ?? 0))-\(p2(c.day ?? 0))"
         let accent = accentPink ? "#ff5aa0" : "#ffd23c"
 
         let bigFS = Int(Double(h) * 0.26)
-        let bigTop = Int(Double(h) * 0.28)
+        let bigTop = Int(Double(h) * 0.30)
         let secFS = Int(Double(h) * 0.13)
         let secTop = bigTop + bigFS + Int(Double(h) * 0.03)
-        let dateFS = Int(Double(h) * 0.10)
-        let dateTop = Int(Double(h) * 0.06)
+        let topFS = Int(Double(h) * 0.10)
+        let topTop = Int(Double(h) * 0.07)
+        let brandFS = Int(Double(h) * 0.09)
+        let brandTop = h - Int(Double(h) * 0.05) - brandFS
 
         func line(_ txt: String, _ top: Int, _ fs: Int, _ col: String) -> String {
             "<div style=\"position:absolute;left:0px;top:\(top)px;width:\(w)px;text-align:center;"
@@ -92,9 +97,10 @@ final class EngineModel: ObservableObject {
         }
         return """
         <body style="margin:0;width:\(w)px;height:\(h)px;background:#0e0f1f">
-          \(line(date, dateTop, dateFS, "#5b5c78"))
+          \(line(date, topTop, topFS, "#9698b4"))
           \(line(hhmm, bigTop, bigFS, accent))
           \(line(ss, secTop, secFS, "#7d8cff"))
+          \(line("TINA4 WATCH", brandTop, brandFS, "#2b41e6"))
         </body>
         """
     }

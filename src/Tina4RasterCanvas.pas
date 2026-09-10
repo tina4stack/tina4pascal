@@ -408,12 +408,12 @@ begin
   Result.LineHeight := FontSize;
 end;
 
-{ Native raster text — first glyph set: a 7-segment NUMERIC font (0-9 : . -),
-  the natural fit for a watch clock / any numeric display, drawn as AA-filled
-  segments so it scales crisply. (X,Y) is the text box top-left and advances come
-  from AsciiEm, so it lines up with MeasureText and the layout. Letters advance
-  but don't draw yet — a full vector font is the follow-up; until then the raster
-  path (watch, headless) renders numbers, not prose. }
+{ Native raster text. Digits + ':' '.' '-' use a 7-segment font (AA-filled
+  segments — the clean look for a clock/numeric display); letters A-Z and common
+  punctuation use a stroke (vector) font drawn with the AA polyline stroker, so
+  both stay smooth at any size. (X,Y) is the text box top-left and advances come
+  from AsciiEm, so it lines up with MeasureText and the layout. Lowercase renders
+  as small-caps (mapped to A-Z); a distinct lowercase set is a later refinement. }
 procedure TTina4RasterCanvas.DrawText(X, Y: Single; const Text: string;
   FontSize: Single; Styles: TTina4FontStyles; Color: TTina4Color);
 const
@@ -437,6 +437,78 @@ var
     if (mask and 2)  <> 0 then VSeg(R, T, M);
     if (mask and 16) <> 0 then VSeg(L, M, B);
     if (mask and 4)  <> 0 then VSeg(R, M, B);
+  end;
+
+  { --- stroke (vector) font: letters + punctuation, normalised [0..1] within the
+    glyph box, drawn with the AA polyline stroker so it stays smooth at any size.
+    x→right, y→down (0 = cap top, 1 = baseline). --- }
+  procedure Stroke(const P: array of Single);
+  var pl: TTina4PointArray; k, m: Integer;
+  begin
+    m := Length(P) div 2;
+    if m < 2 then Exit;
+    SetLength(pl, m);
+    for k := 0 to m - 1 do
+    begin
+      pl[k].X := L + P[2 * k]     * (R - L);
+      pl[k].Y := T + P[2 * k + 1] * (B - T);
+    end;
+    StrokePolyline(pl, th, Color, False);
+  end;
+  procedure PDot(nx, ny: Single);
+  var r: Single;
+  begin
+    r := th * 0.62;
+    FillRect(L + nx * (R - L) - r, T + ny * (B - T) - r, 2 * r, 2 * r, Color);
+  end;
+  procedure Letter(c: Char);
+  begin
+    case c of
+      'A': begin Stroke([0.0,1.0, 0.5,0.0, 1.0,1.0]); Stroke([0.2,0.62, 0.8,0.62]); end;
+      'B': begin Stroke([0.0,0.0, 0.0,1.0]);
+             Stroke([0.0,0.0, 0.6,0.0, 0.85,0.16, 0.85,0.34, 0.6,0.5, 0.0,0.5]);
+             Stroke([0.0,0.5, 0.65,0.5, 0.9,0.67, 0.9,0.83, 0.65,1.0, 0.0,1.0]); end;
+      'C': Stroke([0.95,0.22, 0.7,0.03, 0.35,0.03, 0.1,0.2, 0.0,0.5, 0.1,0.8, 0.35,0.97, 0.7,0.97, 0.95,0.78]);
+      'D': begin Stroke([0.0,0.0, 0.0,1.0]);
+             Stroke([0.0,0.0, 0.5,0.0, 0.88,0.25, 0.88,0.75, 0.5,1.0, 0.0,1.0]); end;
+      'E': begin Stroke([1.0,0.0, 0.0,0.0, 0.0,1.0, 1.0,1.0]); Stroke([0.0,0.5, 0.75,0.5]); end;
+      'F': begin Stroke([1.0,0.0, 0.0,0.0, 0.0,1.0]); Stroke([0.0,0.5, 0.7,0.5]); end;
+      'G': Stroke([0.95,0.22, 0.7,0.03, 0.35,0.03, 0.1,0.2, 0.0,0.5, 0.1,0.8, 0.35,0.97, 0.7,0.97, 0.95,0.78, 0.95,0.55, 0.6,0.55]);
+      'H': begin Stroke([0.0,0.0, 0.0,1.0]); Stroke([1.0,0.0, 1.0,1.0]); Stroke([0.0,0.5, 1.0,0.5]); end;
+      'I': begin Stroke([0.5,0.0, 0.5,1.0]); Stroke([0.22,0.0, 0.78,0.0]); Stroke([0.22,1.0, 0.78,1.0]); end;
+      'J': Stroke([0.85,0.0, 0.85,0.75, 0.68,0.97, 0.4,0.97, 0.18,0.78]);
+      'K': begin Stroke([0.0,0.0, 0.0,1.0]); Stroke([0.95,0.0, 0.05,0.55]); Stroke([0.35,0.42, 0.95,1.0]); end;
+      'L': Stroke([0.0,0.0, 0.0,1.0, 0.9,1.0]);
+      'M': Stroke([0.0,1.0, 0.0,0.0, 0.5,0.55, 1.0,0.0, 1.0,1.0]);
+      'N': Stroke([0.0,1.0, 0.0,0.0, 1.0,1.0, 1.0,0.0]);
+      'O': Stroke([0.5,0.02, 0.83,0.18, 0.97,0.5, 0.83,0.82, 0.5,0.98, 0.17,0.82, 0.03,0.5, 0.17,0.18, 0.5,0.02]);
+      'P': Stroke([0.0,1.0, 0.0,0.0, 0.6,0.0, 0.88,0.18, 0.88,0.36, 0.6,0.54, 0.0,0.54]);
+      'Q': begin Stroke([0.5,0.02, 0.83,0.18, 0.97,0.5, 0.83,0.82, 0.5,0.98, 0.17,0.82, 0.03,0.5, 0.17,0.18, 0.5,0.02]);
+             Stroke([0.6,0.68, 0.98,1.05]); end;
+      'R': begin Stroke([0.0,1.0, 0.0,0.0, 0.6,0.0, 0.88,0.18, 0.88,0.36, 0.6,0.54, 0.0,0.54]);
+             Stroke([0.45,0.54, 0.95,1.0]); end;
+      'S': Stroke([0.92,0.2, 0.68,0.03, 0.32,0.03, 0.1,0.2, 0.12,0.4, 0.45,0.5, 0.75,0.58, 0.9,0.76, 0.68,0.97, 0.3,0.97, 0.08,0.8]);
+      'T': begin Stroke([0.0,0.0, 1.0,0.0]); Stroke([0.5,0.0, 0.5,1.0]); end;
+      'U': Stroke([0.0,0.0, 0.0,0.68, 0.2,0.93, 0.5,0.99, 0.8,0.93, 1.0,0.68, 1.0,0.0]);
+      'V': Stroke([0.0,0.0, 0.5,1.0, 1.0,0.0]);
+      'W': Stroke([0.0,0.0, 0.25,1.0, 0.5,0.45, 0.75,1.0, 1.0,0.0]);
+      'X': begin Stroke([0.0,0.0, 1.0,1.0]); Stroke([1.0,0.0, 0.0,1.0]); end;
+      'Y': begin Stroke([0.0,0.0, 0.5,0.5, 1.0,0.0]); Stroke([0.5,0.5, 0.5,1.0]); end;
+      'Z': Stroke([0.0,0.0, 1.0,0.0, 0.0,1.0, 1.0,1.0]);
+      ',': Stroke([0.55,0.86, 0.38,1.06]);
+      '!': begin Stroke([0.5,0.0, 0.5,0.66]); PDot(0.5, 0.92); end;
+      '?': begin Stroke([0.08,0.22, 0.5,0.02, 0.9,0.22, 0.5,0.5, 0.5,0.66]); PDot(0.5, 0.92); end;
+      '''': Stroke([0.5,0.0, 0.4,0.24]);
+      '"': begin Stroke([0.35,0.0, 0.27,0.22]); Stroke([0.62,0.0, 0.54,0.22]); end;
+      '/': Stroke([0.9,0.0, 0.1,1.0]);
+      '\': Stroke([0.1,0.0, 0.9,1.0]);
+      '(': Stroke([0.68,0.0, 0.32,0.3, 0.32,0.7, 0.68,1.0]);
+      ')': Stroke([0.32,0.0, 0.68,0.3, 0.68,0.7, 0.32,1.0]);
+      '+': begin Stroke([0.5,0.26, 0.5,0.74]); Stroke([0.2,0.5, 0.8,0.5]); end;
+      '=': begin Stroke([0.15,0.4, 0.85,0.4]); Stroke([0.15,0.62, 0.85,0.62]); end;
+      '%': begin Stroke([0.9,0.08, 0.1,0.92]); PDot(0.24, 0.24); PDot(0.76, 0.78); end;
+      '*': begin Stroke([0.5,0.1, 0.5,0.6]); Stroke([0.24,0.2, 0.76,0.5]); Stroke([0.76,0.2, 0.24,0.5]); end;
+    end;
   end;
 begin
   if Text = '' then Exit;
@@ -470,8 +542,9 @@ begin
     else if ch = '.' then
       FillRect(cx - dot / 2, B - dot, dot, dot, Color)
     else if ch = '-' then
-      HSeg(M);
-    // space / letters: advance only for now
+      HSeg(M)
+    else
+      Letter(UpCase(ch));   // A-Z (small-caps for a-z) + punctuation; space/unknown: nothing
     pen := pen + adv;
   end;
 end;
