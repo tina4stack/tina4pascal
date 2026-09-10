@@ -1,0 +1,34 @@
+name: Tina4WatchMirror
+options:
+  bundleIdPrefix: com.tina4.pascal
+  deploymentTarget:
+    watchOS: "10.0"
+targets:
+  Tina4WatchMirror:
+    type: application
+    platform: watchOS
+    # Swift-only mirror (no engine lib) so it builds for the PHYSICAL watch
+    # (arm64_32). Reuses StreamModel from the native app's sources.
+    sources:
+      - Mirror
+      - path: Tina4Watch/StreamModel.swift
+    info:
+      path: Mirror/Info.plist
+      properties:
+        WKApplication: true
+        WKWatchOnly: true
+        CFBundleDisplayName: Tina4 Mirror
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # the Mac running examples/watch/watch_server_raster.py (same WiFi)
+        Tina4ServerHost: "192.168.0.134"
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tina4.pascal.watchmirror
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "4"
+        DEVELOPMENT_TEAM: "5CSH5U4F8F"
