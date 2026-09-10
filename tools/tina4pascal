@@ -391,8 +391,9 @@ build_project() {
   main="$(jget main app.pas)"
   [ -f "$PWD/$main" ] || die "entry point '$main' not found (set \"main\" in tina4.json)"
   case "$target" in
-    android) build_project_android; return ;;
-    ios)     build_project_ios; return ;;
+    android)     build_project_android; return ;;
+    wear)        TINA4_WEAR=1 build_project_android; return ;;   # Wear OS = Android + watch manifest
+    ios)         build_project_ios; return ;;
   esac
   flags="$(target_flags "$target")" || die "unknown target '$target'"
   need_fpc
@@ -551,6 +552,25 @@ proj_android_build() {
       -e 's#android:name="\.MainActivity"#android:name="com.tina4.pascal.MainActivity"#' \
       -e "s#android:label=\"[^\"]*\"#android:label=\"$title\"#" \
       "$APPDIR/AndroidManifest.xml" > "$aout/AndroidManifest.xml"
+  # Wear OS variant (TINA4_WEAR, from `build wear`/`deploy wear`): declare the
+  # watch hardware feature + the standalone flag so the APK installs on a Wear OS
+  # watch and needs no phone companion. It is the SAME libtina4.so / engine — the
+  # watch just renders the (watch-sized) HTML, per the agnostic-engineer rule.
+  if [ -n "${TINA4_WEAR:-}" ]; then
+    pybin="$(command -v python3 || command -v python || true)"
+    [ -n "$pybin" ] && "$pybin" - "$aout/AndroidManifest.xml" <<'PYEOF'
+import sys
+f = sys.argv[1]; s = open(f).read()
+if 'hardware.type.watch' not in s:
+    s = s.replace('<application',
+        '<uses-feature android:name="android.hardware.type.watch" android:required="true" />\n    <application', 1)
+if 'wearable.standalone' not in s:
+    s = s.replace('</application>',
+        '    <meta-data android:name="com.google.android.wearable.standalone" android:value="true" />\n    </application>', 1)
+open(f, 'w').write(s)
+PYEOF
+    say "  ${D}Wear OS manifest (watch feature + standalone, no phone companion)${Z}"
+  fi
   # `release android` sets TINA4_AAB → build a Play-ready signed .aab instead.
   [ -n "${TINA4_AAB:-}" ] && { proj_android_aab; return; }
   "$BT/aapt2" link -o "$aout/base.apk" -I "$ANDROID_JAR" \
@@ -568,22 +588,23 @@ proj_android_build() {
   "$BT/zipalign" -f -p 4 "$aout/base.apk" "$aout/aligned.apk" || die "zipalign failed"
 
   # 7. sign: release from env (secret), else the project's committable debug key
-  apk="$work/$name.apk"
+  wsuf=""; [ -n "${TINA4_WEAR:-}" ] && wsuf="-wear"    # Wear APK sits beside the phone one
+  apk="$work/$name$wsuf.apk"
   if [ -n "${TINA4_KEYSTORE:-}" ]; then
     : "${TINA4_KEY_ALIAS:?set TINA4_KEY_ALIAS for release signing}"
     : "${TINA4_KS_PASS:?set TINA4_KS_PASS for release signing}"
     "$BT/apksigner" sign --ks "$TINA4_KEYSTORE" --ks-pass "pass:$TINA4_KS_PASS" \
       --ks-key-alias "$TINA4_KEY_ALIAS" --key-pass "pass:${TINA4_KEY_PASS:-$TINA4_KS_PASS}" \
       --out "$apk" "$aout/aligned.apk" || die "release signing failed"
-    ok "APK (RELEASE-signed) → build/android/$name.apk"
+    ok "${wsuf:+Wear }APK (RELEASE-signed) → build/android/$name$wsuf.apk"
   else
     ks="$PWD/signing/debug.keystore"; [ -f "$ks" ] || ks="$ROOT/android/debug.keystore"
     "$BT/apksigner" sign --ks "$ks" --ks-pass pass:android --key-pass pass:android \
       --out "$apk" "$aout/aligned.apk" || die "debug signing failed"
-    ok "APK (debug-signed) → build/android/$name.apk"
+    ok "${wsuf:+Wear }APK (debug-signed) → build/android/$name$wsuf.apk"
   fi
   say "  applicationId ${D}$bundle${Z}"
-  say "  install:  ${D}adb install -r \"$apk\"${Z}"
+  say "  install:  ${D}adb install -r \"$apk\"${Z}${wsuf:+   (pair/adb to a Wear OS watch or emulator)}"
   say "  launch:   ${D}adb shell am start -n $bundle/com.tina4.pascal.MainActivity${Z}"
 }
 # bundletool jar: env → ~/.tina4/bin → download (Play's AAB assembler is a jar).
@@ -1197,24 +1218,26 @@ proj_win_release() {
   fi
 }
 
-# deploy <android|ios|macos> for a scaffolded project — build + install + launch.
+# deploy <android|wear|ios|macos> for a scaffolded project — build + install + launch.
 proj_deploy() {
   case "${1:-android}" in
     android) proj_android_deploy ;;
+    wear)    TINA4_WEAR=1 proj_android_deploy ;;   # to a Wear OS watch / emulator
     ios)     proj_ios_deploy ;;
     macos)   run_project macos ;;
-    *) die "deploy <android|ios|macos>" ;;
+    *) die "deploy <android|wear|ios|macos>" ;;
   esac
 }
 
 proj_android_deploy() {
   adb="$(command -v adb || echo "$ANDROID_SDK/platform-tools/adb")"
   [ -x "$adb" ] || command -v adb >/dev/null 2>&1 || die "adb not found — tina4pascal setup android"
-  [ "$("$adb" devices 2>/dev/null | grep -cw device)" -gt 0 ] || die "no device/emulator (adb devices)"
-  build_project android                        # builds build/android/<name>.apk (clobbers name/out)
+  [ "$("$adb" devices 2>/dev/null | grep -cw device)" -gt 0 ] || die "no device/emulator (adb devices — a Wear OS AVD counts)"
+  build_project android                        # TINA4_WEAR (if set) carries into the manifest
   name="$(jget name "$(basename "$PWD")")"; bundle="$(jget bundleId "com.tina4.$name")"
-  say "→ installing $name.apk…"
-  "$adb" install -r "$PWD/build/android/$name.apk" >/dev/null || die "install failed"
+  wsuf=""; [ -n "${TINA4_WEAR:-}" ] && wsuf="-wear"
+  say "→ installing $name$wsuf.apk…"
+  "$adb" install -r "$PWD/build/android/$name$wsuf.apk" >/dev/null || die "install failed"
   "$adb" shell am start -n "$bundle/com.tina4.pascal.MainActivity" >/dev/null 2>&1
   ok "installed + launched $bundle on device"
 }
@@ -1575,6 +1598,10 @@ ${B}deploy & run${Z}  (targets: android · ios · macos · win64 · linux)
 ${B}release signing${Z}  (Android)
   keygen [out.jks] [alias]   create a release keystore (one-time; keep it safe)
   release                    build a release-SIGNED APK (reference app)
+
+${B}Wear OS${Z}  (inside a project dir — the engine renders HTML on the watch)
+  build wear                 Wear OS APK (Android + watch manifest, standalone)
+  deploy wear                build + install + launch on a Wear OS watch / emulator
 
 ${B}store builds${Z}  (inside a project dir)
   build android|ios          debug APK / unsigned device .app (compile+link check)
