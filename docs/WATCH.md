@@ -18,12 +18,36 @@ tools/tina4pascal deploy wear     # install/launch on a Wear OS watch or emulato
 The engine renders your (watch-sized) HTML on the wrist directly. Give it a watch
 layout — see `examples/watch/glance.html`.
 
-## Apple Watch — phone renders, watch displays (the "iOS watch stream")
+## Apple Watch (Simulator) — native engine (`build watchsim`)
 
-FPC 3.2.2 has **no watchOS slice** (`fpc -i` targets: Android, Darwin, Linux,
-iOS), so the Pascal engine can't compile a native watchOS binary. But it doesn't
-need to. The pipeline keeps HTML as the single source and runs the engine on the
-**paired iPhone**:
+Stock FPC 3.2.2 has no watchOS slice, but we **added one**: a patched FPC with the
+`aarch64-watchossim` target (built + tested — a Pascal program runs on the watch
+sim; see [fpc-watchos-patch.md](fpc-watchos-patch.md)). With it, the engine
+compiles for the watchOS **Simulator** and renders HTML on the watch itself — no
+phone in the loop:
+
+```sh
+tools/tina4pascal build watchsim   # → watch/app/libtina4watch.a (arm64 watchOS-sim)
+```
+
+Because the watch has no UIKit/Core Text canvas, this path uses the **pure-Pascal
+software rasterizer** (`Tina4RasterCanvas`): the shared `Tina4Interact` engine
+paints the DOM to an RGBA buffer and the WatchKit host blits it. Same HTML, same
+events, same engine as every other platform — "the watch renders HTML, Pascal is
+the language." The C entry points the Swift app links are `tina4watch_init`,
+`tina4watch_set_html`, `tina4watch_render` (returns the RGBA buffer) and
+`tina4watch_touch` (see [watch/tina4watch.pas](../watch/tina4watch.pas)).
+
+Requires the patched toolchain at `~/fpc-watchos` (or `TINA4_WATCHOS_FPC`); build
+it from [fpc-watchossim.diff](fpc-watchossim.diff). `tools/tina4pascal doctor`
+reports whether it's installed. The **physical** Apple Watch is `arm64_32` (ILP32)
+— a separate FPC backend (phase 2, [FPC-WATCHOS-PLAN.md](FPC-WATCHOS-PLAN.md)); for
+the physical watch today, use the phone-renders mirror below.
+
+## Apple Watch (physical) — phone renders, watch displays (the "iOS watch stream")
+
+The physical watch has no FPC slice yet (`arm64_32`, phase 2), so the pipeline
+keeps HTML as the single source and runs the engine on the **paired iPhone**:
 
 ```
 iPhone (Tina4 engine)                         Apple Watch (thin Swift host)

@@ -120,10 +120,15 @@ target_flags() {
     linux-arm64)    echo "-Tlinux -Paarch64" ;;
     android)        echo "-Tandroid -Paarch64" ;;
     ios)            echo "-Tios -Paarch64" ;;
+    watchsim)       echo "-Twatchossim -Paarch64" ;;   # patched FPC (docs/fpc-watchos-patch.md)
     *) return 1 ;;
   esac
 }
 ALL_TARGETS="macos windows linux linux-arm64 android ios"
+
+# The watchOS-Simulator target needs the PATCHED FPC (aarch64-watchossim), a
+# separate prefix from ~/fpc. Where the CLI looks for it.
+WATCHOS_FPC="${TINA4_WATCHOS_FPC:-$HOME/fpc-watchos}"
 
 need_fpc() { [ -x "$FPC" ] || die "FPC not found at $FPC — run: tina4pascal setup fpc"; }
 
@@ -159,6 +164,14 @@ cmd_doctor() {
   u="$(ios_udid)"
   [ -n "$u" ] && ok "device ${D}$u${Z}" || warn "no iOS device attached (idevice_id / devicectl)"
   { [ -x "$PMD3" ] || command -v pymobiledevice3 >/dev/null 2>&1; } && ok "pymobiledevice3 (device screenshots)" || warn "pymobiledevice3 missing → tina4pascal setup ios"
+  say ""
+  say "${B}Apple Watch (watchOS-sim)${Z}"
+  if [ -x "$WATCHOS_FPC/bin/ppca64" ] && [ -f "$WATCHOS_FPC/units/aarch64-watchossim/system.ppu" ]; then
+    ok "patched FPC $("$WATCHOS_FPC/bin/ppca64" -iV 2>/dev/null) + watchossim RTL   ${D}$WATCHOS_FPC${Z}"
+    ok "  build watchsim → libtina4watch.a (engine renders HTML on the watch)"
+  else
+    warn "patched watchOS FPC missing → build from docs/fpc-watchos-patch.md (git apply docs/fpc-watchossim.diff), or set TINA4_WATCHOS_FPC"
+  fi
   say ""
   say "${B}Java${Z}"
   command -v java >/dev/null 2>&1 && ok "$(java -version 2>&1 | head -1)" || warn "java missing (needed to package APKs)"
@@ -394,6 +407,7 @@ build_project() {
     android)     build_project_android; return ;;
     wear)        TINA4_WEAR=1 build_project_android; return ;;   # Wear OS = Android + watch manifest
     ios)         build_project_ios; return ;;
+    watchsim)    build_project_watch; return ;;   # Apple Watch: engine renders HTML natively (libtina4watch.a)
   esac
   flags="$(target_flags "$target")" || die "unknown target '$target'"
   need_fpc
@@ -782,6 +796,41 @@ PLIST
 }
 build_project_android() { proj_android_build "$@"; }
 build_project_ios()     { proj_ios_build "$@"; }
+build_project_watch()   { proj_watch_build "$@"; }
+
+# `build watchsim` — compile the Tina4 engine to libtina4watch.a for the watchOS
+# SIMULATOR (arm64). Unlike iOS (UIKit/Core Text), the watch has no native
+# canvas, so the engine renders HTML with the pure-Pascal software rasterizer
+# (Tina4RasterCanvas) and the WatchKit host blits the RGBA — "the watch renders
+# HTML, Pascal is the language." Needs the patched FPC with the aarch64-watchossim
+# target (docs/fpc-watchos-patch.md); the physical watch (arm64_32) is phase 2.
+proj_watch_build() {
+  whost="$ROOT/watch"
+  [ -f "$whost/tina4watch.pas" ] || die "watch engine shell missing ($whost/tina4watch.pas)"
+  if [ ! -x "$WATCHOS_FPC/bin/ppca64" ] || [ ! -f "$WATCHOS_FPC/units/aarch64-watchossim/system.ppu" ]; then
+    die "patched watchOS FPC not found at $WATCHOS_FPC
+  the watchOS-Simulator target isn't in stock FPC 3.2.2 — build & install it from
+  docs/fpc-watchos-patch.md (git apply docs/fpc-watchossim.diff), or point
+  TINA4_WATCHOS_FPC at your prefix. See also docs/WATCH.md."
+  fi
+  # project app-units (tina4.json "appUnits") → the staged app_units.inc, spliced
+  # into tina4watch.pas's uses so a project's Pascal actions ship in the lib.
+  wappinc=""; wappdirs=""
+  for u in $(jget_list appUnits); do wappinc="$wappinc, $u"; done
+  printf '%s' "$wappinc" > "$whost/app_units.inc"
+  for d in "$PWD" "$PWD/src" "$PWD/src/app" "$PWD/src/services"; do
+    [ -d "$d" ] && wappdirs="$wappdirs -Fu$d"
+  done
+  say "→ building watchOS engine (libtina4watch.a) for the Simulator…"
+  TINA4_WATCHOS_FPC="$WATCHOS_FPC" TINA4_SRC="$ROOT/src" \
+    TINA4_APP_UNIT_DIRS="$wappdirs" sh "$whost/build.sh" >/dev/null 2>&1 \
+    || die "watch engine build failed — rerun to see errors: TINA4_WATCHOS_FPC=\"$WATCHOS_FPC\" TINA4_SRC=\"$ROOT/src\" sh \"$whost/build.sh\""
+  a="$whost/app/libtina4watch.a"
+  [ -f "$a" ] || die "libtina4watch.a not produced"
+  ok "watch engine → ${a#$ROOT/} ($(wc -c < "$a" | tr -d ' ') bytes, arm64 watchOS-sim)"
+  say "  the watchOS app links this and calls tina4watch_render/tina4watch_touch (see watch/)."
+  say "  ${D}note: SIMULATOR (arm64). Physical watch = arm64_32 → docs/FPC-WATCHOS-PLAN.md phase 2.${Z}"
+}
 
 run_project() {
   target="${1:-$(default_host_target)}"

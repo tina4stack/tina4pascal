@@ -40,6 +40,9 @@ _b/
 _rel/
 _chk/
 _fpcbuild/
+
+# watchOS engine static lib (tools/tina4pascal build watchsim)
+watch/app/*.a
 *.exe
 
 # signed release artifacts

@@ -1251,7 +1251,10 @@ begin
   Result := SelectorSpecificityOf(Selector);
 end;
 
-function CompareCSSRules(constref A, B: TCSSRule): Integer;
+// FPC trunk (3.3.1+) changed Generics.Defaults' comparison-func signature from
+// constref to const; guard so the engine builds on both 3.2.2 (all shipping
+// shells) and the trunk toolchain the watchOS target requires.
+function CompareCSSRules({$if defined(FPC_FULLVERSION) and (FPC_FULLVERSION >= 30301)}const{$else}constref{$endif} A, B: TCSSRule): Integer;
 begin
   Result := SelectorSpecificityOf(A.Selector) - SelectorSpecificityOf(B.Selector);
   if Result = 0 then
