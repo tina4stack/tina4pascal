@@ -531,6 +531,32 @@ begin
       LsiParser.Free;
     end;
 
+    // <camera-view> UA style: black inline-block placeholder at HTML's default
+    // intrinsic 300x150 (the shell overlays a native preview over this box).
+    LsiParser := THTMLParser.Create;
+    try
+      LsiParser.Parse('<camera-view></camera-view>');
+      LsiUl := FindFirstTag(LsiParser.Root, 'camera-view');
+      Check(Assigned(LsiUl), '<camera-view> parses as an element');
+      LsiStyle := TComputedStyle.ForTag(LsiUl, TComputedStyle.Default);
+      CheckEqualsStr('inline-block', LsiStyle.Display, 'camera-view is inline-block');
+      CheckEqualsHex($FF000000, LsiStyle.BackgroundColor, 'camera-view placeholder is black');
+      CheckEqualsF(300, LsiStyle.ExplicitWidth, 'camera-view default intrinsic width 300');
+      CheckEqualsF(150, LsiStyle.ExplicitHeight, 'camera-view default intrinsic height 150');
+    finally
+      LsiParser.Free;
+    end;
+    LsiParser := THTMLParser.Create;
+    try
+      LsiParser.Parse('<div></div>');
+      LsiUl := FindFirstTag(LsiParser.Root, 'div');
+      LsiStyle := TComputedStyle.ForTag(LsiUl, TComputedStyle.Default);
+      Check(LsiStyle.ExplicitWidth < 0,
+        'NEGATIVE: a plain div gets no camera-view intrinsic width');
+    finally
+      LsiParser.Free;
+    end;
+
     // <search> is a block landmark (regression guard for the block-tag set)
     Check(THTMLParser.IsBlockTag('search'), '<search> is a block landmark');
     Check(THTMLParser.IsBlockTag('nav'), '<nav> is a block (guard)');

@@ -247,6 +247,36 @@ type
       shell without audio-in degrades cleanly (the control just never arms). }
     function StartAudioCapture: Boolean; virtual;
     function StopAudioCapture: string; virtual;
+    { Continuous microphone metering, decoupled from the record-to-file path
+      above so noise detection can run without writing a file. StartAudioMeter
+      arms the mic purely for level reads and returns True if it started (mic
+      present + permission). StopAudioMeter disarms it. AudioLevel is the current
+      input level as RMS 0.0..1.0 (0 = silence, 1 = full-scale), valid only while
+      metering (or StartAudioCapture) is armed. Defaults: no mic — StartAudioMeter
+      False, AudioLevel 0.0 — so a shell without audio-in reads permanent silence
+      and callers degrade cleanly. }
+    function StartAudioMeter: Boolean; virtual;
+    procedure StopAudioMeter; virtual;
+    function AudioLevel: Single; virtual;
+    { Live camera preview, the video analogue of the <video> overlay: the shell
+      overlays a native preview layer over element ElementId's layout box.
+      Facing is 'front' or 'back'. StartCameraPreview returns True if the camera
+      started; StopCameraPreview tears it down. GrabCameraFrame returns the most
+      recent frame as JPEG bytes (for streaming / motion / detection) or nil if
+      none is available; it never blocks. Defaults: no camera — StartCameraPreview
+      False, GrabCameraFrame nil — so a shell without a camera degrades cleanly
+      (the <camera-view> just shows its placeholder box). }
+    function StartCameraPreview(const ElementId, Facing: string): Boolean; virtual;
+    procedure StopCameraPreview(const ElementId: string); virtual;
+    function GrabCameraFrame(const ElementId: string): TBytes; virtual;
+    { Ask the OS to keep audio/camera capture alive while the app is backgrounded
+      or the screen is locked (a monitor set face-down). Returns True if granted.
+      Reason is a short human string for any OS-required foreground-service
+      notification. Default True on desktop (no such restriction); a mobile shell
+      overrides to arm the real background mode / foreground service and returns
+      whether the OS allowed it. }
+    function BeginBackgroundCapture(const Reason: string): Boolean; virtual;
+    procedure EndBackgroundCapture; virtual;
     { Text measurement outside a paint cycle (layout needs this). }
     function GetMeasuringCanvas: TTina4Canvas; virtual; abstract;
   end;
@@ -363,6 +393,46 @@ end;
 function TTina4Shell.StopAudioCapture: string;
 begin
   Result := '';
+end;
+
+function TTina4Shell.StartAudioMeter: Boolean;
+begin
+  Result := False;
+end;
+
+procedure TTina4Shell.StopAudioMeter;
+begin
+  // optional per shell
+end;
+
+function TTina4Shell.AudioLevel: Single;
+begin
+  Result := 0.0;
+end;
+
+function TTina4Shell.StartCameraPreview(const ElementId, Facing: string): Boolean;
+begin
+  Result := False;
+end;
+
+procedure TTina4Shell.StopCameraPreview(const ElementId: string);
+begin
+  // optional per shell
+end;
+
+function TTina4Shell.GrabCameraFrame(const ElementId: string): TBytes;
+begin
+  Result := nil;
+end;
+
+function TTina4Shell.BeginBackgroundCapture(const Reason: string): Boolean;
+begin
+  Result := True;   // desktop: nothing to arm
+end;
+
+procedure TTina4Shell.EndBackgroundCapture;
+begin
+  // optional per shell
 end;
 
 procedure TTina4Canvas.StrokePolyline(const Pts: TTina4PointArray; Width: Single;
