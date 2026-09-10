@@ -101,6 +101,27 @@ is a first-of-its-kind ILP32-on-AArch64 frontend variant plus RTL foot-guns
 a genuine upstream-FPC-scale contribution — not a config change. Route B (teach
 the internal aarch64 assembler ILP32) is strictly worse; don't.
 
+### First blocker found (M2, this session)
+
+Scaffolded the ILP32 variant behind an `AARCH64_ILP32` flag — guard
+`{$define cpu64bitaddr}` in `fpcdefs.inc` and make `OS_ADDR` conditional in
+`aarch64/cpubase.pas` (both inert without the flag) — and tried to build the
+FPC-LLVM compiler with `-dAARCH64_ILP32`. It fails early:
+
+```
+globtype.pas(115) Error: Identifier not found "PInt"   (also PUInt, PUint)
+```
+
+**Diagnosis:** the compiler's *own* pointer-sized ints `PInt`/`PUInt` (host
+types, used all over the compiler's internals) are gated on `cpu64bitaddr` — the
+*same* define that describes the *target's* pointer size. Undefining it globally
+made the compiler try to build itself as ILP32, which is wrong: a cross-compiler
+runs on the 64-bit host but *emits* 32-bit-pointer code. **The real M2 work is to
+separate "target pointer size" from "host/compiler pointer size"** — introduce a
+distinct target-ptr concept (or per-target `pointersize` sourced at runtime from
+`tsysteminfo`, keeping the compiler's host `PInt` 64-bit) rather than flipping
+the one compile-time `cpu64bitaddr` for both. That's the crux task, now concrete.
+
 ## Effort & sequencing
 
 1. **Phase 1 (sim)** first — small, proves the OS sub-target + RTL end to end and

@@ -1,0 +1,63 @@
+name: TinaHost
+options:
+  bundleIdPrefix: com.tina4.pascal
+  deploymentTarget:
+    iOS: "16.0"
+    watchOS: "10.0"
+targets:
+  # iPhone app — runs the Tina4 engine (libtina4watch-ios.a) and streams the
+  # watch face over WatchConnectivity. Embeds the watch app.
+  TinaHost:
+    type: application
+    platform: iOS
+    sources: [HostiOS]
+    dependencies:
+      - framework: libtina4watch-ios.a
+        embed: false
+      - target: TinaHostWatch
+        embed: true
+    info:
+      path: HostiOS/Info.plist
+      properties:
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tina4.pascal.host
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        DEVELOPMENT_TEAM: "5CSH5U4F8F"
+        TARGETED_DEVICE_FAMILY: "1"
+        ARCHS: arm64
+        ONLY_ACTIVE_ARCH: "YES"
+        SWIFT_OBJC_BRIDGING_HEADER: tina4watch.h
+        LIBRARY_SEARCH_PATHS:
+          - $(PROJECT_DIR)
+        # FPC's static lib trips the new linker's alignment check
+        # (FPC_THREADVARTABLES); the classic linker accepts it.
+        OTHER_LDFLAGS: -Wl,-ld_classic
+
+  # watchOS companion — thin display, receives frames + sends taps. Not
+  # WKWatchOnly: it has an iPhone companion (WKCompanionAppBundleIdentifier).
+  TinaHostWatch:
+    type: application
+    platform: watchOS
+    sources: [HostWatch]
+    info:
+      path: HostWatch/Info.plist
+      properties:
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: com.tina4.pascal.host
+        CFBundleDisplayName: Tina4 Watch
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tina4.pascal.host.watchkitapp
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        DEVELOPMENT_TEAM: "5CSH5U4F8F"
+        TARGETED_DEVICE_FAMILY: "4"
+        ARCHS: arm64_32
+        WATCHOS_DEPLOYMENT_TARGET: "10.0"
