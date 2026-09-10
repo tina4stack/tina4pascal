@@ -27,16 +27,25 @@ compiles for the watchOS **Simulator** and renders HTML on the watch itself — 
 phone in the loop:
 
 ```sh
-tools/tina4pascal build watchsim   # → watch/app/libtina4watch.a (arm64 watchOS-sim)
+tools/tina4pascal build watchsim    # → watch/app/libtina4watch.a (arm64 watchOS-sim)
+tools/tina4pascal deploy watchsim   # + build the host app and run it on a watch Simulator
 ```
 
 Because the watch has no UIKit/Core Text canvas, this path uses the **pure-Pascal
 software rasterizer** (`Tina4RasterCanvas`): the shared `Tina4Interact` engine
-paints the DOM to an RGBA buffer and the WatchKit host blits it. Same HTML, same
-events, same engine as every other platform — "the watch renders HTML, Pascal is
-the language." The C entry points the Swift app links are `tina4watch_init`,
-`tina4watch_set_html`, `tina4watch_render` (returns the RGBA buffer) and
-`tina4watch_touch` (see [watch/tina4watch.pas](../watch/tina4watch.pas)).
+paints the DOM to an RGBA buffer and the WatchKit host wraps it in a `UIImage`.
+Same HTML, same events, same engine as every other platform — "the watch renders
+HTML, Pascal is the language." The C entry points the Swift app links are
+`tina4watch_init`, `tina4watch_set_html`, `tina4watch_render` (returns the RGBA
+buffer) and `tina4watch_touch` (see [watch/tina4watch.pas](../watch/tina4watch.pas)).
+The SwiftUI host is [watch/Tina4Watch](../watch/Tina4Watch) — `EngineModel.swift`
+calls `PASCALMAIN()` once, then drives render/touch and shows the engine's frames.
+
+`deploy watchsim` needs a booted (or available) Apple Watch Simulator and builds
+**arm64-only** (FPC watchossim = arm64), signing off. The raster path renders
+shapes/backgrounds/border-radius; glyph text is a native-canvas follow-up
+(`Tina4RasterCanvas.DrawText` is still a no-op), so watch UIs are shape-based
+today (the demo is a smiley).
 
 Requires the patched toolchain at `~/fpc-watchos` (or `TINA4_WATCHOS_FPC`); build
 it from [fpc-watchossim.diff](fpc-watchossim.diff). `tools/tina4pascal doctor`

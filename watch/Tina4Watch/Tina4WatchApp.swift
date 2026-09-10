@@ -1,18 +1,22 @@
 import SwiftUI
 import WatchKit
 
+// Native Tina4 watch host: the engine (libtina4watch.a) renders HTML on the
+// watch and we show its frames. For the physical-watch phone-render mirror see
+// StreamModel.swift + examples/watch/watch_server.py (docs/WATCH.md).
 @main
 struct Tina4WatchApp: App {
-    @StateObject private var model = StreamModel.shared
+    @StateObject private var model = EngineModel.shared
     var body: some Scene {
         WindowGroup {
-            StreamView().environmentObject(model)
+            EngineView().environmentObject(model)
+                .onAppear { model.start() }
         }
     }
 }
 
-struct StreamView: View {
-    @EnvironmentObject var model: StreamModel
+struct EngineView: View {
+    @EnvironmentObject var model: EngineModel
 
     var body: some View {
         ZStack {
@@ -23,23 +27,13 @@ struct StreamView: View {
                     .resizable()
                     .scaledToFill()
             } else {
-                VStack(spacing: 6) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 30, weight: .semibold))
-                        .foregroundStyle(.blue)
-                    Text("Connecting to Tina4…")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                Text("Starting Tina4…")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
         .ignoresSafeArea()
-        // any tap on the wrist → the Mac engine winks and pushes the next frame
         .contentShape(Rectangle())
-        .onTapGesture {
-            // audible + haptic feedback on the watch, then wink
-            WKInterfaceDevice.current().play(.notification)
-            model.sendTap(x: 0, y: 0)
-        }
+        .onTapGesture { model.tap() }   // → tina4watch_touch + re-render (wink)
     }
 }

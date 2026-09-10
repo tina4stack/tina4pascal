@@ -55,6 +55,11 @@ type
       Color: TTina4Color; Closed: Boolean); override;
     procedure FillRect(X, Y, W, H: Single; Color: TTina4Color); override;
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); override;
+    { rounded rects: the base falls back to square FillRect/StrokeRect, so
+      border-radius came out square on the raster path (watch + Android). Round
+      it via the shared RoundRectPolygon + the AA polygon rasterizer. }
+    procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); override;
+    procedure StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color); override;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); override;
     { unused by the time-driven subset — safe no-ops/zeros } // keeps the class concrete
     procedure DrawText(X, Y: Single; const Text: string; FontSize: Single;
@@ -336,6 +341,22 @@ begin
   SetLength(pts, 2);
   pts[0].X := X1; pts[0].Y := Y1; pts[1].X := X2; pts[1].Y := Y2;
   StrokePolyline(pts, Thickness, Color, False);
+end;
+
+procedure TTina4RasterCanvas.FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color);
+var poly: array[0..0] of TTina4PointArray;
+begin
+  if Radius <= 0 then begin FillRect(X, Y, W, H, Color); Exit; end;
+  poly[0] := RoundRectPolygon(X, Y, W, H, Radius);   // shared corner-arc builder
+  FillPolygon(poly, Color, False);
+end;
+
+procedure TTina4RasterCanvas.StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color);
+var pts: TTina4PointArray;
+begin
+  if Radius <= 0 then begin StrokeRect(X, Y, W, H, Thickness, Color); Exit; end;
+  pts := RoundRectPolygon(X, Y, W, H, Radius);
+  StrokePolyline(pts, Thickness, Color, True);   // closed
 end;
 
 procedure TTina4RasterCanvas.DrawText(X, Y: Single; const Text: string;

@@ -306,8 +306,9 @@ implementation
 { Per-corner rounded-rect → polygon. 6 segments per corner reads smooth at UI
   sizes. Each radius is clamped so adjacent corners never overlap a side. }
 function RoundRectPolygon4(X, Y, W, H, R0, R1, R2, R3: Single): TTina4PointArray;
-const SEG = 6;
-var r, n: Integer; cr: array[0..3] of Single;
+{ segments PER CORNER — adaptive: 6 reads smooth for small UI radii, but a full
+  circle (large radius) needs more or it looks faceted (visible on the watch). }
+var r, n, SEG: Integer; cr: array[0..3] of Single; mx: Single;
   procedure Clamp(var a, b: Single; limit: Single);
   var f: Single;
   begin if (a + b > limit) and (a + b > 0) then begin f := limit / (a + b); a := a * f; b := b * f; end; end;
@@ -325,6 +326,9 @@ begin
   for r := 0 to 3 do if cr[r] < 0 then cr[r] := 0;
   Clamp(cr[0], cr[1], W); Clamp(cr[3], cr[2], W);   // top / bottom edges
   Clamp(cr[0], cr[3], H); Clamp(cr[1], cr[2], H);   // left / right edges
+  mx := cr[0];                                      // segments scale with the largest corner
+  for r := 1 to 3 do if cr[r] > mx then mx := cr[r];
+  SEG := Round(mx / 2.2); if SEG < 6 then SEG := 6; if SEG > 28 then SEG := 28;
   SetLength(Result, 4 * (SEG + 1)); n := 0;         // TL,TR,BR,BL; y-down → +sin downward
   Arc(X + W - cr[1], Y + cr[1],     cr[1], -Pi/2, 0);       // top-right
   Arc(X + W - cr[2], Y + H - cr[2], cr[2],  0,    Pi/2);    // bottom-right

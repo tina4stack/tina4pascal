@@ -1267,15 +1267,47 @@ proj_win_release() {
   fi
 }
 
-# deploy <android|wear|ios|macos> for a scaffolded project — build + install + launch.
+# deploy <android|wear|ios|watchsim|macos> for a scaffolded project — build + install + launch.
 proj_deploy() {
   case "${1:-android}" in
-    android) proj_android_deploy ;;
-    wear)    TINA4_WEAR=1 proj_android_deploy ;;   # to a Wear OS watch / emulator
-    ios)     proj_ios_deploy ;;
-    macos)   run_project macos ;;
-    *) die "deploy <android|wear|ios|macos>" ;;
+    android)  proj_android_deploy ;;
+    wear)     TINA4_WEAR=1 proj_android_deploy ;;   # to a Wear OS watch / emulator
+    ios)      proj_ios_deploy ;;
+    watchsim) proj_watch_deploy ;;   # Apple Watch SIMULATOR: native engine host
+    macos)    run_project macos ;;
+    *) die "deploy <android|wear|ios|watchsim|macos>" ;;
   esac
+}
+
+# `deploy watchsim` — build the engine lib + the native watchOS host app and run
+# it on a booted Apple Watch Simulator. The app links libtina4watch.a and calls
+# tina4watch_render/tina4watch_touch, so the watch renders HTML with the engine
+# itself (watch/, docs/WATCH.md). arm64 only (FPC watchossim = arm64), signing off.
+proj_watch_deploy() {
+  command -v xcodegen >/dev/null 2>&1 || die "xcodegen missing → tina4pascal setup ios"
+  proj_watch_build     # builds watch/app/libtina4watch.a (checks the patched FPC)
+  wdir="$ROOT/watch"; wwork="$wdir/build/dd"
+  ( cd "$wdir" && xcodegen >/dev/null ) || die "xcodegen failed"
+  # a booted watch sim is our concrete destination (so ONLY_ACTIVE_ARCH picks arm64)
+  wid="$(xcrun simctl list devices booted 2>/dev/null | grep -m1 'Apple Watch' | grep -oE '[0-9A-F-]{36}')"
+  if [ -z "$wid" ]; then
+    wid="$(xcrun simctl list devices available 2>/dev/null | grep -m1 'Apple Watch' | grep -oE '[0-9A-F-]{36}')"
+    [ -n "$wid" ] || die "no Apple Watch Simulator found (install a watchOS runtime in Xcode)"
+    xcrun simctl boot "$wid" 2>/dev/null || true
+  fi
+  say "${D}xcodebuild -sdk watchsimulator (arm64, unsigned)${Z}"
+  ( cd "$wdir" && xcodebuild -project Tina4Watch.xcodeproj -scheme Tina4Watch \
+      -sdk watchsimulator -configuration Debug -destination "id=$wid" \
+      ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+      -derivedDataPath build/dd build 2>&1 | grep -qE "BUILD SUCCEEDED" ) \
+    || die "watch app build failed — rerun to see errors: (cd \"$wdir\" && xcodebuild -project Tina4Watch.xcodeproj -scheme Tina4Watch -sdk watchsimulator -destination id=$wid ARCHS=arm64 CODE_SIGNING_ALLOWED=NO build)"
+  app="$(find "$wwork/Build/Products" -maxdepth 2 -name '*.app' -path '*watchsimulator*' | head -1)"
+  [ -n "$app" ] || die "built .app not found"
+  bid="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist" 2>/dev/null)"
+  xcrun simctl install "$wid" "$app" >/dev/null 2>&1 || die "install failed"
+  xcrun simctl launch "$wid" "$bid" >/dev/null 2>&1 || true
+  ok "watch app installed + launched on the Simulator ($bid)"
+  say "  the engine renders HTML on the watch; tap the face to wink. screenshot: xcrun simctl io $wid screenshot out.png"
 }
 
 proj_android_deploy() {

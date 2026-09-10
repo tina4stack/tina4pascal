@@ -7,20 +7,21 @@ targets:
   Tina4Watch:
     type: application
     platform: watchOS
-    sources: [Tina4Watch]
+    sources:
+      - Tina4Watch
+    # The Pascal engine, built by `tools/tina4pascal build watchsim` into
+    # app/libtina4watch.a (arm64 watchOS-sim). The app links it and calls the
+    # tina4watch_* C entry points via Tina4Watch/tina4watch.h.
+    dependencies:
+      - framework: app/libtina4watch.a
+        embed: false
     info:
       path: Tina4Watch/Info.plist
       properties:
         WKApplication: true
         WKWatchOnly: true
         CFBundleDisplayName: Tina4 Watch
-        # 127.0.0.1 works in the watchOS Simulator; for a PHYSICAL watch set this
-        # to the Mac's LAN IP (same WiFi) so it can reach examples/watch/watch_server.py
-        Tina4ServerHost: "127.0.0.1"
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
-        NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
-          NSAllowsLocalNetworking: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.tina4.pascal.watchkitapp
@@ -29,3 +30,12 @@ targets:
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "4"
         CODE_SIGNING_ALLOWED: "NO"
+        # the Pascal engine (libtina4watch.a) is arm64-only (FPC watchossim = arm64),
+        # so build the sim app arm64 too — Apple Silicon runs the watch sim natively.
+        ARCHS: arm64
+        ONLY_ACTIVE_ARCH: "YES"
+        # bridge to the Pascal engine's C ABI
+        SWIFT_OBJC_BRIDGING_HEADER: Tina4Watch/tina4watch.h
+        # the static lib lives in watch/app/
+        LIBRARY_SEARCH_PATHS:
+          - $(PROJECT_DIR)/app
