@@ -3089,6 +3089,17 @@ begin
     if Result.ExplicitWidth < 0 then Result.ExplicitWidth := 300;
     if Result.ExplicitHeight < 0 then Result.ExplicitHeight := 150;
   end
+  else if TN = 'camera-view' then
+  begin
+    // A shell-owned live camera preview sits on top (StartCameraPreview); the
+    // core reserves a correctly sized placeholder box, black until the native
+    // preview draws. Same overlay model as <video>. HTML default intrinsic size
+    // 300x150; a shell without a camera leaves the black box showing.
+    Result.Display := 'inline-block';
+    Result.BackgroundColor := $FF000000;
+    if Result.ExplicitWidth < 0 then Result.ExplicitWidth := 300;
+    if Result.ExplicitHeight < 0 then Result.ExplicitHeight := 150;
+  end
   else if TN = 'audio' then
   begin
     // shell-owned native audio player over a core placeholder box. Only shown
