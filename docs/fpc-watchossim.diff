@@ -1,0 +1,312 @@
+diff --git a/compiler/aarch64/agcpugas.pas b/compiler/aarch64/agcpugas.pas
+index 65cb66a2..1e679238 100644
+--- a/compiler/aarch64/agcpugas.pas
++++ b/compiler/aarch64/agcpugas.pas
+@@ -889,7 +889,7 @@       TAArch64ClangGASAssembler=class(TAArch64Assembler)
+             idtxt  : 'CLANG';
+             asmbin : 'clang';
+             asmcmd : '-x assembler -c -target $TRIPLET -o $OBJ $MARCHOPT $EXTRAOPT -x assembler $ASM';
+-            supported_targets : [system_aarch64_ios,system_aarch64_darwin,system_aarch64_iphonesim];
++            supported_targets : [system_aarch64_ios,system_aarch64_darwin,system_aarch64_iphonesim,system_aarch64_watchossim];
+             flags : [af_needar,af_smartlink_sections,af_supports_dwarf,af_llvm,af_supports_hlcfi];
+             labelprefix : 'L';
+             labelmaxlen : -1;
+diff --git a/compiler/aggas.pas b/compiler/aggas.pas
+index 423a5c61..385f5aa3 100644
+--- a/compiler/aggas.pas
++++ b/compiler/aggas.pas
+@@ -559,6 +559,7 @@ implementation
+          system_arm_ios,
+          system_aarch64_ios,
+          system_aarch64_iphonesim,
++         system_aarch64_watchossim,
+          system_aarch64_darwin,
+          system_x86_64_iphonesim,
+          system_powerpc_aix,
+diff --git a/compiler/objcgutl.pas b/compiler/objcgutl.pas
+index cb750203..d76b815c 100644
+--- a/compiler/objcgutl.pas
++++ b/compiler/objcgutl.pas
+@@ -1829,7 +1829,7 @@ procedure tobjcrttiwriter_nonfragile.gen_objc_classes_sections(list:TAsmList; ob
+     metatcb.emit_tai(Tai_const.Create_sym(ObjCEmptyCacheVar),voidpointertype);
+     { pointer to vtable }
+     if not assigned(ObjCEmptyVtableVar) and
+-       not(target_info.system in [system_arm_ios,system_aarch64_ios,system_aarch64_darwin,system_i386_iphonesim,system_x86_64_iphonesim,system_aarch64_iphonesim]) then
++       not(target_info.system in [system_arm_ios,system_aarch64_ios,system_aarch64_darwin,system_i386_iphonesim,system_x86_64_iphonesim,system_aarch64_iphonesim,system_aarch64_watchossim]) then
+       ObjCEmptyVtableVar:=current_asmdata.RefAsmSymbol(target_info.Cprefix+'_objc_empty_vtable',AT_DATA);
+     ConcatSymOrNil(metatcb,ObjCEmptyVtableVar,voidpointertype);
+     { the read-only part }
+diff --git a/compiler/options.pas b/compiler/options.pas
+index 1178acbc..e00daf23 100644
+--- a/compiler/options.pas
++++ b/compiler/options.pas
+@@ -1384,7 +1384,7 @@ procedure TOption.MaybeSetDefaultMacVersionMacro;
+   if MacVersionSet then
+     exit;
+   { check for deployment target set via environment variable }
+-  if not(target_info.system in [system_i386_iphonesim,system_arm_ios,system_aarch64_ios,system_x86_64_iphonesim,system_aarch64_iphonesim]) then
++  if not(target_info.system in [system_i386_iphonesim,system_arm_ios,system_aarch64_ios,system_x86_64_iphonesim,system_aarch64_iphonesim,system_aarch64_watchossim]) then
+     begin
+       envstr:=GetEnvironmentVariable('MACOSX_DEPLOYMENT_TARGET');
+       if envstr<>'' then
+@@ -1444,6 +1444,11 @@ procedure TOption.MaybeSetDefaultMacVersionMacro;
+         if not ParseMacVersionMin(iPhoneOSVersionMin,MacOSXVersionMin,'IPHONE_OS_VERSION_MIN_REQUIRED','14.0.0',false) then
+           internalerror(2023032201);
+       end;
++    system_aarch64_watchossim:
++      begin
++        if not ParseMacVersionMin(iPhoneOSVersionMin,MacOSXVersionMin,'IPHONE_OS_VERSION_MIN_REQUIRED','10.0.0',false) then
++          internalerror(2026091001);
++      end;
+     system_aarch64_darwin:
+       begin
+         if not ParseMacVersionMin(MacOSXVersionMin,iPhoneOSVersionMin,'MAC_OS_X_VERSION_MIN_REQUIRED','11.0.0',false) then
+@@ -4080,7 +4085,7 @@ procedure TOption.Interpret_W_U(opt, more: TCmdStr);
+          end;
+        'M':
+          begin
+-           if (target_info.system in (systems_darwin-[system_i386_iphonesim,system_arm_ios,system_aarch64_ios,system_x86_64_iphonesim,system_aarch64_iphonesim])) and
++           if (target_info.system in (systems_darwin-[system_i386_iphonesim,system_arm_ios,system_aarch64_ios,system_x86_64_iphonesim,system_aarch64_iphonesim,system_aarch64_watchossim])) and
+               ParseMacVersionMin(MacOSXVersionMin,iPhoneOSVersionMin,'MAC_OS_X_VERSION_MIN_REQUIRED',copy(More,2),false) then
+              begin
+                break;
+@@ -4124,7 +4129,7 @@ procedure TOption.Interpret_W_U(opt, more: TCmdStr);
+          end;
+        'P':
+          begin
+-           if (target_info.system in [system_i386_iphonesim,system_arm_ios,system_aarch64_ios,system_x86_64_iphonesim,system_aarch64_iphonesim]) and
++           if (target_info.system in [system_i386_iphonesim,system_arm_ios,system_aarch64_ios,system_x86_64_iphonesim,system_aarch64_iphonesim,system_aarch64_watchossim]) and
+               ParseMacVersionMin(iPhoneOSVersionMin,MacOSXVersionMin,'IPHONE_OS_VERSION_MIN_REQUIRED',copy(More,2),true) then
+              begin
+                break;
+diff --git a/compiler/symdef.pas b/compiler/symdef.pas
+index c50a1d1f..d4deddc3 100644
+--- a/compiler/symdef.pas
++++ b/compiler/symdef.pas
+@@ -9666,7 +9666,7 @@           (def.typ=classrefdef) and
+       begin
+         if assigned(objc_fastenumeration) then
+           exit;
+-        if not(target_info.system in [system_arm_ios,system_i386_iphonesim,system_aarch64_ios,system_x86_64_iphonesim,system_aarch64_iphonesim]) then
++        if not(target_info.system in [system_arm_ios,system_i386_iphonesim,system_aarch64_ios,system_x86_64_iphonesim,system_aarch64_iphonesim,system_aarch64_watchossim]) then
+           cocoaunit:='COCOAALL'
+         else
+           cocoaunit:='IPHONEALL';
+diff --git a/compiler/systems.inc b/compiler/systems.inc
+index 1e156fee..71121d91 100644
+--- a/compiler/systems.inc
++++ b/compiler/systems.inc
+@@ -214,6 +214,7 @@
+              system_riscv32_freertos,   { 119 }
+              system_loongarch64_linux,  { 120 }
+              system_aarch64_iphonesim,  { 121 }
++             system_aarch64_watchossim, { 127 }
+              system_m68k_human68k,      { 122 }
+              system_mipsel_ps1,         { 123 }
+              system_wasm32_wasip1threads,{ 124 }
+diff --git a/compiler/systems.pas b/compiler/systems.pas
+index f864b751..cf1122d9 100644
+--- a/compiler/systems.pas
++++ b/compiler/systems.pas
+@@ -292,10 +292,11 @@     tabiinfo = record
+        { all darwin systems }
+        systems_ios = [system_arm_ios,system_aarch64_ios];
+        systems_iphonesim = [system_i386_iphonesim,system_x86_64_iphonesim,system_aarch64_iphonesim];
++       systems_watchossim = [system_aarch64_watchossim];
+        systems_macosx = [system_powerpc_darwin,system_i386_darwin,
+                          system_powerpc64_darwin,system_x86_64_darwin,
+                          system_aarch64_darwin];
+-       systems_darwin = systems_ios + systems_iphonesim + systems_macosx;
++       systems_darwin = systems_ios + systems_iphonesim + systems_watchossim + systems_macosx;
+ 
+        { all WebAssembly systems }
+        systems_wasm = [system_wasm32_embedded,system_wasm32_wasip1,system_wasm32_wasip1threads,
+@@ -365,7 +366,7 @@     tabiinfo = record
+        systems_objc_supported = systems_darwin;
+ 
+        { systems using the non-fragile Objective-C ABI }
+-       systems_objc_nfabi = [system_powerpc64_darwin,system_x86_64_darwin,system_arm_ios,system_i386_iphonesim,system_aarch64_ios,system_aarch64_darwin,system_x86_64_iphonesim,system_aarch64_iphonesim];
++       systems_objc_nfabi = [system_powerpc64_darwin,system_x86_64_darwin,system_arm_ios,system_i386_iphonesim,system_aarch64_ios,system_aarch64_darwin,system_x86_64_iphonesim,system_aarch64_iphonesim,system_aarch64_watchossim];
+ 
+        { systems supporting "blocks" }
+        systems_blocks_supported = systems_darwin;
+@@ -453,7 +454,7 @@     tabiinfo = record
+ 
+        { all systems where a value parameter passed by reference must be copied
+          on the caller side rather than on the callee side }
+-       systems_caller_copy_addr_value_para = [system_aarch64_ios,system_aarch64_iphonesim,system_aarch64_darwin,system_aarch64_linux,system_aarch64_win64,system_aarch64_freebsd];
++       systems_caller_copy_addr_value_para = [system_aarch64_ios,system_aarch64_iphonesim,system_aarch64_watchossim,system_aarch64_darwin,system_aarch64_linux,system_aarch64_win64,system_aarch64_freebsd];
+ 
+        { all PPC ABIs that use a TOC register to address globals }
+        abis_ppc_toc = [
+diff --git a/compiler/systems/i_darwin.pas b/compiler/systems/i_darwin.pas
+index 946f3b78..0f79d579 100644
+--- a/compiler/systems/i_darwin.pas
++++ b/compiler/systems/i_darwin.pas
+@@ -738,6 +738,74 @@ interface
+         llvmdatalayout : 'e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v64:64:64-v128:128:128-a0:0:64-n32:64-S128'
+       );
+ 
++   system_aarch64_watchossim_info : tsysteminfo =
++      (
++        system       : system_aarch64_watchossim;
++        name         : 'Darwin/watchOS Simulator for AArch64';
++        shortname    : 'watchOSSim';
++        flags        : [tf_p_ext_support,tf_requires_proper_alignment,tf_files_case_sensitive,tf_smartlink_sections,tf_dwarf_relative_addresses,
++                        tf_dwarf_only_local_labels,tf_pic_default,tf_has_winlike_resources,tf_supports_symbolorderfile,tf_supports_hidden_symbols
++                        {$ifdef llvm},tf_use_psabieh{$endif}];
++        cpu          : cpu_aarch64;
++        unit_env     : 'BSDUNITS';
++        extradefines : 'UNIX;BSD;HASUNIX;DARWIN'; // also define darwin for code compatibility
++        exeext       : '';
++        defext       : '.def';
++        scriptext    : '.sh';
++        smartext     : '.sl';
++        unitext      : '.ppu';
++        unitlibext   : '.ppl';
++        asmext       : '.s';
++        objext       : '.o';
++        resext       : '.res';
++        resobjext    : '.or';
++        sharedlibext : '.dylib';
++        staticlibext : '.a';
++        staticlibprefix : 'libp';
++        sharedlibprefix : 'lib';
++        sharedClibext : '.dylib';
++        staticClibext : '.a';
++        staticClibprefix : 'lib';
++        sharedClibprefix : 'lib';
++        importlibprefix : 'libimp';
++        importlibext : '.a';
++        Cprefix      : '_';
++        newline      : #10;
++        dirsep       : '/';
++        assem        : as_clang_asdarwin;
++        assemextern  : as_clang_asdarwin;
++        link         : ld_none;
++        linkextern   : ld_darwin;
++        ar           : ar_gnu_ar;
++        res          : res_macho;
++        dbg          : dbg_dwarf2;
++        script       : script_unix;
++        endian       : endian_little;
++        alignment    :
++          (
++            procalign       : 16;
++            loopalign       : 4;
++            jumpalign       : 0;
++            jumpalignskipmax    : 0;
++            coalescealign   : 0;
++            coalescealignskipmax: 0;
++            constalignmin   : 0;
++            constalignmax   : 64;
++            varalignmin     : 0;
++            varalignmax     : 16;
++            localalignmin   : 4;
++            localalignmax   : 16;
++            recordalignmin  : 0;
++            recordalignmax  : 16;
++            maxCrecordalign : 16
++          );
++        first_parm_offset : 16;
++        stacksize   : 8*1024*1024;
++        stackalign   : 16;
++        abi : abi_aarch64_darwin;
++        llvmdatalayout : 'e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v64:64:64-v128:128:128-a0:0:64-n32:64-S128'
++      );
++
+ implementation
+ 
+ initialization
+diff --git a/compiler/systems/t_darwin.pas b/compiler/systems/t_darwin.pas
+index 75b0d172..c750b4ab 100644
+--- a/compiler/systems/t_darwin.pas
++++ b/compiler/systems/t_darwin.pas
+@@ -204,7 +204,8 @@     tlinkerdarwin=class(texternallinker)
+                     end;
+                   system_i386_iphonesim,
+                   system_x86_64_iphonesim,
+-                  system_aarch64_iphonesim:
++                  system_aarch64_iphonesim,
++                  system_aarch64_watchossim:
+                     begin
+                       { "recent versions" must not use anything (https://github.com/llvm-mirror/clang/commit/e6d04f3d152a22077022cf9287d4c538a0918ab0 )
+                         What those recent versions could be, is anyone's guess. It
+@@ -257,7 +258,8 @@     tlinkerdarwin=class(texternallinker)
+                     end;
+                   system_i386_iphonesim,
+                   system_x86_64_iphonesim,
+-                  system_aarch64_iphonesim:
++                  system_aarch64_iphonesim,
++                  system_aarch64_watchossim:
+                     begin
+                       { see rule for crt1.o }
+                       if iPhoneOSVersionMin.relationto(8,1,0)>0 then
+@@ -297,7 +299,8 @@     tlinkerdarwin=class(texternallinker)
+                     end;
+                   system_i386_iphonesim,
+                   system_x86_64_iphonesim,
+-                  system_aarch64_iphonesim:
++                  system_aarch64_iphonesim,
++                  system_aarch64_watchossim:
+                     begin
+                       { see rule for crt1.o }
+                       if iPhoneOSVersionMin.relationto(8,1,0)>0 then
+@@ -349,6 +352,7 @@     tlinkerdarwin=class(texternallinker)
+             result:='-arch '+lower(cputypestr[current_settings.cputype]);
+           system_aarch64_ios,
+           system_aarch64_iphonesim,
++          system_aarch64_watchossim,
+           system_aarch64_darwin:
+             result:='-arch arm64';
+           else
+@@ -370,7 +374,11 @@     tlinkerdarwin=class(texternallinker)
+           end
+         else if iPhoneOSVersionMin.isvalid then
+           begin
+-            if target_info.system in [system_i386_iphonesim,system_x86_64_iphonesim,system_aarch64_iphonesim] then
++            if target_info.system=system_aarch64_watchossim then
++              { modern ld dropped -watchos_simulator_version_min; use the unified
++                -platform_version (platform min sdk). watchos-simulator = platform 9 }
++              result:='-platform_version watchos-simulator '+iPhoneOSVersionMin.str+' '+iPhoneOSVersionMin.str
++            else if target_info.system in [system_i386_iphonesim,system_x86_64_iphonesim,system_aarch64_iphonesim] then
+               result:='-ios_simulator_version_min '+iPhoneOSVersionMin.str
+             else
+               result:='-iphoneos_version_min '+iPhoneOSVersionMin.str;
+@@ -803,6 +811,9 @@ initialization
+   RegisterImport(system_aarch64_iphonesim,timportlibdarwin);
+   RegisterExport(system_aarch64_iphonesim,texportlibdarwin);
+   RegisterTarget(system_aarch64_iphonesim_info);
++  RegisterImport(system_aarch64_watchossim,timportlibdarwin);
++  RegisterExport(system_aarch64_watchossim,texportlibdarwin);
++  RegisterTarget(system_aarch64_watchossim_info);
+ {$endif aarch64}
+ 
+   RegisterRes(res_macho_info,TWinLikeResourceFile);
+diff --git a/compiler/triplet.pas b/compiler/triplet.pas
+index 67fe3e2c..5f4acd85 100644
+--- a/compiler/triplet.pas
++++ b/compiler/triplet.pas
+@@ -46,7 +46,9 @@ implementation
+           result:=result+'-apple';
+           if target_info.system in systems_macosx then
+             result:=result+'-macosx'+MacOSXVersionMin.str
+-          else if target_info.system = system_aarch64_iphonesim then
++          else if target_info.system=system_aarch64_watchossim then
++            result:=result+'-watchos'+iPhoneOSVersionMin.str+'-simulator'
++          else if target_info.system=system_aarch64_iphonesim then
+             result:=result+'-ios-simulator'+iPhoneOSVersionMin.str
+           else
+             result:=result+'-ios'+iPhoneOSVersionMin.str;
+diff --git a/rtl/Makefile.fpc b/rtl/Makefile.fpc
+index 2a49e77b..4fea65c5 100644
+--- a/rtl/Makefile.fpc
++++ b/rtl/Makefile.fpc
+@@ -21,6 +21,7 @@ dirs_dragonfly=dragonfly
+ dirs_darwin=darwin
+ dirs_iphonesim=darwin
+ dirs_ios=darwin
++dirs_watchossim=darwin
+ dirs_beos=beos
+ dirs_haiku=haiku
+ dirs_amiga=amiga

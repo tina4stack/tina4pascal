@@ -7,10 +7,31 @@ existing aarch64 backend and adds only a Darwin OS sub-target. No `arm64_32`.
 (Confirmed live: `xcodebuild` reports the *physical* watch as `arch:arm64_32`;
 the *simulator* is arm64 — that split is why Phase 1 is small and Phase 2 isn't.)
 
-> Status: this is an implementation patch, **not** a submitted merge request. It
-> needs a compiler build + on-simulator test pass before it's MR-ready. FPC uses
-> **GitLab merge requests** (gitlab.com/freepascal.org/fpc/source), not GitHub PRs,
-> and first-time contributors sign the FPC contributor agreement.
+> **Status: BUILT + TESTED — a Pascal program runs on the watchOS Simulator.**
+> Applied to FPC trunk (3.3.1), the patched `ppca64` compiles `-Twatchossim
+> -Paarch64`, the full Darwin RTL (system…sysutils…classes) builds for the target,
+> and a linked `Mach-O arm64 · platform WATCHOSSIMULATOR · minos 10.0` executable
+> **ran on the Apple Watch Series 11 simulator** and printed its output (exit 0).
+> The exact applied diff is [`fpc-watchossim.diff`](fpc-watchossim.diff) (11 files,
+> ~104 lines) and the reproducible editor is [`fpc-watchossim-apply.py`](fpc-watchossim-apply.py).
+> Still **not** a submitted merge request: FPC uses **GitLab merge requests**
+> (gitlab.com/freepascal.org/fpc/source), not GitHub PRs, and first-time
+> contributors sign the FPC contributor agreement.
+
+### What the theoretical patch got wrong (fixed in the applied diff)
+- **No `.build_version` in `aggas.pas`** — FPC never emits that directive; the
+  Mach-O platform tag comes from the **clang triple** in `compiler/triplet.pas`.
+  watchossim needs its own `arm64-apple-watchosVER-simulator` triple (not the
+  shared `-ios-simulator`), or objects tag platform 7 (iOS-sim) and Xcode's ld
+  rejects them. This replaced touch-point #4 entirely.
+- **Modern `ld` dropped `-watchos_simulator_version_min`** (Xcode 26). The linker
+  min-version must be the unified `-platform_version watchos-simulator <min> <sdk>`
+  form in `t_darwin.pas` `GetLinkVersion`.
+- **`-Twatchossim` needs no `options.pas` parser change** — `find_system_by_string`
+  matches `upper(shortname)`, so shortname `'watchOSSim'` resolves automatically.
+- **The RTL can't be built via `make`** — the generated `rtl/Makefile` (and stock
+  `fpcmake`) enumerate known targets and reject `aarch64-watchossim`. Build the
+  units directly from `rtl/darwin` with the new compiler (recipe below).
 
 ## The target: `system_aarch64_watchossim`
 
@@ -75,16 +96,31 @@ Add the target to `rtl/darwin/Makefile.fpc` / `fpmake.pp` so the System unit +
 SysUtils build for it. The syscalls are the same libSystem as iOS, so this
 largely follows the iOS RTL with the OS name swapped and the watchOS-sim SDK.
 
-## Build & test the patched compiler
+## Build & test the patched compiler — the recipe that actually worked
 ```sh
-# in the fpc source tree, build a cross compiler + RTL for the new target
-make clean
-make compiler_cycle
-make rtl OS_TARGET=watchossim CPU_TARGET=aarch64 \
-     CROSSOPT="-XR$(xcrun --sdk watchsimulator --show-sdk-path)"
-# then: fpc -Twatchossim -Paarch64 -Cn a test unit; link with Xcode's watch-sim target
+# 0. full FPC trunk source tree; apply the diff
+git apply docs/fpc-watchossim.diff        # or: python3 docs/fpc-watchossim-apply.py
+
+# 1. rebuild the native compiler — it bakes in the new target (all RegisterTarget'd
+#    targets are cross-reachable from the aarch64-darwin host, same CPU)
+cd compiler && make compiler OS_TARGET=darwin CPU_TARGET=aarch64 FPC=~/fpc/bin/ppca64
+PPC=$PWD/ppca64                            # the patched compiler
+
+# 2. build the RTL for watchossim by driving the compiler over rtl/darwin directly
+#    (make/fpcmake reject the unknown target). Capture the darwin recipe, then swap
+#    compiler -> $PPC, add -Twatchossim -Paarch64, outdir -> aarch64-watchossim,
+#    -XR -> the watch-sim SDK. See fpc-watchossim-apply.py's sibling transform.
+SDK=$(xcrun --sdk watchsimulator --show-sdk-path)
+#    -> rtl/units/aarch64-watchossim/*.ppu (system, sysutils, classes, objc, …)
+
+# 3. compile + link a program and run it in the simulator
+$PPC -Twatchossim -Paarch64 -Fu<rtl>/units/aarch64-watchossim -XR"$SDK" whello.pp
+vtool -show whello | grep -E 'platform|minos'   # WATCHOSSIMULATOR / 10.0
+WID=$(xcrun simctl list devices available | grep -m1 'Apple Watch' | grep -oE '[0-9A-F-]{36}')
+xcrun simctl boot "$WID"; xcrun simctl spawn "$WID" ./whello   # -> prints, exit 0
 ```
-A green compile + a unit that runs in the watchOS Simulator is the bar for the MR.
+**Verified:** `Tina4 on watchOS-sim: 2+2=4` on Apple Watch Series 11 (46mm) sim.
+A green compile + a program that runs in the watchOS Simulator is the bar — cleared.
 
 ## Phase 2 (physical watch, `arm64_32`) — separate
 The device needs the ILP32 ABI. Best route is the **FPC-LLVM** backend: LLVM
