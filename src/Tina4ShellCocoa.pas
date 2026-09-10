@@ -113,6 +113,8 @@ type
     FCursorHidden: Boolean;   // cursor:none hide/unhide is stacked — track it
     FRecorder: AVAudioRecorder;  // live mic capture, nil when idle
     FRecPath: string;            // temp file the current recording writes to
+    FMeter: AVAudioRecorder;     // metering-only mic session, nil when idle
+    FMeterPath: string;          // throwaway temp file the meter session writes
   public
     { When non-empty, the next completed paint is written to this PNG path
       (then cleared). Seed of the headless render-to-image mode. }
@@ -137,6 +139,9 @@ type
     function CaptureCamera: string; override;
     function StartAudioCapture: Boolean; override;
     function StopAudioCapture: string; override;
+    function StartAudioMeter: Boolean; override;
+    procedure StopAudioMeter; override;
+    function AudioLevel: Single; override;
     function GetMeasuringCanvas: TTina4Canvas; override;
   end;
 
@@ -144,6 +149,16 @@ implementation
 
 uses
   Tina4Interact;   // native media embeds (<video>) query — TinaEmbed*
+
+type
+  { AVAudioRecorder's metering selectors are absent from the FPC AVFoundation
+    binding — expose them so AudioLevel can read the live input power. These are
+    real runtime methods (external), we only declare their signatures. }
+  AVAudioRecorderMeter = objccategory external (AVAudioRecorder)
+    procedure setMeteringEnabled(enabled: Boolean); message 'setMeteringEnabled:';
+    procedure updateMeters; message 'updateMeters';
+    function averagePowerForChannel(channel: NSUInteger): single; message 'averagePowerForChannel:';
+  end;
 
 var
   { @font-face aliases: CSS family (lowercased) -> the font's real registered
@@ -1288,6 +1303,8 @@ end;
 
 destructor TCocoaShell.Destroy;
 begin
+  if FMeter <> nil then StopAudioMeter;                 // stop + release + rm temp
+  if FRecorder <> nil then begin FRecorder.stop; FRecorder.release; FRecorder := nil; end;
   FCanvas.Free;
   inherited;
 end;
@@ -1481,12 +1498,80 @@ begin
     if FRecorder <> nil then begin FRecorder.release; FRecorder := nil; end;
     Exit;
   end;
+  FRecorder.setMeteringEnabled(True);            // so AudioLevel reads during capture
   if not FRecorder.record_ then                  // mic denied / busy
   begin
     FRecorder.release; FRecorder := nil; Exit;
   end;
   FRecPath := fn;
   Result := True;
+end;
+
+function TCocoaShell.StartAudioMeter: Boolean;
+{ A metering-only mic session: same AVAudioRecorder path as StartAudioCapture but
+  with meteringEnabled and a throwaway file, so noise detection can read AudioLevel
+  without the caller owning a recording. TCC-gated exactly like capture — the first
+  arm triggers the mic prompt; denial returns False and callers read silence. }
+const
+  kFmtAAC = 1633772320; kQualHigh = 96;
+var
+  dir, fn: string; url: NSURL; settings: NSMutableDictionary; err: NSError;
+begin
+  Result := False;
+  if FMeter <> nil then Exit(True);              // already armed
+  dir := string(NSTemporaryDirectory.UTF8String);
+  if (dir <> '') and (dir[Length(dir)] <> '/') then dir := dir + '/';
+  fn := dir + 'tina4-meter-' + FormatDateTime('yyyymmdd-hhnnss', Now) + '.m4a';
+  url := NSURL.fileURLWithPath(NSStr(fn));
+  settings := NSMutableDictionary.dictionary;
+  settings.setObject_forKey(NSNumber.numberWithInt(kFmtAAC),   AVFormatIDKey);
+  settings.setObject_forKey(NSNumber.numberWithDouble(44100),  AVSampleRateKey);
+  settings.setObject_forKey(NSNumber.numberWithInt(1),         AVNumberOfChannelsKey);
+  settings.setObject_forKey(NSNumber.numberWithInt(kQualHigh), AVEncoderAudioQualityKey);
+  err := nil;
+  FMeter := AVAudioRecorder.alloc.initWithURL_settings_error(url, settings, @err);
+  if (FMeter = nil) or (err <> nil) then
+  begin
+    if FMeter <> nil then begin FMeter.release; FMeter := nil; end;
+    Exit;
+  end;
+  FMeter.setMeteringEnabled(True);
+  if not FMeter.record_ then                     // mic denied / busy
+  begin
+    FMeter.release; FMeter := nil; Exit;
+  end;
+  FMeterPath := fn;
+  Result := True;
+end;
+
+procedure TCocoaShell.StopAudioMeter;
+begin
+  if FMeter = nil then Exit;
+  FMeter.stop;
+  FMeter.release; FMeter := nil;
+  if FMeterPath <> '' then
+    NSFileManager.defaultManager.removeItemAtPath_error(NSStr(FMeterPath), nil);
+  FMeterPath := '';
+end;
+
+function TCocoaShell.AudioLevel: Single;
+{ Current input as RMS 0..1. averagePowerForChannel returns dBFS (-160..0);
+  convert to linear amplitude 10^(dB/20). Reuse an active capture session if the
+  caller never armed a separate meter. }
+const
+  Ln10over20 = 0.1151292546497023;   // ln(10)/20
+var
+  rec: AVAudioRecorder; p: Single;
+begin
+  Result := 0.0;
+  rec := FMeter;
+  if rec = nil then rec := FRecorder;
+  if rec = nil then Exit;
+  rec.updateMeters;
+  p := rec.averagePowerForChannel(0);
+  if p <= -60 then Exit;              // floor: treat <= -60 dBFS as silence
+  Result := Exp(p * Ln10over20);
+  if Result > 1.0 then Result := 1.0;
 end;
 
 function TCocoaShell.StopAudioCapture: string;
