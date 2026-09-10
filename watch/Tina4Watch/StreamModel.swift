@@ -16,6 +16,12 @@ final class StreamModel: NSObject, ObservableObject, WCSessionDelegate {
 
     override init() {
         super.init()
+        // Show a bundled demo frame at launch (an engine-rendered PNG) until the
+        // phone starts streaming live frames — so the app is meaningful stand-alone.
+        if let url = Bundle.main.url(forResource: "demo", withExtension: "png"),
+           let data = try? Data(contentsOf: url) {
+            frame = UIImage(data: data)
+        }
         guard WCSession.isSupported() else { return }
         let s = WCSession.default
         s.delegate = self
