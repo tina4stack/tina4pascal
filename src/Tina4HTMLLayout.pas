@@ -3306,8 +3306,18 @@ begin
       // position:relative parent). Takes no space; siblings ignore it.
       if SameText(cs.CSSPosition, 'absolute') or SameText(cs.CSSPosition, 'fixed') then
       begin
-        LayoutBlock(Box, c, ParentStyle, CX, CY, CW);
-        absBox := Box.Children[Box.Children.Count - 1];
+        // Replaced elements (img/svg/qrcode) are set up by MakeReplacedBox, which
+        // LayoutBlock never calls — so an absolutely-positioned <img> would never
+        // load or paint its image. Build it here (nil for ordinary elements, which
+        // then take the normal block path).
+        absBox := MakeReplacedBox(c, cs, CW);
+        if absBox <> nil then
+          Box.Children.Add(absBox)
+        else
+        begin
+          LayoutBlock(Box, c, ParentStyle, CX, CY, CW);
+          absBox := Box.Children[Box.Children.Count - 1];
+        end;
         // Shrink-to-fit: an out-of-flow box with no explicit width sizes to its
         // content (CSS "shrink-to-fit"), not the full container — e.g. a pill
         // pinned with `right` only should hug its text, not span the row.

@@ -47,10 +47,15 @@ shapes, backgrounds, border-radius **and text**: `Tina4RasterCanvas.DrawText`
 draws digits + `:` `.` `-` with a 7-segment font (AA-filled segments) and letters
 A-Z + common punctuation with a stroke (vector) font (AA polylines) — both scale
 crisply. The demo is a live clock (`HH:MM`, seconds, weekday + date, a brand
-label), re-rendered every second — engine-laid-out and rasterized on the watch.
-Uppercase and **lowercase** both have distinct glyphs (lowercase with real
-x-height, ascenders and descenders). No bitmap font ships — every glyph is drawn
-from strokes/segments, so text is resolution-independent.
+label, a WebP logo), re-rendered every second — engine-laid-out and rasterized on
+the watch. Uppercase and **lowercase** both have distinct glyphs (lowercase with
+real x-height, ascenders and descenders). No bitmap font ships — every glyph is
+drawn from strokes/segments, so text is resolution-independent.
+
+**Images** decode + blit through the pure-Pascal path too: a **WebP** (`data:`
+URI or bundled file — VP8L lossless *and* lossy VP8) is decoded by `Tina4WebP`
+and blitted via `DrawRGBA`. PNG/JPEG and remote `http(s)` images still need a
+native decoder/fetch (not on the watch yet), so ship watch imagery as WebP.
 
 Requires the patched toolchain at `~/fpc-watchos` (or `TINA4_WATCHOS_FPC`); build
 it from [fpc-watchossim.diff](fpc-watchossim.diff). `tools/tina4pascal doctor`
