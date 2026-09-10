@@ -359,12 +359,6 @@ begin
   StrokePolyline(pts, Thickness, Color, True);   // closed
 end;
 
-procedure TTina4RasterCanvas.DrawText(X, Y: Single; const Text: string;
-  FontSize: Single; Styles: TTina4FontStyles; Color: TTina4Color);
-begin
-  // no-op: the time-driven canvas subset (Lottie) has no text layers
-end;
-
 { Per-character advance in em (fraction of the font size), for the proportional
   text approximation below. Not a real font metric — a sane spread of narrow /
   normal / wide glyphs so shrink-to-fit widths are believable headless. }
@@ -412,6 +406,74 @@ begin
   Result.Ascent := FontSize * 0.8;
   Result.Descent := FontSize * 0.2;
   Result.LineHeight := FontSize;
+end;
+
+{ Native raster text — first glyph set: a 7-segment NUMERIC font (0-9 : . -),
+  the natural fit for a watch clock / any numeric display, drawn as AA-filled
+  segments so it scales crisply. (X,Y) is the text box top-left and advances come
+  from AsciiEm, so it lines up with MeasureText and the layout. Letters advance
+  but don't draw yet — a full vector font is the follow-up; until then the raster
+  path (watch, headless) renders numbers, not prose. }
+procedure TTina4RasterCanvas.DrawText(X, Y: Single; const Text: string;
+  FontSize: Single; Styles: TTina4FontStyles; Color: TTina4Color);
+const
+  // segment bits: a=1 b=2 c=4 d=8 e=16 f=32 g=64 (a top, g middle, d bottom;
+  // f/b upper sides, e/c lower sides)
+  DIG: array[0..9] of Byte = (63, 6, 91, 79, 102, 109, 125, 7, 127, 111);
+var
+  fs, pen, adv, boldf, th, L, R, T, B, M, dot, cx, inset: Single;
+  i, n, bcode: Integer; ch: Char;
+
+  procedure HSeg(yc: Single);   // horizontal segment centred on yc
+  begin FillRect(L + inset, yc - th / 2, (R - L) - 2 * inset, th, Color); end;
+  procedure VSeg(xc, y0, y1: Single);   // vertical segment centred on xc
+  begin FillRect(xc - th / 2, y0 + inset, th, (y1 - y0) - 2 * inset, Color); end;
+  procedure Digit(mask: Integer);
+  begin
+    if (mask and 1)  <> 0 then HSeg(T);
+    if (mask and 64) <> 0 then HSeg(M);
+    if (mask and 8)  <> 0 then HSeg(B);
+    if (mask and 32) <> 0 then VSeg(L, T, M);
+    if (mask and 2)  <> 0 then VSeg(R, T, M);
+    if (mask and 16) <> 0 then VSeg(L, M, B);
+    if (mask and 4)  <> 0 then VSeg(R, M, B);
+  end;
+begin
+  if Text = '' then Exit;
+  fs := FontSize;
+  boldf := 1.0; if tfsBold in Styles then boldf := 1.15;
+  th := fs * 0.095 * boldf; if th < 1.2 then th := 1.2;   // stroke thickness
+  inset := th * 0.85;                                      // corner gap between segments
+  pen := X;
+  i := 1; n := Length(Text);
+  while i <= n do
+  begin
+    bcode := Ord(Text[i]);
+    if bcode >= $80 then   // multibyte codepoint: advance only (matches MeasureText)
+    begin
+      pen := pen + 0.6 * fs * boldf; Inc(i);
+      while (i <= n) and ((Ord(Text[i]) and $C0) = $80) do Inc(i);
+      Continue;
+    end;
+    ch := Text[i]; Inc(i);
+    adv := AsciiEm(ch) * fs * boldf;
+    L := pen + fs * 0.11; R := pen + adv - fs * 0.09;   // digit body ~0.30em wide
+    T := Y + fs * 0.14; B := Y + fs * 0.80; M := (T + B) / 2;
+    cx := pen + adv / 2; dot := th;
+    if (ch >= '0') and (ch <= '9') then
+      Digit(DIG[Ord(ch) - Ord('0')])
+    else if ch = ':' then
+    begin
+      FillRect(cx - dot / 2, T + (B - T) * 0.30 - dot / 2, dot, dot, Color);
+      FillRect(cx - dot / 2, T + (B - T) * 0.70 - dot / 2, dot, dot, Color);
+    end
+    else if ch = '.' then
+      FillRect(cx - dot / 2, B - dot, dot, dot, Color)
+    else if ch = '-' then
+      HSeg(M);
+    // space / letters: advance only for now
+    pen := pen + adv;
+  end;
 end;
 
 procedure TTina4RasterCanvas.SetClip(X, Y, W, H: Single);

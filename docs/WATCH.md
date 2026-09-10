@@ -43,9 +43,12 @@ calls `PASCALMAIN()` once, then drives render/touch and shows the engine's frame
 
 `deploy watchsim` needs a booted (or available) Apple Watch Simulator and builds
 **arm64-only** (FPC watchossim = arm64), signing off. The raster path renders
-shapes/backgrounds/border-radius; glyph text is a native-canvas follow-up
-(`Tina4RasterCanvas.DrawText` is still a no-op), so watch UIs are shape-based
-today (the demo is a smiley).
+shapes, backgrounds and border-radius, and now **numeric text**: the demo is a
+live clock — `Tina4RasterCanvas.DrawText` draws digits, `:`, `.` and `-` with a
+7-segment font (AA-filled segments, scales crisply), so the engine lays out and
+rasterizes `HH:MM`/date/seconds on the watch every second. Letters advance but
+don't draw yet — a full vector/bitmap glyph set is the follow-up; until then the
+raster path (watch, headless) renders numbers and shapes, not prose.
 
 Requires the patched toolchain at `~/fpc-watchos` (or `TINA4_WATCHOS_FPC`); build
 it from [fpc-watchossim.diff](fpc-watchossim.diff). `tools/tina4pascal doctor`

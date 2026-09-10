@@ -7,59 +7,56 @@ import WatchKit
 // we wrap that buffer in a UIImage for SwiftUI. No phone, no network — the same
 // engine, HTML and events as every other Tina4 surface, now on the wrist.
 //
-// (The renderer has no glyph rasterizer yet, so this demo document is built from
-// shapes — divs, backgrounds, border-radius — exactly the kind of watch UI the
-// engine draws crisply. Text glyphs are a native-canvas follow-up.)
+// This face is a live clock: the engine draws the time with the raster path's
+// 7-segment numeric font (Tina4RasterCanvas.DrawText). It re-renders every
+// second, so you can watch the seconds tick — each frame is the Pascal engine
+// laying out and rasterizing HTML on the watch.
 final class EngineModel: ObservableObject {
     static let shared = EngineModel()
 
     @Published var frame: UIImage?
-    private var winked = false
     private var started = false
+    private var timer: Timer?
+    private var accentPink = false   // tap toggles the accent
 
-    // The watch's own point size × screen scale = the pixel buffer we render.
     private var points: CGSize { WKInterfaceDevice.current().screenBounds.size }
     private var scale: CGFloat { WKInterfaceDevice.current().screenScale }
 
     func start() {
         guard !started else { return }
         started = true
-        // Bring up the FPC runtime once, then bind a canvas at our pixel size.
-        PASCALMAIN()
+        PASCALMAIN()                                   // bring up the FPC runtime once
         let w = Int(points.width * scale), h = Int(points.height * scale)
         tina4watch_init(Int32(w), Int32(h))
         render()
+        // tick every second so the seconds advance
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.render()
+        }
     }
 
-    // A tap on the wrist → the real engine event path, plus a visible response:
-    // toggle the wink and re-render. On a document with registered onclick
-    // actions, tina4watch_touch would fire them; here it exercises hit-testing
-    // and we drive the wink from the host so the interaction is visible.
+    // A tap → the engine event path + a visible response (swap the accent colour).
     func tap() {
         WKInterfaceDevice.current().play(.click)
         let mid = Float(points.width * scale) / 2
-        _ = tina4watch_touch(0, mid, mid)   // down
-        _ = tina4watch_touch(1, mid, mid)   // up
-        winked.toggle()
+        _ = tina4watch_touch(0, mid, mid)
+        _ = tina4watch_touch(1, mid, mid)
+        accentPink.toggle()
         render()
     }
 
     func render() {
         let w = Int(points.width * scale), h = Int(points.height * scale)
-        let html = Self.smiley(w: w, h: h, winked: winked)
+        let html = clock(w: w, h: h, accentPink: accentPink)
         html.withCString { tina4watch_set_html($0) }
         guard let buf = tina4watch_render(Int32(w), Int32(h), 1.0) else { return }
-        if let img = Self.image(from: buf, w: w, h: h, scale: scale) {
-            frame = img
-        }
+        if let img = Self.image(from: buf, w: w, h: h, scale: scale) { frame = img }
     }
 
     // Wrap the engine's $AARRGGBB (little-endian → BGRA) top-left-origin buffer as
-    // an opaque CGImage. The watch UI fills the screen with a solid background, so
-    // we display it opaque (alpha skipped) — no premultiply mismatch.
+    // an opaque CGImage — the watch UI fills the screen with a solid background.
     private static func image(from buf: UnsafeMutableRawPointer, w: Int, h: Int, scale: CGFloat) -> UIImage? {
-        let bytes = w * h * 4
-        let data = Data(bytes: buf, count: bytes)   // copy: the engine reuses its buffer next frame
+        let data = Data(bytes: buf, count: w * h * 4)   // copy: the engine reuses its buffer
         guard let provider = CGDataProvider(data: data as CFData) else { return nil }
         let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue
                                          | CGBitmapInfo.byteOrder32Little.rawValue)
@@ -70,32 +67,34 @@ final class EngineModel: ObservableObject {
         return UIImage(cgImage: cg, scale: scale, orientation: .up)
     }
 
-    // Size-everything-from-the-screen smiley (ported from the render server) so it
-    // fits any watch. All shapes — the engine draws these 1:1.
-    private static func smiley(w: Int, h: Int, winked: Bool) -> String {
-        let face = Int(Double(min(w, h)) * 0.74)
-        let fl = (w - face) / 2, ft = (h - face) / 2
-        let eye = Int(Double(face) * 0.15)
-        let eyeY = ft + Int(Double(face) * 0.30)
-        let eL = fl + Int(Double(face) * 0.24)
-        let eR = fl + face - Int(Double(face) * 0.24) - eye
-        var leH = eye, leY = eyeY
-        if winked { leH = max(4, Int(Double(eye) * 0.25)); leY = eyeY + (eye - leH) / 2 }
-        let mW = Int(Double(face) * 0.50), mH = Int(Double(face) * 0.30)
-        let mL = fl + (face - mW) / 2, mT = ft + Int(Double(face) * 0.54)
-        let dk = "#15162e"
-        // px radii (= half the box) for circles. Use the 4-value form — the raster
-        // path rounds explicit per-corner px radii (single-value shorthand and % are
-        // not expanded for these boxes yet; the mouth already relies on 4-value).
-        let fr = face / 2, er = eye / 2
-        func r(_ v: Int) -> String { "\(v)px \(v)px \(v)px \(v)px" }
+    // A numeric clock face — HH:MM big, seconds and the date (MM-DD) below. All
+    // digits + ':' + '-', which the engine's 7-segment raster font draws.
+    private func clock(w: Int, h: Int, accentPink: Bool) -> String {
+        let now = Date()
+        let cal = Calendar.current
+        let c = cal.dateComponents([.hour, .minute, .second, .month, .day], from: now)
+        func p2(_ v: Int) -> String { String(format: "%02d", v) }
+        let hhmm = "\(p2(c.hour ?? 0)):\(p2(c.minute ?? 0))"
+        let ss = p2(c.second ?? 0)
+        let date = "\(p2(c.month ?? 0))-\(p2(c.day ?? 0))"
+        let accent = accentPink ? "#ff5aa0" : "#ffd23c"
+
+        let bigFS = Int(Double(h) * 0.26)
+        let bigTop = Int(Double(h) * 0.28)
+        let secFS = Int(Double(h) * 0.13)
+        let secTop = bigTop + bigFS + Int(Double(h) * 0.03)
+        let dateFS = Int(Double(h) * 0.10)
+        let dateTop = Int(Double(h) * 0.06)
+
+        func line(_ txt: String, _ top: Int, _ fs: Int, _ col: String) -> String {
+            "<div style=\"position:absolute;left:0px;top:\(top)px;width:\(w)px;text-align:center;"
+            + "font-size:\(fs)px;font-weight:bold;color:\(col)\">\(txt)</div>"
+        }
         return """
         <body style="margin:0;width:\(w)px;height:\(h)px;background:#0e0f1f">
-          <div style="position:absolute;left:\(fl)px;top:\(ft)px;width:\(face)px;height:\(face)px;border-radius:\(r(fr));background:#ffd23c"></div>
-          <div style="position:absolute;left:\(eR)px;top:\(eyeY)px;width:\(eye)px;height:\(eye)px;border-radius:\(r(er));background:\(dk)"></div>
-          <div style="position:absolute;left:\(eL)px;top:\(leY)px;width:\(eye)px;height:\(leH)px;border-radius:\(r(er));background:\(dk)"></div>
-          <div style="position:absolute;left:\(mL)px;top:\(mT)px;width:\(mW)px;height:\(mH)px;background:\(dk);border-radius:\(mH/6)px \(mH/6)px \(mH)px \(mH)px"></div>
-          <div style="position:absolute;left:\(mL)px;top:\(mT)px;width:\(mW)px;height:\(mH/2)px;background:#ffd23c"></div>
+          \(line(date, dateTop, dateFS, "#5b5c78"))
+          \(line(hhmm, bigTop, bigFS, accent))
+          \(line(ss, secTop, secFS, "#7d8cff"))
         </body>
         """
     }
