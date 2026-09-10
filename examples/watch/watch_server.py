@@ -18,43 +18,54 @@ import http.server, subprocess, tempfile, os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HTMLVIEWER = os.path.join(HERE, "..", "htmlviewer", "htmlviewer")
-CSS_W, CSS_H = 208, 248          # watch points; the engine renders at 2x -> 416x496 px
 PORT = 8723
 
 state = {"wink": False}
 
-def build_html():
-    # left eye: a closed line when winked, an open circle otherwise
-    le = "top:63px;height:6px" if state["wink"] else "top:53px;height:26px"
-    return f"""<!doctype html><html><head><style>
-      html,body{{margin:0;width:{CSS_W}px;height:{CSS_H}px;background:#0e0f1f}}
-      .face{{position:absolute;top:49px;left:29px;width:150px;height:150px;border-radius:50%;background:#ffd23c}}
-      .eye{{position:absolute;width:26px;height:26px;top:53px;border-radius:50%;background:#15162e}}
-      .r{{left:90px}}
-      #le{{left:38px;{le};border-radius:50%;position:absolute;width:26px;background:#15162e}}
-      .mouth{{position:absolute;left:37px;top:92px;width:76px;height:42px;background:#15162e;border-radius:6px 6px 52px 52px}}
-      .lip{{position:absolute;left:37px;top:92px;width:76px;height:21px;background:#ffd23c}}
-    </style></head><body>
-      <div class="face"><div class="eye" id="le"></div><div class="eye r"></div>
-      <div class="mouth"></div><div class="lip"></div></div>
-    </body></html>"""
+def build_html(w, h):
+    # Everything sized/centred from the watch's own points, so it fits any screen
+    # (Series 7 is smaller than Series 11 — a fixed layout got chopped).
+    face = int(min(w, h) * 0.74)
+    fl, ft = (w - face) // 2, (h - face) // 2
+    eye = int(face * 0.15)
+    eyeY = ft + int(face * 0.30)
+    eL = fl + int(face * 0.24)
+    eR = fl + face - int(face * 0.24) - eye
+    if state["wink"]:                      # left eye closes to a line
+        leH = max(4, int(eye * 0.25)); leY = eyeY + (eye - leH) // 2
+    else:
+        leH = eye; leY = eyeY
+    mW, mH = int(face * 0.50), int(face * 0.30)
+    mL, mT = fl + (face - mW) // 2, ft + int(face * 0.54)
+    dk = "#15162e"
+    return f"""<body style="margin:0;width:{w}px;height:{h}px;background:#0e0f1f">
+      <div style="position:absolute;left:{fl}px;top:{ft}px;width:{face}px;height:{face}px;border-radius:50%;background:#ffd23c"></div>
+      <div style="position:absolute;left:{eR}px;top:{eyeY}px;width:{eye}px;height:{eye}px;border-radius:50%;background:{dk}"></div>
+      <div style="position:absolute;left:{eL}px;top:{leY}px;width:{eye}px;height:{leH}px;border-radius:50%;background:{dk}"></div>
+      <div style="position:absolute;left:{mL}px;top:{mT}px;width:{mW}px;height:{mH}px;background:{dk};border-radius:{mH//6}px {mH//6}px {mH}px {mH}px"></div>
+      <div style="position:absolute;left:{mL}px;top:{mT}px;width:{mW}px;height:{mH//2}px;background:#ffd23c"></div>
+    </body>"""
 
-def render_png():
+def render_png(w, h):
     d = tempfile.mkdtemp()
     hp, pp = os.path.join(d, "w.html"), os.path.join(d, "w.png")
-    open(hp, "w").write(build_html())
-    subprocess.run([HTMLVIEWER, hp, "--snapshot", pp, "--width", str(CSS_W),
-                    "--height", str(CSS_H)], capture_output=True)
+    open(hp, "w").write(build_html(w, h))
+    subprocess.run([HTMLVIEWER, hp, "--snapshot", pp, "--width", str(w),
+                    "--height", str(h)], capture_output=True)
     return open(pp, "rb").read() if os.path.exists(pp) else b""
+
+import urllib.parse
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        w = int(q.get("w", ["208"])[0]); h = int(q.get("h", ["248"])[0])
         if self.path.startswith("/tap"):
             state["wink"] = not state["wink"]
             self.send_response(200); self.send_header("Content-Length", "2")
             self.end_headers(); self.wfile.write(b"ok"); return
-        png = render_png()
+        png = render_png(w, h)
         self.send_response(200)
         self.send_header("Content-Type", "image/png")
         self.send_header("Content-Length", str(len(png)))

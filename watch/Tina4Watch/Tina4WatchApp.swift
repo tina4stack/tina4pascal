@@ -1,4 +1,5 @@
 import SwiftUI
+import WatchKit
 
 @main
 struct Tina4WatchApp: App {
@@ -35,6 +36,10 @@ struct StreamView: View {
         .ignoresSafeArea()
         // any tap on the wrist → the Mac engine winks and pushes the next frame
         .contentShape(Rectangle())
-        .onTapGesture { model.sendTap(x: 0, y: 0) }
+        .onTapGesture {
+            // audible + haptic feedback on the watch, then wink
+            WKInterfaceDevice.current().play(.notification)
+            model.sendTap(x: 0, y: 0)
+        }
     }
 }

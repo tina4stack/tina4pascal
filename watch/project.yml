@@ -14,6 +14,9 @@ targets:
         WKApplication: true
         WKWatchOnly: true
         CFBundleDisplayName: Tina4 Watch
+        # 127.0.0.1 works in the watchOS Simulator; for a PHYSICAL watch set this
+        # to the Mac's LAN IP (same WiFi) so it can reach examples/watch/watch_server.py
+        Tina4ServerHost: "127.0.0.1"
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
