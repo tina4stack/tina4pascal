@@ -31,6 +31,13 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // local notifications: hold the app context + channel; ask permission on 33+
+        Tina4Notify.init(this);
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 4712);
+        }
         // No ActionBar (theme) — the engine draws edge-to-edge like iOS. Paint
         // the status bar in the page background with dark icons so it blends in;
         // the window still lays the view out below the status bar (no overlap).

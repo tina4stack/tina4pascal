@@ -15,7 +15,7 @@ uses
   SysUtils, Math,
   jni,
   Tina4RenderBackend, Tina4ShellAndroid, Tina4Interact,
-  Tina4Http, Tina4HttpAndroid,
+  Tina4Http, Tina4HttpAndroid, Tina4NotifyAndroid,
   ThreePascal, RamModel
   { A project's own units (declared as "appUnits" in tina4.json) are spliced in
     here by the android build. Each registers its named actions in its own
@@ -43,6 +43,7 @@ end;
 function JNI_OnLoad(VM: PJavaVM; Reserved: Pointer): jint; cdecl;
 begin
   InstallAndroidHttp(VM);
+  InstallAndroidNotify(VM);       // notify.show → Java Tina4Notify → NotificationManager
   Result := JNI_VERSION_1_6;
 end;
 

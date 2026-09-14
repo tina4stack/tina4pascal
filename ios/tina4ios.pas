@@ -28,6 +28,20 @@ var
   GCanvas: TIOSCanvas = nil;
   GAssetBase: string = '';   // app-bundle resource dir for relative <img src>
 
+// Local notifications (UserNotifications.framework, implemented in ios/app/Notify.m).
+procedure tina4_ios_notify(Title, Body, Tag: PAnsiChar); cdecl;
+  external name 'tina4_ios_notify';
+procedure tina4_ios_notify_authorize; cdecl;
+  external name 'tina4_ios_notify_authorize';
+
+// Registered as the engine's notify handler — notify.show('T','B') in HTML, or an
+// SSE/WebSocket handler calling Tina4Notify, lands here and posts an OS banner
+// (which also forwards to a paired Apple Watch when the app isn't foreground).
+procedure IOSNotify(const Title, Body, Tag: string);
+begin
+  tina4_ios_notify(PAnsiChar(Title), PAnsiChar(Body), PAnsiChar(Tag));
+end;
+
 procedure EnsureCanvas;
 begin
   if GCanvas = nil then
@@ -36,6 +50,8 @@ begin
     GCanvas.SetAssetBase(GAssetBase);
     TinaInit(GCanvas);
     InstallIOSHttp;          // native NSURLSession HTTP backend
+    tina4_ios_notify_authorize;             // ask permission once
+    Tina4SetNotifyHandler(@IOSNotify);      // wire notify.show → OS notification
   end;
 end;
 
