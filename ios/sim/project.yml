@@ -1,0 +1,42 @@
+name: Tina4Sim
+options:
+  bundleIdPrefix: com.tina4.pascal
+  deploymentTarget:
+    iOS: "14.0"
+targets:
+  Tina4Sim:
+    type: application
+    platform: iOS
+    sources:
+      - App
+    # The Pascal engine, built by ios/build-sim.sh into App/libtina4iossim.a
+    # (arm64 iOS-Simulator). The app links it and calls the tina4sim_* C entry
+    # points via App/tina4iossim.h.
+    dependencies:
+      - framework: App/libtina4iossim.a
+        embed: false
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Tina4 Sim
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tina4.pascal.sim
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        # the Pascal engine (libtina4iossim.a) is arm64-only (FPC iphonesim =
+        # arm64), so build the sim app arm64 too — Apple Silicon runs the iOS
+        # Simulator natively.
+        ARCHS: arm64
+        ONLY_ACTIVE_ARCH: "YES"
+        CODE_SIGNING_ALLOWED: "NO"
+        # bridge to the Pascal engine's C ABI
+        SWIFT_OBJC_BRIDGING_HEADER: App/tina4iossim.h
+        # the static lib lives in ios/sim/App/
+        LIBRARY_SEARCH_PATHS:
+          - $(PROJECT_DIR)/App

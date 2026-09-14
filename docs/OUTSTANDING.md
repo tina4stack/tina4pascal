@@ -65,13 +65,20 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   device install with Push enabled on the App ID.
 
 ## F. Platform & toolchain
-- **[M] iOS Simulator** — **← first pick.** FPC 3.2.2 has **no** simulator target;
-  the patched **trunk (3.3.1)** compiler at `~/fpc-watchos/bin/ppca64` already
-  advertises `iPhoneSim` (same tree that gained `watchOSSim`). iOS device and sim
-  are both arm64 LP64, so no ABI/compiler work — this is the watchossim playbook:
-  build the `aarch64-iphonesim` RTL, compile `libtina4ios-sim.a`, wire
-  `deploy ios-sim` (build app against `iPhoneSimulator.sdk` → `xcrun simctl` install
-  + launch). SDK (iPhoneSimulator26.5) and `simctl` are present on this host.
+- **[✅ raster / 🟡 native] iOS Simulator** — **DONE (raster path).** The
+  `aarch64-iphonesim` RTL is built (133 units, installed at
+  `~/fpc-watchos/units/aarch64-iphonesim`); `ios/build-sim.sh` compiles
+  `libtina4iossim.a` and `ios/sim/` is an XcodeGen app that renders HTML on the
+  Simulator — a Pascal `writeln` and the full engine both verified running on the
+  iOS Simulator, no physical iPhone (`docs/fpc-iphonesim.md`). **Remaining:**
+  (a) it renders through `Tina4RasterCanvas`, not the native `Tina4ShellIOS`
+  (Core Graphics/Core Text) — that needs `univint` built for iphonesim (its
+  package build defines; a bare compile hits `CFBase.pas` ENDIF errors), then
+  `Tina4ShellIOS` compiled for the sim; (b) wire `build ios-sim` / `deploy ios-sim`
+  into `tools/tina4pascal` + the MCP (currently a standalone `ios/build-sim.sh`);
+  (c) an upstream one-liner: FPC's iphonesim link step emits the removed
+  `-ios_simulator_version_min` (Xcode 26 `ld`) — fine for the static-lib path,
+  but worth a `t_darwin.pas` fix as a GitLab MR.
 - **[M] Android emulator** — needs the Android SDK + `adb` + an **arm64** system
   image installed first (none on this host today); the arm64 `.so` then runs on an
   Apple-Silicon emulator and the CLI wires `deploy`/input to it. Not a free win

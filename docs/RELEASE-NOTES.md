@@ -26,6 +26,17 @@ bloating the compile size.
 - **Wear OS build** (`build wear` / `deploy wear`) — the engine runs natively on
   a Wear OS watch as `libtina4.so`.
 
+### iOS Simulator (no physical iPhone)
+- **The engine runs on the iOS Simulator as a native arm64 binary.** FPC 3.2.2
+  has no simulator target, so the patched trunk compiler (the one built for the
+  watch, `~/fpc-watchos`) is used with its upstream `iphonesim` target. The
+  `aarch64-iphonesim` RTL is built (133 units) and `ios/build-sim.sh` compiles
+  `libtina4iossim.a`; `ios/sim/` is a SwiftUI host that renders HTML on the
+  Simulator. A Pascal `writeln` and the full engine both verified running under
+  `simctl` — no device, no signing. Renders through the pure-Pascal rasterizer
+  (`Tina4RasterCanvas`); native Core Graphics on the sim (`univint`) is the
+  follow-up. See `docs/fpc-iphonesim.md`.
+
 ### Native raster rendering (Android + watch path)
 - **Text.** `Tina4RasterCanvas.DrawText` was a no-op; it now draws a **7-segment
   numeric font** (`0-9 : . -`) and a **stroke vector font** for **A–Z and a–z**
