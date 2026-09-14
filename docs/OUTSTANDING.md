@@ -65,11 +65,17 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   device install with Push enabled on the App ID.
 
 ## F. Platform & toolchain
-- **[M] iOS Simulator** — FPC 3.2.2 has an `aarch64-iphonesim` target (it's the
-  template the watchOS-sim work cloned). Build the engine for it and wire a
-  `deploy ios-sim`, so the iOS app runs without a physical iPhone. **← first pick.**
-- **[S] Android emulator** — the arm64 `.so` should run on an Apple-Silicon arm64
-  emulator already; likely just needs the CLI to launch/target an emulator.
+- **[M] iOS Simulator** — **← first pick.** FPC 3.2.2 has **no** simulator target;
+  the patched **trunk (3.3.1)** compiler at `~/fpc-watchos/bin/ppca64` already
+  advertises `iPhoneSim` (same tree that gained `watchOSSim`). iOS device and sim
+  are both arm64 LP64, so no ABI/compiler work — this is the watchossim playbook:
+  build the `aarch64-iphonesim` RTL, compile `libtina4ios-sim.a`, wire
+  `deploy ios-sim` (build app against `iPhoneSimulator.sdk` → `xcrun simctl` install
+  + launch). SDK (iPhoneSimulator26.5) and `simctl` are present on this host.
+- **[M] Android emulator** — needs the Android SDK + `adb` + an **arm64** system
+  image installed first (none on this host today); the arm64 `.so` then runs on an
+  Apple-Silicon emulator and the CLI wires `deploy`/input to it. Not a free win
+  until the SDK is in place.
 - **[L] Physical Apple Watch (`arm64_32`)** — FPC Phase 2. M1 done (FPC-LLVM builds);
   M2 crux pinned (compile-time pointer size → a separate ILP32 CPU variant).
   `docs/FPC-WATCHOS-PLAN.md`.
