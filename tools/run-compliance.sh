@@ -66,6 +66,19 @@ if [ "${TINA4_SKIP_UNIT:-0}" != "1" ]; then
   echo "----------------------------------------"
 fi
 
+# --- raster gate: golden-image tests for the software rasterizer ------------
+# The reftests below render through the native Cocoa canvas; this covers the
+# RASTER path (7-segment + stroke fonts, rounded fills, gradients, WebP) that
+# Android and the Apple Watch use, and which nothing else guards. Abort on any
+# regression. Skip with TINA4_SKIP_RASTER=1.
+if [ "${TINA4_SKIP_RASTER:-0}" != "1" ] && [ -x "$REPO/tools/run-raster-tests.sh" ]; then
+  echo "raster golden tests..."
+  if ! "$REPO/tools/run-raster-tests.sh"; then
+    echo "RASTER-FAIL — see the raster table above"; exit 1
+  fi
+  echo "----------------------------------------"
+fi
+
 ( cd "$VIEW" && "$HOME/fpc/bin/fpc" -Mdelphi -Fu../../src htmlviewer.pas >/dev/null 2>&1 ) \
   || { echo "viewer build failed"; exit 1; }
 
