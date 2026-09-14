@@ -42,6 +42,22 @@ begin
   tina4_ios_notify(PAnsiChar(Title), PAnsiChar(Body), PAnsiChar(Tag));
 end;
 
+// The APNs device token, handed up from AppDelegate (Objective-C) after
+// registerForRemoteNotifications succeeds. Forwards to the engine's push hook.
+procedure tina4_push_token(Platform, Token: PAnsiChar); cdecl;
+  public name '_tina4_push_token';
+begin
+  Tina4PushToken(string(AnsiString(Platform)), string(AnsiString(Token)));
+end;
+
+// Default push handler - shows the token so registration is visible on-device.
+// An app overrides this with Tina4SetPushTokenHandler to POST the token to its
+// Tina4 backend (which then pushes to this device through APNs).
+procedure DefaultPush(const Platform, Token: string);
+begin
+  IOSNotify('Push registered (' + Platform + ')', Copy(Token, 1, 16) + '...', 'push-token');
+end;
+
 procedure EnsureCanvas;
 begin
   if GCanvas = nil then
@@ -50,8 +66,9 @@ begin
     GCanvas.SetAssetBase(GAssetBase);
     TinaInit(GCanvas);
     InstallIOSHttp;          // native NSURLSession HTTP backend
-    tina4_ios_notify_authorize;             // ask permission once
+    tina4_ios_notify_authorize;             // ask permission once (+ registers for remote push)
     Tina4SetNotifyHandler(@IOSNotify);      // wire notify.show → OS notification
+    Tina4SetPushTokenHandler(@DefaultPush); // APNs token → visible until an app wires it to the backend
   end;
 end;
 

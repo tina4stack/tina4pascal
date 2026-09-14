@@ -3,15 +3,23 @@
 // HTML lands here. Local only (no push entitlement needed); these auto-forward to
 // a paired Apple Watch when the app isn't foreground. Remote (APNs) is Phase 2.
 #import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
 
-// Ask the user once (call at launch). Safe to call repeatedly.
+// Ask the user once (call at launch). On grant, also register for REMOTE push
+// (APNs) - the token comes back to AppDelegate, which hands it to Pascal.
 void tina4_ios_notify_authorize(void) {
     UNUserNotificationCenter *c = [UNUserNotificationCenter currentNotificationCenter];
     [c requestAuthorizationWithOptions:(UNAuthorizationOptionAlert |
                                         UNAuthorizationOptionSound |
                                         UNAuthorizationOptionBadge)
-                     completionHandler:^(BOOL granted, NSError *err) { /* no-op */ }];
+                     completionHandler:^(BOOL granted, NSError *err) {
+        if (granted) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [[UIApplication sharedApplication] registerForRemoteNotifications];
+            });
+        }
+    }];
 }
 
 // Post a local notification now. `tag` (optional) lets a later notification with

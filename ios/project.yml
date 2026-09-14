@@ -20,6 +20,10 @@ targets:
     sources:
       - path: app
         excludes: [ "libtina4ios.a", "Info.plist" ]
+    entitlements:
+      path: app/Tina4Pascal.entitlements
+      properties:
+        aps-environment: development   # APNs (remote push); switch to production for release
     settings:
       base:
         INFOPLIST_FILE: app/Info.plist

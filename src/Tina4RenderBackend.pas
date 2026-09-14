@@ -289,6 +289,16 @@ type
 procedure Tina4SetNotifyHandler(P: TTina4NotifyProc);
 procedure Tina4Notify(const Title, Body, Tag: string);
 
+{ Remote-push registration: the shell hands the OS device token (APNs on iOS,
+  Firebase Cloud Messaging (FCM) on Android) to the core, which forwards it to
+  whatever the app wired - typically a POST to the Tina4 backend so the server
+  can push to this device. Platform is 'ios' or 'android'. No-op until wired. }
+type
+  TTina4PushProc = procedure(const Platform, Token: string);
+
+procedure Tina4SetPushTokenHandler(P: TTina4PushProc);
+procedure Tina4PushToken(const Platform, Token: string);
+
 { Tessellate a rounded rectangle (border-box coords, y-down) to a closed polygon —
   the shared builder for ClipRoundRect overrides. Radius is clamped to half the
   shorter side (so 50% / 999px yield a pill or circle). }
@@ -343,6 +353,7 @@ begin
 end;
 
 var GNotifyHook: TTina4NotifyProc = nil;
+    GPushHook: TTina4PushProc = nil;
 
 procedure Tina4SetNotifyHandler(P: TTina4NotifyProc);
 begin
@@ -352,6 +363,16 @@ end;
 procedure Tina4Notify(const Title, Body, Tag: string);
 begin
   if Assigned(GNotifyHook) then GNotifyHook(Title, Body, Tag);
+end;
+
+procedure Tina4SetPushTokenHandler(P: TTina4PushProc);
+begin
+  GPushHook := P;
+end;
+
+procedure Tina4PushToken(const Platform, Token: string);
+begin
+  if Assigned(GPushHook) then GPushHook(Platform, Token);
 end;
 
 procedure TTina4Shell.SetTitle(const Title: string);
