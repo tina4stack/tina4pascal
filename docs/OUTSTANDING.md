@@ -42,17 +42,32 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   degrade) on the raster canvas.
 
 ## B. Text & internationalization
-- **[L] Bidi / RTL** — `direction` is block-level only; `bdi`/`bdo` + full
-  mixed-direction bidi not done (engine is LTR).
-- **[M] `writing-mode`** — single sideways line only, no full vertical block-flow.
+The tractable text features are done (`hyphens`, `font-variant: small-caps`,
+`ruby`). What remains here is genuinely large or needs font infrastructure — each
+is a multi-session effort, not a quick pass, and is left honestly open rather than
+shipped as a low-quality approximation.
+
+- **[L] Bidi / RTL** — `direction:rtl` block-level alignment is done; full
+  mixed-direction inline bidi (the Unicode Bidirectional Algorithm — reordering
+  runs, mirrored punctuation, `bdi`/`bdo`, `unicode-bidi`) is a large standalone
+  piece. The whole inline builder assumes LTR; this is not a small change.
+- **[L] `writing-mode` (full vertical block-flow)** — a Latin run is set sideways
+  today (the whole box rotates 90°, which reads correctly for a single line;
+  reftest `writing-mode-vertical`). True vertical block-flow inverts the main/cross
+  axes through the entire block + inline layout (lines advancing horizontally,
+  upright CJK) — an axis-inversion rewrite, not an increment.
+- **[S→infra] `font-stretch`** — parsed-ignored. The spec-correct behaviour selects
+  a width-variant font face (condensed/expanded), which needs those faces; a
+  synthetic horizontal glyph scale would thread a per-run factor through the item
+  and run models (many construction sites) for a low-quality result. Deferred to
+  the font-selection work rather than shipped as a hack.
 - ~~**[M] `hyphens`**~~ — **DONE (manual).** `manual` (the CSS default) breaks a
   word at its soft hyphens (`&shy;`/U+00AD) when a line needs it and renders a `-`;
   `none` never breaks there; `auto` degrades to `manual` (no dictionary). Added the
   `&shy;` entity. Reftest `hyphens-shy`. Remaining: `auto` dictionary hyphenation.
 - **[S] `font-variant: small-caps`** — **DONE** (synthesised: lowercase → 0.78×
   uppercase on the shared baseline, one atomic run; reftest `font-smallcaps`).
-  Remaining: `font-stretch` (width-variant selection / synthetic stretch);
-  non-ASCII lowercase casing for small-caps.
+  Remaining: non-ASCII lowercase casing.
 - ~~**[M] `ruby`**~~ — **DONE.** `<rt>` renders centred above its base in a smaller
   font (furigana); the ruby is an atomic inline box that reserves space above the
   line; `<rp>` hidden. One base+annotation pair per ruby (no per-character split).
