@@ -2546,6 +2546,8 @@ procedure TLayoutEngine.LayoutChildren(Box: TLayoutBox; Tag: THTMLTag;
 var
   y: Single;
   items: TList<TInlineItem>;
+  hyphenIdx: TList<Integer>;  // item indices that are soft-hyphen break points
+                              // (render a '-' when one ends a wrapped line)
   pendingSpace: Boolean;   // trailing whitespace carried across inline nodes
   noWrapFlow: Boolean;     // white-space:nowrap → keep inline items on one line
   firstInlineLine: Boolean; // text-indent applies to the first formatted line only
@@ -2722,6 +2724,30 @@ var
     items.Add(bi);
   end;
 
+  { hyphens: manual/auto — split a word at its soft hyphens (U+00AD, UTF-8 C2 AD)
+    into fragments, each its own inline item so the wrapper may break between them.
+    A fragment that ends a wrapped line renders a trailing '-' (FlushLine, via the
+    hyphenIdx set). Fragments that stay together render contiguous with no hyphen.
+    'auto' has no dictionary here, so it behaves like 'manual' (breaks only at the
+    explicit soft hyphens the author placed). }
+  procedure EmitSoftHyphenWord(const W: string; const St: TComputedStyle; SpaceBefore: Boolean);
+  var p, q: Integer; frag: string; sp, last: Boolean;
+  begin
+    sp := SpaceBefore; p := 1;
+    while p <= Length(W) do
+    begin
+      q := Pos(#$C2#$AD, W, p);
+      if q = 0 then begin frag := Copy(W, p, MaxInt); last := True; p := Length(W) + 1; end
+      else begin frag := Copy(W, p, q - p); last := False; p := q + 2; end;  // step past the 2-byte U+00AD
+      if frag <> '' then
+      begin
+        AddTextItem(frag, St, sp);
+        if not last then hyphenIdx.Add(items.Count - 1);   // break point → '-' if it ends a line
+        sp := False;
+      end;
+    end;
+  end;
+
   { white-space: pre / pre-wrap / pre-line. Newlines become hard breaks; pre and
     pre-wrap also preserve runs of spaces (emitted as their own items); pre-line
     collapses spaces. Wrapping is governed by noWrapFlow (off for pre-wrap/
@@ -2825,10 +2851,11 @@ var
         Exit;
       end;
       txt := CollapseWS(T.Text);
-      // soft hyphen U+00AD (UTF-8 $C2$AD): a break-opportunity hint that is
-      // invisible unless a line breaks there. We don't hyphenate, so strip it
-      // rather than render it as an artifact (hyphens:none behaviour).
-      if Pos(#$C2#$AD, txt) > 0 then txt := StringReplace(txt, #$C2#$AD, '', [rfReplaceAll]);
+      // soft hyphen U+00AD (UTF-8 $C2$AD): a break opportunity, invisible unless
+      // a line breaks there. With hyphens:none we strip it (no artifact); with
+      // manual/auto (the CSS default) it is kept and handled per-word below.
+      if (Pos(#$C2#$AD, txt) > 0) and SameText(St.Hyphens, 'none') then
+        txt := StringReplace(txt, #$C2#$AD, '', [rfReplaceAll]);
       if (St.TextTransform <> '') and not SameText(St.TextTransform, 'none') then
         txt := ApplyTextTransform(txt, St.TextTransform);
       if Trim(txt) = '' then
@@ -2850,6 +2877,15 @@ var
         for i := 0 to words.Count - 1 do
         begin
           if words[i] = '' then Continue;
+          // hyphens: manual/auto — a word carrying soft hyphens becomes a chain of
+          // breakable fragments; prefer this to arbitrary char-breaking.
+          if (Pos(#$C2#$AD, words[i]) > 0) and not SameText(St.Hyphens, 'none') then
+          begin
+            EmitSoftHyphenWord(words[i], St, (items.Count > 0) and ((i > 0) or leadingSpace));
+            FCanvas.LetterSpacing := St.LetterSpacing;   // restore loop measure context
+            FCanvas.FontFamily := St.FontFamily; FCanvas.FontWeight := St.FontWeight;
+            Continue;
+          end;
           m := FCanvas.MeasureText(words[i], St.FontSize, FontStylesOf(St));
           // overflow-wrap / word-break: a single word wider than the line is
           // broken between characters instead of overflowing the box.
@@ -3088,6 +3124,21 @@ var
     tal: string;
   begin
     if lineItems.Count = 0 then Exit;
+    // hyphens: if the last item on this line is a soft-hyphen break point, the
+    // line broke there — render the trailing '-'. (Fragments that stayed together
+    // never end a line on a break point, so they show no hyphen.)
+    idx := lineItems[lineItems.Count - 1];
+    if hyphenIdx.IndexOf(idx) >= 0 then
+    begin
+      it := items[idx];
+      FCanvas.FontFamily := it.FontFamily; FCanvas.FontWeight := it.FontWeight;
+      FCanvas.LetterSpacing := it.LetterSpacing;
+      it.W := it.W + FCanvas.MeasureText('-', it.FontSize, it.Styles).Width;
+      FCanvas.FontFamily := ''; FCanvas.FontWeight := 0; FCanvas.LetterSpacing := 0;
+      it.Text := it.Text + '-';
+      items[idx] := it;
+      hyphenIdx.Remove(idx);   // idempotent if FlushLine ever revisits
+    end;
     // width used
     lineW := 0;
     for k := 0 to lineItems.Count - 1 do
@@ -3286,6 +3337,7 @@ begin
   noWrapFlow := SameText(ParentStyle.WhiteSpace, 'nowrap') or
                 SameText(ParentStyle.WhiteSpace, 'pre');
   items := TList<TInlineItem>.Create;
+  hyphenIdx := TList<Integer>.Create;
   try
     for c in Tag.Children do
     begin
@@ -3438,6 +3490,7 @@ begin
     FlowInlineItems;
   finally
     items.Free;
+    hyphenIdx.Free;
   end;
   // the container encloses its own floats (clearfix-style) so a tall float isn't
   // clipped, then drops them from the active context (they don't escape this BFC)

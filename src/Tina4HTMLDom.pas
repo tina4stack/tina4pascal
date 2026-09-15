@@ -1912,6 +1912,7 @@ begin
           else if Entity = 'lt' then Builder.Append('<')
           else if Entity = 'gt' then Builder.Append('>')
           else if Entity = 'nbsp' then Builder.Append(CodePointToUTF8(160))
+          else if Entity = 'shy' then Builder.Append(CodePointToUTF8(173))   // soft hyphen U+00AD (hyphens)
           else if Entity = 'quot' then Builder.Append('"')
           else if Entity = 'apos' then Builder.Append('''')
           else if Entity = 'copy' then Builder.Append(CodePointToUTF8(169))

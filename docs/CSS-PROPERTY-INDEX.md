@@ -97,7 +97,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | text-align-last | ✅ | left/right/center/start/end/justify on the block's last line (and the line before a `<br>`) |
 | text-justify | ✅ | `none` disables the justification `text-align:justify` turns on; `inter-word`/`auto` keep it |
 | text-rendering | ✅ | accepted (a rendering hint with no required visual change — no-op) |
-| hyphens | 🟡 | parsed; soft hyphens (U+00AD) are stripped so they never render as an artifact (`none` behaviour). Breaking at soft hyphens (`manual`) needs the line-breaker to insert a hyphen on break; `auto` needs a hyphenation dictionary |
+| hyphens | ✅ | `manual` (the default) breaks a word at its soft hyphens (`&shy;` / U+00AD) when a line needs it and renders a `-` at the break; fragments that stay together show none. `none` never breaks at soft hyphens. `auto` has no dictionary, so it degrades to `manual` (breaks only at author-placed soft hyphens). Reftest `hyphens-shy` |
 
 ## Backgrounds & borders
 
@@ -198,8 +198,8 @@ mode renderer doesn't yet have):
     position/size/repeat (gradient alpha masks + `filter`/`backdrop-filter`/
     `mix-blend-mode`/`drop-shadow` and clip-path basic shapes are done).
 3. Typography remainder (font selection / bidi): `font-variant` small-caps
-    synthesis, `font-stretch`, `hyphens` (dictionary for `auto`; soft-hyphen
-    `manual` still TODO), full bidi (mixed-direction inline runs — `direction:rtl`
+    synthesis, `font-stretch`, `hyphens: auto` dictionary (soft-hyphen `manual`
+    done), full bidi (mixed-direction inline runs — `direction:rtl`
     block right-alignment is done) + full vertical block-flow (single-line
     `writing-mode` done).
 4. **user-select / resize** (need a selection model / drag-resize handle);

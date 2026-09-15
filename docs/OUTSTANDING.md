@@ -45,7 +45,10 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
 - **[L] Bidi / RTL** — `direction` is block-level only; `bdi`/`bdo` + full
   mixed-direction bidi not done (engine is LTR).
 - **[M] `writing-mode`** — single sideways line only, no full vertical block-flow.
-- **[M] `hyphens`** — `manual`/`auto` hyphenation not done.
+- ~~**[M] `hyphens`**~~ — **DONE (manual).** `manual` (the CSS default) breaks a
+  word at its soft hyphens (`&shy;`/U+00AD) when a line needs it and renders a `-`;
+  `none` never breaks there; `auto` degrades to `manual` (no dictionary). Added the
+  `&shy;` entity. Reftest `hyphens-shy`. Remaining: `auto` dictionary hyphenation.
 - **[S] `font-variant` small-caps, `font-stretch`** — parsed-ignored.
 - **[M] `ruby`** — inline only, no stacked CJK annotation.
 - **[M] Raster fonts (watch/Android)** — digits + A–Z/a–z + basic punctuation;
