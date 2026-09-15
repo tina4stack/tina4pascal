@@ -1,0 +1,33 @@
+# FPC iOS-Simulator linker fix — ready for a GitLab merge request.
+#
+# Problem: building for the iOS Simulator, FPC's linker step emits
+# `-ios_simulator_version_min`, which modern `ld` (Xcode 15+, and firmly gone in
+# Xcode 26) has removed — so `fpc -Tiphonesim` fails at link with
+# "ld: unknown options: -ios_simulator_version_min". This bites anyone building
+# for the iOS Simulator on a current Xcode.
+#
+# Fix: emit the unified `-platform_version ios-simulator <min> <sdk>` form the
+# same way FPC already does for macOS `-platform_version` and (in the Tina4
+# watchOS-sim patch) for `watchos-simulator`. Mirrors the proven watchossim
+# branch exactly; verified: `fpc -Tiphonesim -Paarch64` now links an arm64
+# executable that runs in the iOS Simulator.
+#
+# FPC takes GitLab merge requests (gitlab.com/freepascal.org/fpc/source), not
+# GitHub PRs; first-time contributors sign the FPC contributor agreement.
+#
+# Apply against an FPC trunk checkout:  git apply docs/fpc-iphonesim-linker.diff
+diff --git a/compiler/systems/t_darwin.pas b/compiler/systems/t_darwin.pas
+index 75b0d172..1c12584c 100644
+--- a/compiler/systems/t_darwin.pas
++++ b/compiler/systems/t_darwin.pas
+@@ -371,7 +371,9 @@     tlinkerdarwin=class(texternallinker)
+         else if iPhoneOSVersionMin.isvalid then
+           begin
+             if target_info.system in [system_i386_iphonesim,system_x86_64_iphonesim,system_aarch64_iphonesim] then
+-              result:='-ios_simulator_version_min '+iPhoneOSVersionMin.str
++              { modern ld (Xcode 15+) dropped -ios_simulator_version_min; use the
++                unified -platform_version (platform min sdk). ios-simulator = platform 7 }
++              result:='-platform_version ios-simulator '+iPhoneOSVersionMin.str+' '+iPhoneOSVersionMin.str
+             else
+               result:='-iphoneos_version_min '+iPhoneOSVersionMin.str;
+           end

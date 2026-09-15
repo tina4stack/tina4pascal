@@ -40,7 +40,33 @@ never fires. (Fixing it properly is a one-line change to `t_darwin.pas`
 `GetLinkVersion` — a legitimate upstream fix, since it bites anyone building for
 the iOS Simulator on Xcode 26. FPC takes GitLab merge requests, not GitHub PRs.)
 
-## Recipe — build the RTL
+## Anyone can pull this and build
+
+One script builds the whole toolchain (RTL + package units + univint) from a
+fresh checkout:
+
+```sh
+# needs Xcode (iOS platform) + an FPC *trunk* compiler (3.3.x, has iPhoneSim).
+# Point PREFIX at that compiler's prefix so the units land beside it.
+PREFIX=~/fpc-watchos tools/build-iphonesim-toolchain.sh
+#   → ~/fpc-watchos/units/aarch64-iphonesim/*.ppu   (~180 units)
+ios/build-sim.sh                                    # → libtina4iossim.a (native)
+cd ios/sim && xcodegen generate && xcodebuild -project Tina4Sim.xcodeproj \
+    -scheme Tina4Sim -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+    -derivedDataPath /tmp/dd CODE_SIGNING_ALLOWED=NO build
+```
+
+No trunk compiler yet? Get one from **fpcupdeluxe** (install target "trunk"), or
+let the script build it from source with `BUILD_COMPILER=1` (it applies the
+linker patch below and works around the CommandLineTools-SDK `.tbd` issue by
+pointing `-XR` at Xcode's macOS SDK). The `iphonesim` target is **upstream** in
+trunk, so no compiler patch is needed just to build the engine — only the RTL.
+
+The optional upstream fix — `docs/fpc-iphonesim-linker.diff`, a one-liner so
+`fpc -Tiphonesim` links executables directly on modern `ld` — is a GitLab merge
+request (see its header). The static-lib path Tina4 uses doesn't need it.
+
+## Recipe — build the RTL (what the script does, step by step)
 
 ```sh
 # 0. a trunk source tree at ~the revision the patched compiler was built from.

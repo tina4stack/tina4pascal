@@ -37,7 +37,11 @@ bloating the compile size.
   Core Text** canvas (`Tina4ShellIOS`, the same shell the physical iPhone uses) —
   device-identical, system fonts and anti-aliasing. Unlocked by building the
   `univint` framework bindings for iphonesim (`-Mmacpas`). A pure-Pascal raster
-  fallback (`--raster`) stays for the no-univint path. See `docs/fpc-iphonesim.md`.
+  fallback (`--raster`) stays for the no-univint path. **Reproducible:**
+  `tools/build-iphonesim-toolchain.sh` rebuilds the whole toolchain (RTL +
+  packages + univint) from a fresh checkout. An upstream FPC linker fix is
+  prepared and verified (`docs/fpc-iphonesim-linker.diff`) so `fpc -Tiphonesim`
+  links directly on modern `ld` — ready for a GitLab MR. See `docs/fpc-iphonesim.md`.
 
 ### Native raster rendering (Android + watch path)
 - **Text.** `Tina4RasterCanvas.DrawText` was a no-op; it now draws a **7-segment

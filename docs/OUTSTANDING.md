@@ -75,9 +75,10 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   (a) wire `build ios-sim` / `deploy ios-sim` into `tools/tina4pascal` + the MCP
   (currently the standalone `ios/build-sim.sh`) — held only by a concurrent edit
   on that file; (b) port `ios/app/ImageLoader.m` so `<img>` loads on the sim (the
-  host stubs `tina4_ios_fetch_image` today); (c) an upstream one-liner — FPC's
-  iphonesim link step emits the removed `-ios_simulator_version_min` (Xcode 26
-  `ld`); fine for the static-lib path, but worth a `t_darwin.pas` GitLab MR.
+  host stubs `tina4_ios_fetch_image` today); (c) **upstream MR ready** — the
+  `t_darwin.pas` one-liner (`docs/fpc-iphonesim-linker.diff`, verified: patched
+  compiler direct-links `fpc -Tiphonesim` and runs in the sim) awaits submission
+  as a GitLab merge request. Reproducible build: `tools/build-iphonesim-toolchain.sh`.
 - **[M] Android emulator** — needs the Android SDK + `adb` + an **arm64** system
   image installed first (none on this host today); the arm64 `.so` then runs on an
   Apple-Silicon emulator and the CLI wires `deploy`/input to it. Not a free win
