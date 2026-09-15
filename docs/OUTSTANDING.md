@@ -57,8 +57,8 @@ shipped as a low-quality approximation.
   guillemets, etc.; strong-char runs are left to the backend to avoid double
   mirroring). Native backends shape each run. Reftest `bidi-rtl-ltr`. **Remaining:**
   per-character levels (mixed direction *within* one word/token), explicit
-  embeddings/overrides (`bdi`/`bdo`/`unicode-bidi`, LRE/RLE), and RTL shaping on
-  the pure-raster path.
+  embeddings via control codes (`unicode-bidi`, LRE/RLE), and RTL shaping on the
+  pure-raster path. (`<bdi>`/`<bdo>` elements DONE.)
 - **[L] `writing-mode` (full vertical block-flow)** — a Latin run is set sideways
   today (the whole box rotates 90°, which reads correctly for a single line;
   reftest `writing-mode-vertical`). True vertical block-flow inverts the main/cross

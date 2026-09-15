@@ -295,6 +295,8 @@ type
     TextAlignLast: string;     // '' = auto | left/right/center/start/end/justify
     TabSize: Integer;          // tab width in space-widths (default 8)
     Direction: string;         // 'ltr' (default) | 'rtl' — inherited
+    BidiForce: string;         // '' | 'rtl' | 'ltr' — forced by <bdo>/<bdi>, inherited to content
+    BidiOverride: Boolean;     // True = <bdo> (override: reverse chars); False = <bdi> (isolate)
     LineHeight: Single;
     VerticalAlign: string;
     CaptionSide: string;        // '' | 'top' | 'bottom' (table <caption> placement)
@@ -2367,6 +2369,7 @@ begin
   Result.TextAlignLast := '';
   Result.TabSize := 8;
   Result.Direction := 'ltr';
+  Result.BidiForce := ''; Result.BidiOverride := False;
   Result.LineHeight := 1.4;
   Result.VerticalAlign := 'baseline';
   Result.CaptionSide := 'top';
@@ -2832,6 +2835,8 @@ begin
   Result.TextAlignLast := ParentStyle.TextAlignLast;   // inherited
   Result.TabSize := ParentStyle.TabSize;               // inherited
   Result.Direction := ParentStyle.Direction;           // inherited
+  Result.BidiForce := ParentStyle.BidiForce;           // <bdo>/<bdi> apply to all descendant text
+  Result.BidiOverride := ParentStyle.BidiOverride;
   Result.WritingMode := ParentStyle.WritingMode;   // inherited
   Result.LineHeight := ParentStyle.LineHeight;
   Result.WhiteSpace := ParentStyle.WhiteSpace;

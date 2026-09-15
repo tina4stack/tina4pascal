@@ -464,6 +464,19 @@ begin
   if sawNum then Result := bkEN else Result := bkNeutral;
 end;
 
+{ True if the first strong character of S is RTL (UBA P2/P3, for dir=auto/<bdi>). }
+function FirstStrongRTL(const S: string): Boolean;
+var p: Integer; k: TBidiKind;
+begin
+  p := 1;
+  while p <= Length(S) do
+  begin
+    k := BidiKindOfCP(NextCP(S, p));
+    if k = bkR then Exit(True) else if k = bkL then Exit(False);
+  end;
+  Result := False;
+end;
+
 { TLayoutEngine }
 
 constructor TLayoutEngine.Create(Canvas: TTina4Canvas; Sheet: TCSSStyleSheet);
@@ -2709,6 +2722,8 @@ var
   items: TList<TInlineItem>;
   hyphenIdx: TList<Integer>;  // item indices that are soft-hyphen break points
                               // (render a '-' when one ends a wrapped line)
+  bidiForce: TDictionary<Integer, string>;  // item index → 'o'/'i' + 'rtl'/'ltr'
+                              // (<bdo> override / <bdi> isolate forced direction)
   pendingSpace: Boolean;   // trailing whitespace carried across inline nodes
   noWrapFlow: Boolean;     // white-space:nowrap → keep inline items on one line
   firstInlineLine: Boolean; // text-indent applies to the first formatted line only
@@ -2911,6 +2926,11 @@ var
     ti.SpaceBefore := SpaceBefore and (items.Count > 0);
     ti.LineBreak := False;
     items.Add(ti);
+    if St.BidiForce <> '' then       // <bdo>/<bdi> forced direction on this item
+    begin
+      if St.BidiOverride then bidiForce.AddOrSetValue(items.Count - 1, 'o' + St.BidiForce)
+      else bidiForce.AddOrSetValue(items.Count - 1, 'i' + St.BidiForce);
+    end;
   end;
 
   { Break an over-long word (a URL/hash with no spaces) into character-sized
@@ -3164,6 +3184,11 @@ var
           ComputeDecor(St, it.Styles, it.DecorLines, it.DecorStyle, it.DecorColor);
           it.SpaceBefore := (items.Count > 0) and ((i > 0) or leadingSpace);
           items.Add(it);
+          if St.BidiForce <> '' then       // <bdo>/<bdi> forced direction
+          begin
+            if St.BidiOverride then bidiForce.AddOrSetValue(items.Count - 1, 'o' + St.BidiForce)
+            else bidiForce.AddOrSetValue(items.Count - 1, 'i' + St.BidiForce);
+          end;
         end;
         FCanvas.LetterSpacing := 0;
         FCanvas.FontFamily := '';
@@ -3175,6 +3200,20 @@ var
     end;
     cs := TComputedStyle.ForTag(T, St, FSheet);
     if LowerCase(cs.Display) = 'none' then Exit;
+    // <bdo> = bidi override (force a direction + reverse chars); <bdi> = isolate
+    // (auto-detect its own direction). Both force BidiForce on descendant text.
+    if SameText(T.TagName, 'bdo') then
+    begin
+      cs.BidiForce := LowerCase(T.GetAttribute('dir')); cs.BidiOverride := True;
+      if (cs.BidiForce <> 'rtl') and (cs.BidiForce <> 'ltr') then cs.BidiForce := '';
+    end
+    else if SameText(T.TagName, 'bdi') then
+    begin
+      cs.BidiOverride := False;
+      cs.BidiForce := LowerCase(T.GetAttribute('dir'));
+      if (cs.BidiForce <> 'rtl') and (cs.BidiForce <> 'ltr') then   // default/auto
+        if FirstStrongRTL(InnerText(T)) then cs.BidiForce := 'rtl' else cs.BidiForce := 'ltr';
+    end;
     if cs.Margin.Left > 0 then
     begin // inline margin-left becomes a spacer in the flow
       it.Text := ''; it.Box := nil;
@@ -3371,7 +3410,7 @@ var
     n, i, j, lvl, maxLvl, base, s, e, la, lb: Integer;
     lv, res: array of Integer;
     logical: array of Integer;
-    kind: TBidiKind; anyRTL: Boolean; t: Integer; itm: TInlineItem;
+    kind: TBidiKind; anyRTL: Boolean; t: Integer; itm: TInlineItem; forceCode: string;
   begin
     n := li.Count;
     if n < 1 then Exit;
@@ -3391,6 +3430,24 @@ var
     anyRTL := (base = 1);
     for i := 0 to n - 1 do
     begin
+      // <bdo>/<bdi> force this item's direction, overriding its content
+      if bidiForce.TryGetValue(li[i], forceCode) then
+      begin
+        if Copy(forceCode, 2, 3) = 'ltr' then         // 'o'/'i' + 'ltr' → force even level
+        begin
+          if Odd(base) then lv[i] := base + 1 else lv[i] := base;
+        end
+        else                                          // ...'rtl' → force odd level
+        begin
+          if Odd(base) then lv[i] := base else lv[i] := base + 1;
+          anyRTL := True;
+          if forceCode[1] = 'o' then   // <bdo> override: reverse + mirror the glyphs
+          begin
+            itm := items[li[i]]; itm.Text := MirrorNeutralRTL(itm.Text); items[li[i]] := itm;
+          end;
+        end;
+        Continue;
+      end;
       kind := ItemBidiKind(items[li[i]].Text);
       case kind of
         bkR: begin if Odd(base) then lv[i] := base else lv[i] := base + 1; anyRTL := True; end;
@@ -3410,7 +3467,8 @@ var
     // L4 mirroring: a pure-punctuation item that resolved to an RTL (odd) level
     // paints reversed + mirrored. Strong-char items are left for the backend.
     for i := 0 to n - 1 do
-      if Odd(lv[i]) and (ItemBidiKind(items[li[i]].Text) = bkNeutral) then
+      if Odd(lv[i]) and (not bidiForce.ContainsKey(li[i]))
+         and (ItemBidiKind(items[li[i]].Text) = bkNeutral) then
       begin
         itm := items[li[i]]; itm.Text := MirrorNeutralRTL(itm.Text); items[li[i]] := itm;
       end;
@@ -3675,6 +3733,7 @@ begin
                 SameText(ParentStyle.WhiteSpace, 'pre');
   items := TList<TInlineItem>.Create;
   hyphenIdx := TList<Integer>.Create;
+  bidiForce := TDictionary<Integer, string>.Create;
   try
     for c in Tag.Children do
     begin
@@ -3828,6 +3887,7 @@ begin
   finally
     items.Free;
     hyphenIdx.Free;
+    bidiForce.Free;
   end;
   // the container encloses its own floats (clearfix-style) so a tall float isn't
   // clipped, then drops them from the active context (they don't escape this BFC)
