@@ -26,8 +26,11 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
 - **[S] `clip-path` under a transform (Windows)** — GDI clip is device-space and
   ignores the world transform (`Tina4ShellWin.pas:771`). Run the clip points through
   the active CTM before building the region.
-- **[M] Rounded clipping on raster** — `ClipRoundRect` degrades to a rectangular
-  clip, so `overflow:hidden` + `border-radius` clips square on watch/Android.
+- ~~**[M] Rounded clipping on raster**~~ — **DONE.** `Tina4RasterCanvas` now keeps
+  a clip stack tested per-pixel in `BlendPixel` (rect + rounded corners), so
+  `overflow:hidden` + `border-radius` clips round on watch/Android. Near-zero cost
+  when unclipped (empty stack). Guarded by `tests/raster/clip.html` (golden) and
+  the `clip-roundrect` reftest pair.
 - **[M] CSS filters / `backdrop-filter` / 3D on raster** — `BeginLayer` /
   `EndLayerFiltered` are no-ops on the raster canvas.
 

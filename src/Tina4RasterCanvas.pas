@@ -30,6 +30,11 @@ uses
   Classes, SysUtils, Math, Tina4RenderBackend;
 
 type
+  { one active clip region (device px). Rad = 0 is a plain rect; Rad > 0 rounds
+    the corners (overflow:hidden + border-radius). A pixel is drawn only if it is
+    inside EVERY region currently on the stack (nested overflow intersects). }
+  TRasterClip = record X0, Y0, X1, Y1, Rad: Single; end;
+
   TTina4RasterCanvas = class(TTina4Canvas)
   private
     FW, FH: Integer;
@@ -37,6 +42,10 @@ type
     FCov: array of Single;       // per-scanline coverage scratch (length FW)
     FEdgeX0, FEdgeY0, FEdgeX1, FEdgeY1: array of Single;   // edge scratch
     FEdgeN: Integer;
+    FClip: array of TRasterClip;   // active clip regions (the intersection to test)
+    FClipSave: array of Integer;   // saved stack depths for ClearClip/RestoreState
+    function  InClip(px, py: Integer): Boolean;
+    procedure PushClipSave;
     procedure AddEdge(x0, y0, x1, y1: Single);
     procedure RasterFill(Color: TTina4Color; EvenOdd: Boolean;
       minX, minY, maxX, maxY: Integer);
@@ -67,7 +76,12 @@ type
     function MeasureText(const Text: string; FontSize: Single;
       Styles: TTina4FontStyles): TTina4TextMetrics; override;
     procedure SetClip(X, Y, W, H: Single); override;
+    { real rounded clip on the raster path (was a rectangular degrade), so
+      overflow:hidden + border-radius clips round on watch/Android. }
+    procedure ClipRoundRect(X, Y, W, H, Radius: Single); override;
     procedure ClearClip; override;
+    procedure SaveState; override;
+    procedure RestoreState; override;
     function  SupportsRGBA: Boolean; override;
     procedure DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single); override;
   end;
@@ -98,6 +112,8 @@ procedure TTina4RasterCanvas.Clear(Color: TTina4Color);
 var i: Integer;
 begin
   for i := 0 to High(FPix) do FPix[i] := Color;
+  SetLength(FClip, 0);        // fresh frame: drop any clip a prior frame left
+  SetLength(FClipSave, 0);
 end;
 
 function TTina4RasterCanvas.Bits: Pointer;
@@ -115,6 +131,7 @@ var
 begin
   if (px < 0) or (px >= FW) or (py < 0) or (py >= FH) then Exit;
   if A <= 0 then Exit;
+  if (Length(FClip) > 0) and not InClip(px, py) then Exit;   // overflow:hidden / rounded clip
   if A > 1 then A := 1;
   idx := py * FW + px;
   dst := FPix[idx];
@@ -594,13 +611,73 @@ begin
   end;
 end;
 
+{ A pixel (tested at its centre) passes only if it is inside every active clip
+  region — the rect bounds, and the rounded corners when Rad > 0. Hard-edged
+  (0/1) at the boundary; the content inside is still fully anti-aliased. }
+function TTina4RasterCanvas.InClip(px, py: Integer): Boolean;
+var
+  i: Integer;
+  cx, cy, r, dx, dy: Single;
+begin
+  cx := px + 0.5; cy := py + 0.5;
+  for i := 0 to High(FClip) do
+    with FClip[i] do
+    begin
+      if (cx < X0) or (cx >= X1) or (cy < Y0) or (cy >= Y1) then Exit(False);
+      if Rad > 0 then
+      begin
+        r := Rad;
+        if r > (X1 - X0) * 0.5 then r := (X1 - X0) * 0.5;
+        if r > (Y1 - Y0) * 0.5 then r := (Y1 - Y0) * 0.5;
+        dx := 0; dy := 0;
+        if cx < X0 + r then dx := (X0 + r) - cx
+        else if cx > X1 - r then dx := cx - (X1 - r);
+        if cy < Y0 + r then dy := (Y0 + r) - cy
+        else if cy > Y1 - r then dy := cy - (Y1 - r);
+        if (dx > 0) and (dy > 0) and (dx * dx + dy * dy > r * r) then Exit(False);
+      end;
+    end;
+  Result := True;
+end;
+
+{ Record the current clip depth so a later ClearClip/RestoreState pops back to
+  it — mirrors CGContextSaveGState (SetClip = save + clip, ClearClip = restore). }
+procedure TTina4RasterCanvas.PushClipSave;
+begin
+  SetLength(FClipSave, Length(FClipSave) + 1);
+  FClipSave[High(FClipSave)] := Length(FClip);
+end;
+
 procedure TTina4RasterCanvas.SetClip(X, Y, W, H: Single);
 begin
-  // the raster buffer is exactly the content box; nothing to clip
+  ClipRoundRect(X, Y, W, H, 0);
+end;
+
+procedure TTina4RasterCanvas.ClipRoundRect(X, Y, W, H, Radius: Single);
+var n: Integer;
+begin
+  PushClipSave;                                  // self-saves, balanced by ClearClip
+  n := Length(FClip); SetLength(FClip, n + 1);
+  FClip[n].X0 := X;     FClip[n].Y0 := Y;
+  FClip[n].X1 := X + W; FClip[n].Y1 := Y + H;
+  FClip[n].Rad := Radius;
 end;
 
 procedure TTina4RasterCanvas.ClearClip;
 begin
+  if Length(FClipSave) = 0 then Exit;
+  SetLength(FClip, FClipSave[High(FClipSave)]);
+  SetLength(FClipSave, Length(FClipSave) - 1);
+end;
+
+procedure TTina4RasterCanvas.SaveState;
+begin
+  PushClipSave;                                  // snapshot depth; RestoreState pops it
+end;
+
+procedure TTina4RasterCanvas.RestoreState;
+begin
+  ClearClip;
 end;
 
 function TTina4RasterCanvas.SupportsRGBA: Boolean;
