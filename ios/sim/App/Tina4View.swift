@@ -10,6 +10,7 @@ import SwiftUI
 final class Tina4View: UIView {
     private var started = false
     private var timer: Timer?
+    private var imgObserver: NSObjectProtocol?     // retain the block observer, else it's torn down
     private var accentPink = false
 
     override init(frame: CGRect) {
@@ -32,6 +33,12 @@ final class Tina4View: UIView {
         // resolve relative <img src> (e.g. "tina4.png") against the app bundle
         if let res = Bundle.main.resourcePath {
             res.withCString { tina4sim_native_set_asset_base($0) }
+        }
+        // a remote <img> downloads asynchronously (ImageLoader.m); repaint when it
+        // lands so the shell decodes the now-cached file.
+        imgObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("Tina4ImageReady"), object: nil, queue: .main) { [weak self] _ in
+            self?.setNeedsDisplay()
         }
         loadHTML()
         setNeedsDisplay()

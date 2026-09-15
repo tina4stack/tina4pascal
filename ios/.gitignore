@@ -2,3 +2,7 @@
 build/
 app/libtina4ios.a
 Tina4Pascal.xcodeproj/
+
+# iOS-Simulator app (ios/build-sim.sh + xcodegen)
+sim/App/libtina4iossim.a
+sim/Tina4Sim.xcodeproj/

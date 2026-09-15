@@ -72,6 +72,14 @@ begin
   Result := TinaTouch(Action, X, Y);
 end;
 
+{ Called by the host's image loader (ImageLoader.m) when an async <img> download
+  lands: force a relayout so the next frame re-runs LoadImage and decodes the
+  now-cached file. Named for the C symbol the loader expects. }
+procedure tina4_image_ready; cdecl; public name '_tina4_image_ready';
+begin
+  TinaInvalidateLayout;
+end;
+
 exports
   tina4sim_native_set_asset_base,
   tina4sim_native_set_html,

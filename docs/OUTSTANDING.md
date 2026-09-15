@@ -74,9 +74,9 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   the Simulator (`docs/fpc-iphonesim.md`). **Remaining, minor:**
   (a) wire `build ios-sim` / `deploy ios-sim` into `tools/tina4pascal` + the MCP
   (currently the standalone `ios/build-sim.sh`) — held only by a concurrent edit
-  on that file; (b) **bundled `<img>` works** (decoded via Core Graphics/ImageIO,
-  asset base = the app bundle) — only *remote* `http(s)` images still need
-  `ios/app/ImageLoader.m` ported (the host stubs `tina4_ios_fetch_image`);
+  on that file; (b) **`<img>` works — bundled *and* remote** (bundled decoded off the app
+  bundle; remote downloaded over NSURLSession via `ios/sim/App/ImageLoader.m`,
+  then `tina4_image_ready` relayout → decode, verified cold-load on the sim);
   (c) **upstream MR ready** — the
   `t_darwin.pas` one-liner (`docs/fpc-iphonesim-linker.diff`, verified: patched
   compiler direct-links `fpc -Tiphonesim` and runs in the sim) awaits submission
