@@ -154,9 +154,12 @@ done
 Then `Tina4ShellIOS` compiles clean for iphonesim, and `ios/build-sim.sh`
 (default `--native`) archives `libtina4iossimnative.pas` into
 `libtina4iossim.a`. The app links `CoreGraphics`, `CoreText`, `CoreFoundation`,
-`ImageIO`, `MobileCoreServices`, and provides `tina4_ios_fetch_image` (the
-`<img>` loader — the minimal `ios/sim` host stubs it; port `ios/app/ImageLoader.m`
-for real image loading).
+`ImageIO`, `MobileCoreServices`. **Bundled `<img>` works**: the host sets the
+asset base to `Bundle.main.resourcePath` (`tina4sim_native_set_asset_base`), so a
+relative `<img src="tina4.png">` resolves to a bundled file and the shell decodes
+it via `CGImageSource` (Core Graphics / ImageIO). Only *remote* `http(s)` images
+need more — the host stubs `tina4_ios_fetch_image`; port `ios/app/ImageLoader.m`
+(NSURLSession download → cache file → `tina4_image_ready`) for those.
 
 The **raster** path (`Tina4RasterCanvas`, `--raster` / `TINA4_SIM_RASTER=1`) stays
 as the no-univint fallback — same rough fonts as the watch.

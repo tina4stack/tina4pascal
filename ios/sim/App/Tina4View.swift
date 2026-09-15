@@ -29,6 +29,10 @@ final class Tina4View: UIView {
         guard !started else { return }
         started = true
         PASCALMAIN()                                   // bring up the FPC runtime once
+        // resolve relative <img src> (e.g. "tina4.png") against the app bundle
+        if let res = Bundle.main.resourcePath {
+            res.withCString { tina4sim_native_set_asset_base($0) }
+        }
         loadHTML()
         setNeedsDisplay()
         // Only tick for the live clock; the static showcase needs no timer.

@@ -74,8 +74,10 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   the Simulator (`docs/fpc-iphonesim.md`). **Remaining, minor:**
   (a) wire `build ios-sim` / `deploy ios-sim` into `tools/tina4pascal` + the MCP
   (currently the standalone `ios/build-sim.sh`) — held only by a concurrent edit
-  on that file; (b) port `ios/app/ImageLoader.m` so `<img>` loads on the sim (the
-  host stubs `tina4_ios_fetch_image` today); (c) **upstream MR ready** — the
+  on that file; (b) **bundled `<img>` works** (decoded via Core Graphics/ImageIO,
+  asset base = the app bundle) — only *remote* `http(s)` images still need
+  `ios/app/ImageLoader.m` ported (the host stubs `tina4_ios_fetch_image`);
+  (c) **upstream MR ready** — the
   `t_darwin.pas` one-liner (`docs/fpc-iphonesim-linker.diff`, verified: patched
   compiler direct-links `fpc -Tiphonesim` and runs in the sim) awaits submission
   as a GitLab merge request. Reproducible build: `tools/build-iphonesim-toolchain.sh`.

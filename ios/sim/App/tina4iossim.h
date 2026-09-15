@@ -14,6 +14,9 @@
 // PASCALMAIN runs the FPC runtime + every unit's initialization.
 extern void PASCALMAIN(void);
 
+// Directory a relative <img src> resolves against (the app bundle). Call before
+// set_html so bundled images decode via Core Graphics / ImageIO.
+void tina4sim_native_set_asset_base(const char *dir);
 // Load a document (UTF-8 HTML).
 void tina4sim_native_set_html(const char *html);
 // Paint the current document into a CGContext (a UIView drawRect context: points,

@@ -42,6 +42,15 @@ begin
   end;
 end;
 
+{ Directory a relative <img src> resolves against (the app bundle). Set it
+  before loading HTML so bundled images decode via Core Graphics / ImageIO. }
+procedure tina4sim_native_set_asset_base(Dir: PAnsiChar); cdecl;
+begin
+  EnsureCanvas;
+  if Dir <> nil then
+    GCanvas.SetAssetBase(string(AnsiString(Dir)));
+end;
+
 procedure tina4sim_native_set_html(Html: PAnsiChar); cdecl;
 begin
   if Html <> nil then
@@ -64,6 +73,7 @@ begin
 end;
 
 exports
+  tina4sim_native_set_asset_base,
   tina4sim_native_set_html,
   tina4sim_native_frame,
   tina4sim_native_touch;
