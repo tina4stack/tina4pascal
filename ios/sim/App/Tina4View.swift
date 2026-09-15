@@ -19,15 +19,29 @@ final class Tina4View: UIView {
     }
     required init?(coder: NSCoder) { super.init(coder: coder) }
 
+    // Load the bundled showcase page (rich, self-contained HTML) if present;
+    // otherwise fall back to the generated live clock.
+    private lazy var bundledHTML: String? =
+        Bundle.main.url(forResource: "demo", withExtension: "html")
+            .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+
     func startIfNeeded() {
         guard !started else { return }
         started = true
         PASCALMAIN()                                   // bring up the FPC runtime once
         loadHTML()
         setNeedsDisplay()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.loadHTML(); self?.setNeedsDisplay()   // advance the clock
+        // Only tick for the live clock; the static showcase needs no timer.
+        if bundledHTML == nil {
+            timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                self?.loadHTML(); self?.setNeedsDisplay()
+            }
         }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if started { loadHTML(); setNeedsDisplay() }   // reload at the real bounds
     }
 
     // A drawRect context is top-left / y-down and in POINTS, matching the engine's
@@ -51,7 +65,8 @@ final class Tina4View: UIView {
     private func loadHTML() {
         let w = Int(bounds.width), h = Int(bounds.height)
         guard w > 0, h > 0 else { return }
-        page(w: w, h: h, accentPink: accentPink).withCString { tina4sim_native_set_html($0) }
+        let html = bundledHTML ?? page(w: w, h: h, accentPink: accentPink)
+        html.withCString { tina4sim_native_set_html($0) }
     }
 
     // A Tina4-styled page: a live HH:MM:SS clock in a rounded card, the date and a

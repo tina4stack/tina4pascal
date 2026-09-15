@@ -1,0 +1,51 @@
+<!-- A self-contained showcase page (no images, no network) rendered by the
+     native Tina4 engine on the iOS Simulator — flexbox, gradients, rounded
+     corners, borders, badges and varied Core Text typography, all drawn by
+     Tina4ShellIOS (Core Graphics / Core Text). -->
+<body style="margin:0;background:#0e0f1f;font-family:sans-serif;color:#ececfb">
+  <!-- gradient hero -->
+  <div style="padding:64px 22px 22px 22px;
+              background:linear-gradient(135deg,#2b41e6,#7d8cff)">
+    <div style="font-size:13px;letter-spacing:2px;color:#e4e8ff">TINA4 · PASCAL ENGINE</div>
+    <div style="font-size:30px;font-weight:bold;margin-top:6px">Rendering on iOS Simulator</div>
+    <div style="font-size:15px;color:#e4e8ff;margin-top:8px">
+      Pure Pascal. HTML in, native Core Graphics out.
+    </div>
+  </div>
+
+  <!-- stat cards, laid out with flex -->
+  <div style="display:flex;gap:12px;padding:18px 22px">
+    <div style="flex:1;background:#16172c;border-radius:16px;padding:16px;border:1px solid #2a2c4c">
+      <div style="font-size:26px;font-weight:bold;color:#ffd23c">105</div>
+      <div style="font-size:12px;color:#a6a7c8;margin-top:4px">CSS properties</div>
+    </div>
+    <div style="flex:1;background:#16172c;border-radius:16px;padding:16px;border:1px solid #2a2c4c">
+      <div style="font-size:26px;font-weight:bold;color:#ff5aa0">148</div>
+      <div style="font-size:12px;color:#a6a7c8;margin-top:4px">W3C reftests</div>
+    </div>
+    <div style="flex:1;background:#16172c;border-radius:16px;padding:16px;border:1px solid #2a2c4c">
+      <div style="font-size:26px;font-weight:bold;color:#7d8cff">6</div>
+      <div style="font-size:12px;color:#a6a7c8;margin-top:4px">platforms</div>
+    </div>
+  </div>
+
+  <!-- a bordered panel with badges -->
+  <div style="margin:0 22px;background:#16172c;border-radius:16px;padding:18px;border:1px solid #2a2c4c">
+    <div style="font-size:17px;font-weight:bold;margin-bottom:12px">Native this frame</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      <span style="background:#1c1f45;color:#7d8cff;padding:6px 12px;border-radius:20px;font-size:13px">flexbox</span>
+      <span style="background:#331a2a;color:#ff7ab4;padding:6px 12px;border-radius:20px;font-size:13px">gradient</span>
+      <span style="background:#332c12;color:#ffd23c;padding:6px 12px;border-radius:20px;font-size:13px">border-radius</span>
+      <span style="background:#1c1f45;color:#7d8cff;padding:6px 12px;border-radius:20px;font-size:13px">Core Text</span>
+      <span style="background:#331a2a;color:#ff7ab4;padding:6px 12px;border-radius:20px;font-size:13px">no device</span>
+    </div>
+    <div style="margin-top:16px;font-size:14px;color:#a6a7c8;line-height:1.5">
+      The same engine and the same HTML render on macOS, iOS, Android, the Apple
+      Watch and now the iOS Simulator - built with the patched FPC iphonesim target.
+    </div>
+  </div>
+
+  <div style="text-align:center;color:#6a6c90;font-size:12px;margin-top:20px">
+    libtina4iossim.a · arm64 · Tina4ShellIOS
+  </div>
+</body>
