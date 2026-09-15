@@ -47,10 +47,15 @@ The tractable text features are done (`hyphens`, `font-variant: small-caps`,
 is a multi-session effort, not a quick pass, and is left honestly open rather than
 shipped as a low-quality approximation.
 
-- **[L] Bidi / RTL** — `direction:rtl` block-level alignment is done; full
-  mixed-direction inline bidi (the Unicode Bidirectional Algorithm — reordering
-  runs, mirrored punctuation, `bdi`/`bdo`, `unicode-bidi`) is a large standalone
-  piece. The whole inline builder assumes LTR; this is not a small change.
+- **[L → mostly done] Bidi / RTL** — **line-level UBA reordering DONE.** Mixed
+  LTR/RTL lines are reordered logical→visual by the Unicode Bidi Algorithm L2 rule
+  (Hebrew/Arabic classification, base level from `direction` / the `dir` attribute /
+  `dir="auto"` first-strong detection, simplified N1/N2 neutral resolution, space
+  re-derivation for reversed runs) — verified pixel-matching Chrome on Hebrew+English
+  paragraphs. Native backends shape each run. Reftest `bidi-rtl-ltr`. **Remaining:**
+  per-character levels (mixed direction *within* one word/token), explicit
+  embeddings/overrides (`bdi`/`bdo`/`unicode-bidi`, `‮`/LRE/RLE), mirrored
+  punctuation (`(` ↔ `)` in RTL), and RTL shaping on the pure-raster path.
 - **[L] `writing-mode` (full vertical block-flow)** — a Latin run is set sideways
   today (the whole box rotates 90°, which reads correctly for a single line;
   reftest `writing-mode-vertical`). True vertical block-flow inverts the main/cross

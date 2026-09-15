@@ -3232,6 +3232,8 @@ begin
     Result.ExplicitHeight := ParseLength(Tag.GetAttribute('height'), Result.FontSize);
   if Tag.HasAttribute('bgcolor') then
     Result.BackgroundColor := ParseColor(Tag.GetAttribute('bgcolor'));
+  if Tag.HasAttribute('dir') then   // the HTML dir="rtl"/"ltr" attribute (bidi)
+    Result.Direction := LowerCase(Tag.GetAttribute('dir'));
   if Tag.HasAttribute('align') then
   begin
     Temp := Tag.GetAttribute('align').ToLower;

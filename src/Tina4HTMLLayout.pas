@@ -363,6 +363,67 @@ begin
   end;
 end;
 
+{ ---- Unicode bidi (UBA) — enough for mixed LTR/RTL paragraphs ---------------
+  A pragmatic subset: classify each item by its first strong character (or its
+  digits), resolve a display level, and reorder a line's items by the UBA L2
+  rule. The native text backends shape each run (Arabic/Hebrew) themselves; this
+  supplies the run *ordering* the layout must get right. Level resolution is
+  per-item (words are single-direction in the common case), not per-character. }
+type TBidiKind = (bkL, bkR, bkEN, bkAN, bkNeutral);
+
+function BidiKindOfCP(cp: Cardinal): TBidiKind;
+begin
+  // strong RTL: Hebrew, Arabic, Syriac, Thaana, NKo, + presentation forms
+  if ((cp >= $0590) and (cp <= $05FF)) or ((cp >= $0600) and (cp <= $06FF)) or
+     ((cp >= $0700) and (cp <= $074F)) or ((cp >= $0750) and (cp <= $077F)) or
+     ((cp >= $0780) and (cp <= $07BF)) or ((cp >= $07C0) and (cp <= $07FF)) or
+     ((cp >= $08A0) and (cp <= $08FF)) or ((cp >= $FB1D) and (cp <= $FB4F)) or
+     ((cp >= $FB50) and (cp <= $FDFF)) or ((cp >= $FE70) and (cp <= $FEFF)) then
+    Exit(bkR);
+  if (cp >= $0660) and (cp <= $0669) then Exit(bkAN);          // Arabic-Indic digits
+  if ((cp >= $0030) and (cp <= $0039)) or
+     ((cp >= $06F0) and (cp <= $06F9)) then Exit(bkEN);        // European / ext-Arabic digits
+  // strong LTR: Latin, Greek, Cyrillic, CJK, Kana, Hangul
+  if ((cp >= $0041) and (cp <= $005A)) or ((cp >= $0061) and (cp <= $007A)) or
+     ((cp >= $00C0) and (cp <= $024F)) or ((cp >= $0370) and (cp <= $03FF)) or
+     ((cp >= $0400) and (cp <= $04FF)) or ((cp >= $3040) and (cp <= $30FF)) or
+     ((cp >= $4E00) and (cp <= $9FFF)) or ((cp >= $AC00) and (cp <= $D7AF)) then
+    Exit(bkL);
+  Result := bkNeutral;   // spaces, punctuation, symbols
+end;
+
+{ Decode the codepoint at byte P (1-based) of a UTF-8 string; advance P past it. }
+function NextCP(const S: string; var P: Integer): Cardinal;
+var b: Byte; n, i: Integer;
+begin
+  b := Ord(S[P]);
+  if b < $80 then begin Result := b; Inc(P); Exit; end;
+  if b < $E0 then begin Result := b and $1F; n := 1; end
+  else if b < $F0 then begin Result := b and $0F; n := 2; end
+  else begin Result := b and $07; n := 3; end;
+  Inc(P);
+  for i := 1 to n do
+  begin
+    if (P > Length(S)) or ((Ord(S[P]) and $C0) <> $80) then Break;
+    Result := (Result shl 6) or (Ord(S[P]) and $3F); Inc(P);
+  end;
+end;
+
+{ An item's bidi kind: its first strong character (L or R) decides; failing that,
+  a digit makes it a number; otherwise it is neutral (resolved from context). }
+function ItemBidiKind(const S: string): TBidiKind;
+var p: Integer; k: TBidiKind; sawNum: Boolean;
+begin
+  p := 1; sawNum := False;
+  while p <= Length(S) do
+  begin
+    k := BidiKindOfCP(NextCP(S, p));
+    if (k = bkL) or (k = bkR) then Exit(k);
+    if (k = bkEN) or (k = bkAN) then sawNum := True;
+  end;
+  if sawNum then Result := bkEN else Result := bkNeutral;
+end;
+
 { TLayoutEngine }
 
 constructor TLayoutEngine.Create(Canvas: TTina4Canvas; Sheet: TCSSStyleSheet);
@@ -3261,6 +3322,79 @@ var
       GatherInline(c, cs);
   end;
 
+  { UBA reordering of one line's items (logical → visual). Assigns each item a
+    resolved level (base from `direction`; R/numbers/neutrals per a per-item
+    simplification of the W/N/I rules) and applies the L2 reversal. A no-op for a
+    pure-LTR line, so LTR content is untouched. }
+  procedure BidiReorder(li: TList<Integer>);
+  var
+    n, i, j, lvl, maxLvl, base, s, e, la, lb: Integer;
+    lv, res: array of Integer;
+    logical: array of Integer;
+    kind: TBidiKind; anyRTL: Boolean; t: Integer; itm: TInlineItem;
+  begin
+    n := li.Count;
+    if n < 1 then Exit;
+    if SameText(ParentStyle.Direction, 'rtl') then base := 1
+    else if SameText(ParentStyle.Direction, 'auto') then
+    begin
+      base := 0;   // first strong character decides (UBA P2/P3)
+      for i := 0 to n - 1 do
+      begin
+        kind := ItemBidiKind(items[li[i]].Text);
+        if kind = bkR then begin base := 1; Break; end
+        else if kind = bkL then Break;
+      end;
+    end
+    else base := 0;
+    SetLength(lv, n);
+    anyRTL := (base = 1);
+    for i := 0 to n - 1 do
+    begin
+      kind := ItemBidiKind(items[li[i]].Text);
+      case kind of
+        bkR: begin if Odd(base) then lv[i] := base else lv[i] := base + 1; anyRTL := True; end;
+        bkL:        if Odd(base) then lv[i] := base + 1 else lv[i] := base;
+        bkEN, bkAN: if Odd(base) then lv[i] := base + 1 else lv[i] := base;   // numbers read LTR
+      else lv[i] := -1;   // neutral — resolved from neighbours below
+      end;
+    end;
+    if not anyRTL then Exit;   // pure-LTR line: fast path, no reordering
+    for i := 0 to n - 1 do
+      if lv[i] < 0 then
+      begin
+        la := base; for j := i - 1 downto 0 do if lv[j] >= 0 then begin la := lv[j]; Break; end;
+        lb := base; for j := i + 1 to n - 1 do if lv[j] >= 0 then begin lb := lv[j]; Break; end;
+        if la = lb then lv[i] := la else lv[i] := base;   // N1/N2 (simplified)
+      end;
+    // L2: reverse a permutation mapping over runs with level >= lvl, highest first
+    SetLength(res, n); for i := 0 to n - 1 do res[i] := i;
+    maxLvl := base; for i := 0 to n - 1 do if lv[i] > maxLvl then maxLvl := lv[i];
+    for lvl := maxLvl downto 1 do
+    begin
+      i := 0;
+      while i < n do
+        if lv[i] >= lvl then
+        begin
+          s := i; while (i < n) and (lv[i] >= lvl) do Inc(i); e := i - 1;
+          while s < e do begin t := res[s]; res[s] := res[e]; res[e] := t; Inc(s); Dec(e); end;
+        end
+        else Inc(i);
+    end;
+    SetLength(logical, n); for i := 0 to n - 1 do logical[i] := li[i];
+    for i := 0 to n - 1 do li[i] := logical[res[i]];
+    // Spaces are neutrals that belong to word boundaries, not to a fixed item, so
+    // reversing runs drops them. Re-derive: every visual boundary between two
+    // words carries one space (the common prose case); the first item has none.
+    for i := 0 to n - 1 do
+    begin
+      itm := items[li[i]];
+      itm.SpaceBefore := (i > 0) and (itm.Box = nil) and (itm.Text <> '')
+        and (items[li[i - 1]].Box = nil) and (items[li[i - 1]].Text <> '');
+      items[li[i]] := itm;
+    end;
+  end;
+
   procedure FlushLine(startIdx: Integer; var lineItems: TList<Integer>;
     lineTop, lineH: Single; justify: Boolean = False; isLast: Boolean = False);
   var
@@ -3290,6 +3424,8 @@ var
       items[idx] := it;
       hyphenIdx.Remove(idx);   // idempotent if FlushLine ever revisits
     end;
+    // bidi: reorder this line's items from logical to visual order (no-op for LTR)
+    BidiReorder(lineItems);
     // width used
     lineW := 0;
     for k := 0 to lineItems.Count - 1 do
