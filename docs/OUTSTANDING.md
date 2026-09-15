@@ -53,7 +53,10 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   uppercase on the shared baseline, one atomic run; reftest `font-smallcaps`).
   Remaining: `font-stretch` (width-variant selection / synthetic stretch);
   non-ASCII lowercase casing for small-caps.
-- **[M] `ruby`** — inline only, no stacked CJK annotation.
+- ~~**[M] `ruby`**~~ — **DONE.** `<rt>` renders centred above its base in a smaller
+  font (furigana); the ruby is an atomic inline box that reserves space above the
+  line; `<rp>` hidden. One base+annotation pair per ruby (no per-character split).
+  Reftest `ruby-basic`.
 - **[M] Raster fonts (watch/Android)** — digits + A–Z/a–z + basic punctuation;
   no accents/CJK, no kerning.
 

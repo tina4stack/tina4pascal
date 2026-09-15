@@ -59,7 +59,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | wbr | ✅ | zero-width break opportunity (line wraps there when needed) |
 | bdi, bdo | 🟡 | text renders inline; bidi/direction override needs RTL support (not near-term — engine is LTR) |
 | time, data | ✅ | inline text (no visual difference required; value/datetime are metadata) |
-| ruby, rt, rp | 🟡 | children render inline; no stacked ruby annotation (CJK-specific, deferred) |
+| ruby, rt, rp | ✅ | stacked annotation: the `<rt>` renders centred above its base in a smaller font (furigana); the ruby flows inline and reserves space above the line; `<rp>` fallback parens hidden. Whole base treated as one annotation pair (no per-character split). Reftest `ruby-basic` |
 
 ## Image & multimedia
 
@@ -185,7 +185,6 @@ rendered (use `<include src>`).
 
 **Deferred (need a larger subsystem, intentionally later):**
 - **`bdi`/`bdo`** — bidi/direction override needs RTL support (engine is LTR).
-- **`ruby`/`rt`/`rp`** — stacked CJK annotation positioning.
 
 **Done since the previous audit:** whole tables set (rowspan, caption+side,
 col/colgroup, tfoot, th); template/datalist inert; `<optgroup>`; `<dialog>`

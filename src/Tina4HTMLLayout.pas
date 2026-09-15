@@ -63,6 +63,7 @@ type
     NaturalH: Single;              // natural content height (for cell v-align)
     MarkerText: string;            // list-item bullet/number, '' if none
     MarkerImage: Integer;          // list-style-image handle, -1 = none
+    RubyBaseline: Single;          // <ruby> atom: base baseline offset from box top (0 = not ruby)
     constructor Create;
     destructor Destroy; override;
   end;
@@ -93,6 +94,7 @@ type
     function LayoutTable(Parent: TLayoutBox; Tag: THTMLTag;
       const Style: TComputedStyle; X, Y, AvailW: Single): Single;
     function MakeInlineBlock(Tag: THTMLTag; const St: TComputedStyle): TLayoutBox;
+    function MakeRubyBox(Tag: THTMLTag; const St: TComputedStyle): TLayoutBox;
     function MakeInlineContainer(Tag: THTMLTag; const St: TComputedStyle;
       AvailW: Single): TLayoutBox;
     function MakeContainerBox(Tag: THTMLTag; const ParentStyle: TComputedStyle;
@@ -609,6 +611,63 @@ begin
     run.Styles := FontStylesOf(St);
     run.Color := St.Color; run.LetterSpacing := 0;
     run.FontFamily := St.FontFamily; run.FontWeight := St.FontWeight;
+    run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
+    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor);
+    Result.Runs.Add(run);
+  end;
+end;
+
+{ <ruby> stacked annotation: the base text on the baseline with its <rt>
+  annotation centred above in a smaller font. Built as one atomic inline box
+  (base run + rt run) so it flows inline and reserves space above the line for
+  the annotation. <rp> fallback parens are dropped (ruby is supported). The whole
+  ruby is treated as one base+annotation pair — correct for a single ruby and for
+  a multi-character base under one annotation; per-character pairing isn't split. }
+function TLayoutEngine.MakeRubyBox(Tag: THTMLTag; const St: TComputedStyle): TLayoutBox;
+var
+  c: THTMLTag; baseTxt, rtTxt: string;
+  baseFS, rtFS, baseW, rtW, baseH, rtH: Single;
+  bm, rm: TTina4TextMetrics;
+  run: TTextRun;
+begin
+  Result := TLayoutBox.Create;
+  Result.Tag := Tag; Result.Style := St;
+  baseTxt := ''; rtTxt := '';
+  for c in Tag.Children do
+    if IsTextNode(c) then baseTxt := baseTxt + c.Text
+    else if SameText(c.TagName, 'rt') then rtTxt := rtTxt + InnerText(c)
+    else if SameText(c.TagName, 'rp') then {skip fallback parens}
+    else baseTxt := baseTxt + InnerText(c);
+  baseTxt := Trim(CollapseWS(baseTxt));
+  rtTxt := Trim(CollapseWS(rtTxt));
+
+  baseFS := St.FontSize;
+  rtFS := Max(St.FontSize * 0.5, 7);
+  bm := FCanvas.MeasureText(baseTxt, baseFS, FontStylesOf(St));
+  rm := FCanvas.MeasureText(rtTxt, rtFS, FontStylesOf(St));
+  baseW := bm.Width; rtW := rm.Width;
+  baseH := LineHeightOf(St);
+  if rtTxt = '' then rtH := 0 else rtH := rtFS * 1.2;   // no annotation ⇒ flows as plain text
+  Result.W := Max(baseW, rtW);
+  Result.H := rtH + baseH;
+  // base baseline measured from the box top (used for inline baseline alignment)
+  Result.RubyBaseline := rtH + (baseH - (bm.Ascent + bm.Descent)) / 2 + bm.Ascent;
+
+  if rtTxt <> '' then
+  begin
+    run.Text := rtTxt; run.X := (Result.W - rtW) / 2; run.Y := (rtH - rtFS) / 2;
+    run.FontSize := rtFS; run.Styles := FontStylesOf(St); run.Color := St.Color;
+    run.LetterSpacing := 0; run.FontFamily := St.FontFamily; run.FontWeight := St.FontWeight;
+    run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
+    run.DecorLines := 0; run.DecorStyle := 0; run.DecorColor := 0;
+    Result.Runs.Add(run);
+  end;
+  if baseTxt <> '' then
+  begin
+    run.Text := baseTxt; run.X := (Result.W - baseW) / 2;
+    run.Y := rtH + (baseH - baseFS) / 2;
+    run.FontSize := baseFS; run.Styles := FontStylesOf(St); run.Color := St.Color;
+    run.LetterSpacing := St.LetterSpacing; run.FontFamily := St.FontFamily; run.FontWeight := St.FontWeight;
     run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
     ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor);
     Result.Runs.Add(run);
@@ -3022,6 +3081,20 @@ var
       it.FontSize := cs.FontSize; it.Styles := []; it.DecorLines := 0; it.DecorStyle := 0; it.DecorColor := 0; it.Color := 0;
       it.SpaceBefore := False;
       items.Add(it);
+    end;
+    if SameText(T.TagName, 'ruby') then
+    begin
+      it.Text := '';
+      it.Box := MakeRubyBox(T, cs);
+      it.W := it.Box.W; it.H := it.Box.H;
+      it.FontSize := cs.FontSize; it.Styles := []; it.DecorLines := 0; it.DecorStyle := 0; it.DecorColor := 0; it.Color := 0;
+      it.Ascent := it.Box.RubyBaseline;   // base baseline on the line baseline; rt sits above
+      it.SpaceBefore := (items.Count > 0) and pendingSpace;
+      pendingSpace := False;
+      Box.Children.Add(it.Box);
+      items.Add(it);
+      EmitInlineMarginRight(cs);
+      Exit;
     end;
     if SameText(T.TagName, 'svg') then
     begin
