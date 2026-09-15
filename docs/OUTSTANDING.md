@@ -49,7 +49,10 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   word at its soft hyphens (`&shy;`/U+00AD) when a line needs it and renders a `-`;
   `none` never breaks there; `auto` degrades to `manual` (no dictionary). Added the
   `&shy;` entity. Reftest `hyphens-shy`. Remaining: `auto` dictionary hyphenation.
-- **[S] `font-variant` small-caps, `font-stretch`** — parsed-ignored.
+- **[S] `font-variant: small-caps`** — **DONE** (synthesised: lowercase → 0.78×
+  uppercase on the shared baseline, one atomic run; reftest `font-smallcaps`).
+  Remaining: `font-stretch` (width-variant selection / synthetic stretch);
+  non-ASCII lowercase casing for small-caps.
 - **[M] `ruby`** — inline only, no stacked CJK annotation.
 - **[M] Raster fonts (watch/Android)** — digits + A–Z/a–z + basic punctuation;
   no accents/CJK, no kerning.

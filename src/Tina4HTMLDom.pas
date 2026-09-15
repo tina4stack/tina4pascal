@@ -322,6 +322,7 @@ type
     BorderSpacing: Single;      // border-spacing (separate model), px
     CSSCursor: string;
     TextTransform: string;
+    SmallCaps: Boolean;         // font-variant: small-caps
     Opacity: Single;
     MinWidth: Single;
     MaxWidth: Single;
@@ -2392,6 +2393,7 @@ begin
   Result.BoxSizing := 'content-box';
   Result.CSSCursor := '';
   Result.TextTransform := 'none';
+  Result.SmallCaps := False;
   Result.Opacity := 1.0;
   Result.MinWidth := -1;
   Result.MaxWidth := -1;
@@ -2836,6 +2838,7 @@ begin
   Result.ListStyleType := ParentStyle.ListStyleType;
   Result.ListStyleImage := ParentStyle.ListStyleImage;   // inherited
   Result.TextTransform := ParentStyle.TextTransform;
+  Result.SmallCaps := ParentStyle.SmallCaps;   // inherited
   Result.LetterSpacing := ParentStyle.LetterSpacing;
   Result.WordSpacing := ParentStyle.WordSpacing;
   Result.ListStyleInside := ParentStyle.ListStyleInside;
@@ -4073,6 +4076,8 @@ begin
 
   if Decls.TryGetValue('text-transform', Temp) and not ShouldSkip(Temp) then
     Style.TextTransform := Temp.ToLower;
+  if Decls.TryGetValue('font-variant', Temp) and not ShouldSkip(Temp) then
+    Style.SmallCaps := Pos('small-caps', Temp.ToLower) > 0;
 
   if Decls.TryGetValue('opacity', Temp) and not ShouldSkip(Temp) then
     Style.Opacity := Max(0, Min(1, StrToFloatDef(Temp, 1.0)));
@@ -4192,7 +4197,8 @@ begin
       fLp := LowerCase(FParts[fi]);
       if (fLp = 'italic') or (fLp = 'oblique') then Style.Italic := True
       else if fLp = 'bold' then begin Style.Bold := True; Style.FontWeight := 700; end
-      else if (fLp = 'normal') or (fLp = 'small-caps') then  // ignored
+      else if fLp = 'small-caps' then Style.SmallCaps := True
+      else if fLp = 'normal' then  // ignored
       else if (Length(fLp) = 3) and (StrToIntDef(fLp, 0) >= 100) then
         Style.FontWeight := StrToIntDef(fLp, 400)
       else Break;   // first non-keyword token = the size

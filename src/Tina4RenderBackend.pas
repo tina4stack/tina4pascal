@@ -21,7 +21,10 @@ type
 
   // tfsOverline has no native font attribute — the layer paints it manually,
   // so shells may ignore it in DrawText (they draw underline/strike natively).
-  TTina4FontStyle = (tfsBold, tfsItalic, tfsUnderline, tfsStrike, tfsOverline);
+  { tfsSmallCaps is a LAYOUT-LEVEL marker (font-variant:small-caps): the layout
+    splits such a run into per-case sub-runs before painting, so canvases can
+    ignore it — they never receive it on a real DrawText. }
+  TTina4FontStyle = (tfsBold, tfsItalic, tfsUnderline, tfsStrike, tfsOverline, tfsSmallCaps);
   TTina4FontStyles = set of TTina4FontStyle;
 
   TTina4TextMetrics = record

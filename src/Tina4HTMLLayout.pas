@@ -506,6 +506,7 @@ begin
   Result := [];
   if St.Bold then Include(Result, tfsBold);
   if St.Italic then Include(Result, tfsItalic);
+  if St.SmallCaps then Include(Result, tfsSmallCaps);   // layout-level marker
   td := LowerCase(St.TextDecoration);
   if Pos('underline', td) > 0 then Include(Result, tfsUnderline);
   if Pos('line-through', td) > 0 then Include(Result, tfsStrike);
@@ -2646,6 +2647,81 @@ var
     items.Add(qi);
   end;
 
+  { ---- font-variant: small-caps ---------------------------------------------
+    A small-caps run is one atomic inline item (so it wraps like a normal word),
+    but at paint time it splits into per-case sub-runs: a maximal run of ASCII
+    lowercase letters is UPPERCASED and drawn at SC_SCALE of the font size; every
+    other char (real capitals, digits, punctuation, non-ASCII) is drawn full size.
+    Both baselines share the line baseline. (Non-ASCII lowercase stays full size —
+    a documented degrade; docs/OUTSTANDING.md B.) }
+  function U8CharLen(const S: string; P: Integer): Integer;
+  begin
+    case Ord(S[P]) of
+      $00..$7F: Result := 1; $C0..$DF: Result := 2; $E0..$EF: Result := 3;
+    else Result := 4; end;
+  end;
+
+  function SmallCapsWidth(const T: string; const St: TComputedStyle): Single;
+  const SC_SCALE = 0.78;
+  var i, cl: Integer; ch, runTxt: string; lower, runLower, started: Boolean; w: Single;
+    procedure AddRun(const s: string; isLo: Boolean);
+    begin
+      if s = '' then Exit;
+      if isLo then w := w + FCanvas.MeasureText(UpperCase(s), St.FontSize * SC_SCALE, FontStylesOf(St) - [tfsSmallCaps]).Width
+      else       w := w + FCanvas.MeasureText(s, St.FontSize, FontStylesOf(St) - [tfsSmallCaps]).Width;
+    end;
+  begin
+    w := 0; runTxt := ''; runLower := False; started := False;
+    FCanvas.FontFamily := St.FontFamily; FCanvas.FontWeight := St.FontWeight; FCanvas.LetterSpacing := St.LetterSpacing;
+    i := 1;
+    while i <= Length(T) do
+    begin
+      cl := U8CharLen(T, i); ch := Copy(T, i, cl);
+      lower := (cl = 1) and (ch >= 'a') and (ch <= 'z');
+      if (not started) or (lower = runLower) then begin runTxt := runTxt + ch; runLower := lower; started := True; end
+      else begin AddRun(runTxt, runLower); runTxt := ch; runLower := lower; end;
+      i := i + cl;
+    end;
+    AddRun(runTxt, runLower);
+    FCanvas.FontFamily := ''; FCanvas.FontWeight := 0; FCanvas.LetterSpacing := 0;
+    Result := w;
+  end;
+
+  { Paint a small-caps item as per-case sub-runs starting at startX. }
+  procedure EmitSmallCapsRuns(const it: TInlineItem; startX, lineTop, maxAscent: Single);
+  const SC_SCALE = 0.78;
+  var i, cl: Integer; ch, runTxt: string; lower, runLower, started: Boolean; cx: Single;
+    procedure Emit(const s: string; isLo: Boolean);
+    var r: TTextRun; disp: string; sz: Single; m: TTina4TextMetrics;
+    begin
+      if s = '' then Exit;
+      if isLo then begin disp := UpperCase(s); sz := it.FontSize * SC_SCALE; end
+      else       begin disp := s; sz := it.FontSize; end;
+      FCanvas.FontFamily := it.FontFamily; FCanvas.FontWeight := it.FontWeight; FCanvas.LetterSpacing := it.LetterSpacing;
+      m := FCanvas.MeasureText(disp, sz, it.Styles - [tfsSmallCaps]);
+      FCanvas.FontFamily := ''; FCanvas.FontWeight := 0; FCanvas.LetterSpacing := 0;
+      r.Text := disp; r.X := cx; r.Y := lineTop + maxAscent - m.Ascent;
+      r.FontSize := sz; r.Styles := it.Styles - [tfsSmallCaps]; r.Color := it.Color;
+      r.LetterSpacing := it.LetterSpacing; r.FontFamily := it.FontFamily; r.FontWeight := it.FontWeight;
+      r.ShadowDX := it.ShadowDX; r.ShadowDY := it.ShadowDY; r.ShadowColor := it.ShadowColor;
+      r.DecorLines := it.DecorLines; r.DecorStyle := it.DecorStyle; r.DecorColor := it.DecorColor;
+      Box.Runs.Add(r);
+      cx := cx + m.Width;
+    end;
+  begin
+    cx := startX; runTxt := ''; runLower := False; started := False;
+    i := 1;
+    while i <= Length(it.Text) do
+    begin
+      cl := U8CharLen(it.Text, i); ch := Copy(it.Text, i, cl);
+      lower := (cl = 1) and (ch >= 'a') and (ch <= 'z');
+      if (not started) or (lower = runLower) then begin runTxt := runTxt + ch; runLower := lower; started := True; end
+      else begin Emit(runTxt, runLower); runTxt := ch; runLower := lower; end;
+      i := i + cl;
+    end;
+    Emit(runTxt, runLower);
+  end;
+
   { Add one text token (a word, or a run of literal spaces for preformatted
     text) as an inline item, measured in St's font with the shared-baseline
     placement the normal word path uses. }
@@ -2660,6 +2736,7 @@ var
     FCanvas.FontFamily := '';
     FCanvas.FontWeight := 0;
     ti.Text := W; ti.Box := nil; ti.W := tm.Width; ti.H := LineHeightOf(St);
+    if St.SmallCaps then ti.W := SmallCapsWidth(W, St);   // composite width of the case-runs
     ti.Ascent := (ti.H - (tm.Ascent + tm.Descent)) / 2 + tm.Ascent;
     ti.FontAscent := tm.Ascent;
     if SameText(St.VerticalAlign, 'sub') then
@@ -2901,6 +2978,7 @@ var
           it.Text := words[i];
           it.Box := nil;
           it.W := m.Width;
+          if St.SmallCaps then it.W := SmallCapsWidth(words[i], St);   // case-run composite width
           it.H := LineHeightOf(St);
           // baseline sits (lineHeight-fontHeight)/2 below the run top, then
           // ascent below that — so text of any size shares one baseline.
@@ -3225,6 +3303,9 @@ var
         else // baseline: box bottom on the baseline
           ShiftBoxTree(it.Box, x, lineTop + maxAscent - it.Ascent);
       end
+      else if (tfsSmallCaps in it.Styles) and (it.Text <> '') then
+        // font-variant:small-caps — paint per-case sub-runs; x advances by it.W below
+        EmitSmallCapsRuns(it, x, lineTop, maxAscent)
       else
       begin
         run.Text := it.Text;
