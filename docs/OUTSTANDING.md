@@ -42,10 +42,13 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   degrade) on the raster canvas.
 
 ## B. Text & internationalization
-The tractable text features are done (`hyphens`, `font-variant: small-caps`,
-`ruby`). What remains here is genuinely large or needs font infrastructure — each
-is a multi-session effort, not a quick pass, and is left honestly open rather than
-shipped as a low-quality approximation.
+Most of B is done: `hyphens: manual`, `font-variant: small-caps`, `ruby`,
+`font-stretch`, and **bidi** (line-level UBA reorder, mirrored punctuation,
+`<bdo>`/`<bdi>`). What remains is genuinely large or data-dependent — full
+vertical `writing-mode` block-flow (an axis-inversion rewrite), `hyphens: auto`
+(needs a hyphenation dictionary), per-character bidi + `unicode-bidi` control
+codes, and accents/CJK on the pure-raster stroke font — each a multi-session or
+data effort, left honestly open rather than shipped as a low-quality hack.
 
 - **[L → mostly done] Bidi / RTL** — **line-level UBA reordering DONE.** Mixed
   LTR/RTL lines are reordered logical→visual by the Unicode Bidi Algorithm L2 rule
@@ -64,11 +67,11 @@ shipped as a low-quality approximation.
   reftest `writing-mode-vertical`). True vertical block-flow inverts the main/cross
   axes through the entire block + inline layout (lines advancing horizontally,
   upright CJK) — an axis-inversion rewrite, not an increment.
-- **[S→infra] `font-stretch`** — parsed-ignored. The spec-correct behaviour selects
-  a width-variant font face (condensed/expanded), which needs those faces; a
-  synthetic horizontal glyph scale would thread a per-run factor through the item
-  and run models (many construction sites) for a low-quality result. Deferred to
-  the font-selection work rather than shipped as a hack.
+- **[S] `font-stretch`** — **DONE (synthetic).** Keywords + `<percentage>` parse to
+  a factor; the run advance is scaled to match and the glyphs paint through a
+  horizontal `Scale`. Carried as a `Styles` marker (no per-run field) and bucketed
+  (condensed 0.78× / expanded 1.28×) so measure and paint always agree. Reftest
+  `font-stretch`. Not width-variant face selection (that needs the faces).
 - ~~**[M] `hyphens`**~~ — **DONE (manual).** `manual` (the CSS default) breaks a
   word at its soft hyphens (`&shy;`/U+00AD) when a line needs it and renders a `-`;
   `none` never breaks there; `auto` degrades to `manual` (no dictionary). Added the

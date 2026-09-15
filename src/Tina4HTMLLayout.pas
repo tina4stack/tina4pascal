@@ -464,6 +464,15 @@ begin
   if sawNum then Result := bkEN else Result := bkNeutral;
 end;
 
+{ font-stretch as a horizontal scale factor (bucketed so the measured advance and
+  the painted glyph scale always agree — a coarse but consistent synthetic). }
+function StretchFactorOf(const fs: TTina4FontStyles): Single;
+begin
+  if tfsStretchC in fs then Result := 0.78
+  else if tfsStretchE in fs then Result := 1.28
+  else Result := 1.0;
+end;
+
 { True if the first strong character of S is RTL (UBA P2/P3, for dir=auto/<bdi>). }
 function FirstStrongRTL(const S: string): Boolean;
 var p: Integer; k: TBidiKind;
@@ -623,6 +632,8 @@ begin
   if St.Bold then Include(Result, tfsBold);
   if St.Italic then Include(Result, tfsItalic);
   if St.SmallCaps then Include(Result, tfsSmallCaps);   // layout-level marker
+  if St.FontStretch < 0.9 then Include(Result, tfsStretchC)      // font-stretch condensed
+  else if St.FontStretch > 1.1 then Include(Result, tfsStretchE); // expanded
   td := LowerCase(St.TextDecoration);
   if Pos('underline', td) > 0 then Include(Result, tfsUnderline);
   if Pos('line-through', td) > 0 then Include(Result, tfsStrike);
@@ -2912,6 +2923,7 @@ var
     FCanvas.FontWeight := 0;
     ti.Text := W; ti.Box := nil; ti.W := tm.Width; ti.H := LineHeightOf(St);
     if St.SmallCaps then ti.W := SmallCapsWidth(W, St);   // composite width of the case-runs
+    ti.W := ti.W * StretchFactorOf(FontStylesOf(St));     // font-stretch advance
     ti.Ascent := (ti.H - (tm.Ascent + tm.Descent)) / 2 + tm.Ascent;
     ti.FontAscent := tm.Ascent;
     if SameText(St.VerticalAlign, 'sub') then
@@ -3159,6 +3171,7 @@ var
           it.Box := nil;
           it.W := m.Width;
           if St.SmallCaps then it.W := SmallCapsWidth(words[i], St);   // case-run composite width
+          it.W := it.W * StretchFactorOf(FontStylesOf(St));            // font-stretch advance
           it.H := LineHeightOf(St);
           // baseline sits (lineHeight-fontHeight)/2 below the run top, then
           // ascent below that — so text of any size shares one baseline.
@@ -4954,6 +4967,7 @@ var
   decCol: TTina4Color; decW, decTh, dbx, dby: Single;
   bcTextRad, bcTextDX, bcTextDenom, bcGX, bcFrac, bcCW: Single;
   bcCi, bcCl: Integer; bcCh: string;
+  stretchF: Single;   // font-stretch horizontal scale for this run
   wmRot: Single;
   drawTxt: string;
   zorder: array of Integer;
@@ -5522,10 +5536,18 @@ begin
       Canvas.LetterSpacing := r.LetterSpacing;
       Canvas.FontFamily := r.FontFamily;
       Canvas.FontWeight := r.FontWeight;
+      // font-stretch: scale the glyphs horizontally about the run's left edge
+      stretchF := StretchFactorOf(r.Styles);
+      if stretchF <> 1.0 then
+      begin
+        Canvas.SaveState;
+        Canvas.Translate(r.X - sx, 0); Canvas.Scale(stretchF, 1); Canvas.Translate(-(r.X - sx), 0);
+      end;
       if (r.ShadowColor shr 24) > 0 then
         Canvas.DrawText(r.X - sx + r.ShadowDX, r.Y - innerOfs + r.ShadowDY, drawTxt,
           r.FontSize, r.Styles, ScaleAlpha(r.ShadowColor, op));
       Canvas.DrawText(r.X - sx, r.Y - innerOfs, drawTxt, r.FontSize, r.Styles, fg);
+      if stretchF <> 1.0 then Canvas.RestoreState;
       // overline: no native font attribute, so rule it by hand across the run,
       // just inside the top of the em box (matches Chrome's placement closely).
       if tfsOverline in r.Styles then

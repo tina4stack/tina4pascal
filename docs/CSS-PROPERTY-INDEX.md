@@ -75,7 +75,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | font-family | ✅ | resolved on all 3 shell canvases (generic + named + @font-face); real fonts, not one system face |
 | font (shorthand) | ✅ | `[style] [variant] [weight] size[/line-height] family` — sets style/weight/size/line-height/family |
 | font-variant: small-caps | ✅ | synthesised — a run splits at paint into per-case sub-runs: ASCII lowercase is uppercased at 0.78× on the shared baseline, everything else (caps, digits, punctuation) stays full size. The run stays one atomic wrapping unit. Non-ASCII lowercase not yet cased. Reftest `font-smallcaps` |
-| font-stretch | 📦 | parsed-ignored (no width-variant selection / synthetic stretch) |
+| font-stretch | ✅ | synthetic horizontal glyph scale — keywords (`condensed`…`ultra-expanded`) and `<percentage>` parse to a factor; the run's advance is scaled to match and the glyphs painted through a horizontal `Scale` about the run's left edge. Bucketed (condensed 0.78× / expanded 1.28×) so measure and paint always agree; not width-variant face selection. Reftest `font-stretch` |
 | line-height | ✅ | unitless, px, em, % (÷100), rem (×16 root) |
 | letter-spacing | ✅ | applied in measure AND paint |
 | word-spacing | ✅ | extra px added to every inter-word space (inherited; affects wrap + alignment) |
@@ -198,9 +198,9 @@ mode renderer doesn't yet have):
 2. **mask** long tail — `url()` image masks, `mask-mode:luminance`, mask
     position/size/repeat (gradient alpha masks + `filter`/`backdrop-filter`/
     `mix-blend-mode`/`drop-shadow` and clip-path basic shapes are done).
-3. Typography remainder (font selection / bidi): `font-stretch`
-    (`font-variant` small-caps + soft-hyphen `hyphens: manual` done;
-    `hyphens: auto` dictionary remains), full bidi (mixed-direction inline runs — `direction:rtl`
+3. Typography remainder (font selection / bidi): `hyphens: auto`
+    dictionary (`font-variant` small-caps, soft-hyphen `hyphens: manual`,
+    synthetic `font-stretch` done), full vertical `writing-mode` block-flow (mixed-direction inline runs — `direction:rtl`
     block right-alignment is done) + full vertical block-flow (single-line
     `writing-mode` done).
 4. **user-select / resize** (need a selection model / drag-resize handle);

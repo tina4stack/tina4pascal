@@ -325,6 +325,7 @@ type
     CSSCursor: string;
     TextTransform: string;
     SmallCaps: Boolean;         // font-variant: small-caps
+    FontStretch: Single;        // 1.0 = normal; <1 condensed, >1 expanded (synthetic)
     Opacity: Single;
     MinWidth: Single;
     MaxWidth: Single;
@@ -2397,6 +2398,7 @@ begin
   Result.CSSCursor := '';
   Result.TextTransform := 'none';
   Result.SmallCaps := False;
+  Result.FontStretch := 1.0;
   Result.Opacity := 1.0;
   Result.MinWidth := -1;
   Result.MaxWidth := -1;
@@ -2793,6 +2795,31 @@ begin
   end;
 end;
 
+{ font-stretch → a horizontal scale factor (synthetic). Keywords map to the CSS
+  percentages; a bare <percentage> is used directly. }
+function ParseFontStretch(const S: string): Single;
+var v: string; p: Integer;
+begin
+  v := Trim(LowerCase(S));
+  if v = 'ultra-condensed' then Exit(0.5);
+  if v = 'extra-condensed' then Exit(0.625);
+  if v = 'condensed' then Exit(0.75);
+  if v = 'semi-condensed' then Exit(0.875);
+  if v = 'semi-expanded' then Exit(1.125);
+  if v = 'expanded' then Exit(1.25);
+  if v = 'extra-expanded' then Exit(1.5);
+  if v = 'ultra-expanded' then Exit(2.0);
+  if v = 'normal' then Exit(1.0);
+  p := Pos('%', v);
+  if p > 0 then
+  begin
+    Result := StrToFloatDef(Trim(Copy(v, 1, p - 1)), 100) / 100;
+    if Result < 0.3 then Result := 0.3 else if Result > 3 then Result := 3;
+    Exit;
+  end;
+  Result := 1.0;
+end;
+
 class function TComputedStyle.ForTag(Tag: THTMLTag; const ParentStyle: TComputedStyle; StyleSheet: TCSSStyleSheet): TComputedStyle;
 var
   TN, Temp, BtnClass: string;
@@ -2844,6 +2871,7 @@ begin
   Result.ListStyleImage := ParentStyle.ListStyleImage;   // inherited
   Result.TextTransform := ParentStyle.TextTransform;
   Result.SmallCaps := ParentStyle.SmallCaps;   // inherited
+  Result.FontStretch := ParentStyle.FontStretch;   // inherited
   Result.LetterSpacing := ParentStyle.LetterSpacing;
   Result.WordSpacing := ParentStyle.WordSpacing;
   Result.ListStyleInside := ParentStyle.ListStyleInside;
@@ -4085,6 +4113,8 @@ begin
     Style.TextTransform := Temp.ToLower;
   if Decls.TryGetValue('font-variant', Temp) and not ShouldSkip(Temp) then
     Style.SmallCaps := Pos('small-caps', Temp.ToLower) > 0;
+  if Decls.TryGetValue('font-stretch', Temp) and not ShouldSkip(Temp) then
+    Style.FontStretch := ParseFontStretch(Temp);
 
   if Decls.TryGetValue('opacity', Temp) and not ShouldSkip(Temp) then
     Style.Opacity := Max(0, Min(1, StrToFloatDef(Temp, 1.0)));

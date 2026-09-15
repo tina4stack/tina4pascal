@@ -24,7 +24,11 @@ type
   { tfsSmallCaps is a LAYOUT-LEVEL marker (font-variant:small-caps): the layout
     splits such a run into per-case sub-runs before painting, so canvases can
     ignore it — they never receive it on a real DrawText. }
-  TTina4FontStyle = (tfsBold, tfsItalic, tfsUnderline, tfsStrike, tfsOverline, tfsSmallCaps);
+  { tfsStretchC/E are LAYOUT markers (font-stretch condensed/expanded): the layout
+    scales the run's advance and wraps its paint in a horizontal scale; canvases
+    ignore them. }
+  TTina4FontStyle = (tfsBold, tfsItalic, tfsUnderline, tfsStrike, tfsOverline,
+                     tfsSmallCaps, tfsStretchC, tfsStretchE);
   TTina4FontStyles = set of TTina4FontStyle;
 
   TTina4TextMetrics = record
