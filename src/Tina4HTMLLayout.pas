@@ -64,6 +64,8 @@ type
     MarkerText: string;            // list-item bullet/number, '' if none
     MarkerImage: Integer;          // list-style-image handle, -1 = none
     RubyBaseline: Single;          // <ruby> atom: base baseline offset from box top (0 = not ruby)
+    VerticalRL: Boolean;           // writing-mode:vertical-rl — content laid out against the
+                                   // height, painted rotated 90° CW into right-to-left columns
     constructor Create;
     destructor Destroy; override;
   end;
@@ -4008,8 +4010,22 @@ begin
     else FContainingH := eh;
   end
   else FContainingH := -1;
+  // writing-mode: vertical-rl with a definite height — lay the inline content out
+  // against the HEIGHT (so it wraps into columns), then paint it rotated 90° CW
+  // into right-to-left columns (see PaintBoxEx). Needs an explicit height to wrap
+  // against; without one it falls through to the flat 90° single-line rotation.
+  box.VerticalRL := (eh >= 0)
+    and ((Pos('vertical', st.WritingMode) > 0) or (Pos('sideways', st.WritingMode) > 0))
+    and (Pos('lr', st.WritingMode) = 0);
+  if box.VerticalRL then contentW := Max(1, FContainingH);   // wrap against the content height
   LayoutChildren(box, Tag, st, contentX, contentY, contentW, usedH);
   FContainingH := savedCH;
+  if box.VerticalRL then
+  begin
+    box.W := usedH + edgeL + edgeR;   // physical width = content's inline extent (from usedH)
+    box.H := eh;                      // physical height = the specified height
+    usedH := Max(0, eh - edgeT - edgeB);  // keep the tail's box.H := usedH+edges == eh
+  end;
   if eh >= 0 then
   begin
     naturalH := usedH;
@@ -4968,6 +4984,8 @@ var
   bcTextRad, bcTextDX, bcTextDenom, bcGX, bcFrac, bcCW: Single;
   bcCi, bcCl: Integer; bcCh: string;
   stretchF: Single;   // font-stretch horizontal scale for this run
+  vAx, vAy, vWc: Single;   // writing-mode:vertical-rl paint frame (top-left + content width)
+  vRotSaved: Boolean;      // a vertical-rl content rotation is open (balance the restore)
   wmRot: Single;
   drawTxt: string;
   zorder: array of Integer;
@@ -4988,6 +5006,7 @@ var
   shi: Integer;   // box-shadow list index
 begin
   st := Box.Style;
+  vRotSaved := False;
   // CSS transition: ease transform/opacity/colours toward their computed value
   // when it changes (hover/focus/DOM). Per-element state on the tag.
   if st.TransitionDuration > 0 then ApplyTransition(Box, st);
@@ -5038,19 +5057,22 @@ begin
   // the whole line rotates 90° clockwise about the box centre. Full block-flow
   // reordering is out of scope; a single centred line reads correctly this way.
   wmRot := 0;
-  if (Pos('vertical', st.WritingMode) > 0) or (Pos('sideways', st.WritingMode) > 0) then
+  // vertical-rl with a definite height uses the real column layout (Box.VerticalRL);
+  // any other vertical/sideways box keeps the flat single-line 90° rotation.
+  if (not Box.VerticalRL) and
+     ((Pos('vertical', st.WritingMode) > 0) or (Pos('sideways', st.WritingMode) > 0)) then
     wmRot := 90;
   hasRS := (not use3D) and ((st.TransformRotate <> 0) or (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1)
     or (st.TransformSkewX <> 0) or (st.TransformSkewY <> 0) or st.TransformMatrixSet
     or (wmRot <> 0) or (st.ClipPath <> ''));
   if hasRS then
   begin
+    Canvas.SaveState;
     // pivot at transform-origin (px or %-marker; default 50% 50% = centre)
     if st.TransformOriginX < -1.5 then rcx := Box.X + Box.W * (-st.TransformOriginX) / 100
     else rcx := Box.X + st.TransformOriginX;
     if st.TransformOriginY < -1.5 then rcy := y + Box.H * (-st.TransformOriginY) / 100
     else rcy := y + st.TransformOriginY;
-    Canvas.SaveState;
     Canvas.Translate(rcx, rcy);
     if (st.TransformRotate + wmRot) <> 0 then Canvas.Rotate(st.TransformRotate + wmRot); // +deg = CSS clockwise (flipped canvas)
     if (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1) then
@@ -5440,6 +5462,20 @@ begin
         st.FontSize, [], ScaleAlpha(st.Color, op));
   end;
 
+  // writing-mode:vertical-rl — rotate ONLY the inline content (runs + child boxes)
+  // into right-to-left columns; the box background/border above stay upright.
+  // 90° CW visual rotation about the content's top-right corner: a laid-out frame
+  // point (fx,fy) maps to (A.x + Wc - fy, A.y + fx) — inline fx runs down, the
+  // columns fy advance leftward.
+  if Box.VerticalRL then
+  begin
+    Canvas.SaveState; vRotSaved := True;
+    vAx := Box.X + st.BorderWidths.Left + st.Padding.Left;
+    vAy := y + st.BorderWidths.Top + st.Padding.Top;
+    vWc := Box.W - st.BorderWidths.Horz - st.Padding.Horz;
+    Canvas.Translate(vAx + vWc, vAy); Canvas.Rotate(90); Canvas.Translate(-vAx, -vAy);
+  end;
+
   // scrollable / clipped inner box: clip, then draw content shifted by ScrollTop.
   // didClip MUST gate ClearClip (not "innerOfs<>OffsetY") — a scroller sitting
   // at ScrollTop=0 still opened a clip and must close it, else the saved
@@ -5681,6 +5717,7 @@ begin
       Canvas.EndLayer3D(layer3D, corners3d);
     if useLayer and (filterLayer >= 0) then
       Canvas.EndLayerFiltered(filterLayer, st.Filter, st.MixBlendMode, st.MaskImage);
+    if vRotSaved then Canvas.RestoreState;   // close the vertical content rotation
     if hasRS then Canvas.RestoreState;
     if shifted then ShiftBoxTree(Box, -tx, -ty);
   end;

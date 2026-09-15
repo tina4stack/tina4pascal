@@ -91,7 +91,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | list-style-type | ✅ | disc/circle/square/decimal/alpha/roman/none |
 | list-style shorthand, list-style-position | ✅ | shorthand tokenised (type · inside/outside · image url); `position:inside` draws the marker in the content flow |
 | list-style-image | ✅ | `url(...)` image marker (dedicated property + shorthand) loaded via the shell and drawn as a font-sized square outdented left of the content; falls back to the bullet glyph if the image fails to load |
-| writing-mode | 🟡 | `vertical-rl` / `vertical-lr` / `sideways-*`: a line is set sideways (rotated 90° CW about the box centre, Latin mixed orientation) through the transform path; inherited. Full vertical block-flow reordering (multi-line column progression) not yet modelled |
+| writing-mode | ✅ | `vertical-rl` with a definite height does **real vertical block-flow**: the inline content is laid out against the height (so it wraps into columns), then painted 90° CW into right-to-left columns — text runs top-to-bottom, Latin glyphs rotated CW, the box background/border upright. Verified matching Chrome. Inherited. `vertical-lr` and a `vertical-rl` block without a definite height fall back to the flat single-line rotation; upright CJK orientation (`text-orientation`) not modelled. Reftest `writing-mode-vertical` |
 | direction | ✅ | `ltr`/`rtl`/`auto`, from the property, the `dir` attribute, or `dir="auto"` (first-strong detection). Mixed LTR/RTL lines are reordered logical→visual by the Unicode Bidi Algorithm L2 rule (Hebrew/Arabic classification, base level, simplified neutral resolution), verified pixel-matching Chrome. Mirrored punctuation (UBA L4: `(`↔`)`, `[`↔`]`, `<`↔`>`, guillemets…) is applied to RTL-level punctuation. Native text backends shape each run. Remaining: per-character UBA (mixed direction inside one word), explicit embeddings/overrides (`bdi`/`bdo`/`unicode-bidi`), RTL on the raster path. Reftest `bidi-rtl-ltr` |
 | unicode-bidi | ✅ | accepted (its effect is the bidi algorithm, which we don't run — no-op alongside the `direction` right-alignment) |
 | tab-size | ✅ | `-moz-tab-size` too; tabs in `white-space:pre`/`pre-wrap` expand to N space-widths (default 8) |
@@ -198,11 +198,10 @@ mode renderer doesn't yet have):
 2. **mask** long tail — `url()` image masks, `mask-mode:luminance`, mask
     position/size/repeat (gradient alpha masks + `filter`/`backdrop-filter`/
     `mix-blend-mode`/`drop-shadow` and clip-path basic shapes are done).
-3. Typography remainder (font selection / bidi): `hyphens: auto`
-    dictionary (`font-variant` small-caps, soft-hyphen `hyphens: manual`,
-    synthetic `font-stretch` done), full vertical `writing-mode` block-flow (mixed-direction inline runs — `direction:rtl`
-    block right-alignment is done) + full vertical block-flow (single-line
-    `writing-mode` done).
+3. Typography remainder (font selection / bidi): `hyphens: auto` dictionary,
+    `vertical-lr` + upright CJK orientation (`font-variant` small-caps, soft-hyphen
+    `hyphens: manual`, synthetic `font-stretch`, `vertical-rl` block-flow, and bidi
+    — reorder + mirror + `<bdo>`/`<bdi>` — all done).
 4. **user-select / resize** (need a selection model / drag-resize handle);
     **background-blend-mode** (software per-background-layer blend compositing —
     the existing blend path is Cocoa CGBlendMode, not pure-Pascal).

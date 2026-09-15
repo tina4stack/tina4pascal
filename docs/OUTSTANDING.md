@@ -62,11 +62,14 @@ data effort, left honestly open rather than shipped as a low-quality hack.
   per-character levels (mixed direction *within* one word/token), explicit
   embeddings via control codes (`unicode-bidi`, LRE/RLE), and RTL shaping on the
   pure-raster path. (`<bdi>`/`<bdo>` elements DONE.)
-- **[L] `writing-mode` (full vertical block-flow)** — a Latin run is set sideways
-  today (the whole box rotates 90°, which reads correctly for a single line;
-  reftest `writing-mode-vertical`). True vertical block-flow inverts the main/cross
-  axes through the entire block + inline layout (lines advancing horizontally,
-  upright CJK) — an axis-inversion rewrite, not an increment.
+- ~~**[L] `writing-mode` (full vertical block-flow)**~~ — **DONE for `vertical-rl`**
+  with a definite height: the inline content lays out against the height (wrapping
+  into columns) and paints 90° CW into right-to-left columns — top-to-bottom runs,
+  CW-rotated Latin glyphs, upright box background/border. Verified matching Chrome
+  (1.83%); gated so horizontal layout is untouched (155/155). **Remaining:**
+  `vertical-lr` (columns left-to-right), a `vertical-rl` block without a definite
+  height (still the flat single-line fallback), and upright CJK glyph orientation
+  (`text-orientation: upright`).
 - **[S] `font-stretch`** — **DONE (synthetic).** Keywords + `<percentage>` parse to
   a factor; the run advance is scaled to match and the glyphs paint through a
   horizontal `Scale`. Carried as a `Styles` marker (no per-run field) and bucketed
