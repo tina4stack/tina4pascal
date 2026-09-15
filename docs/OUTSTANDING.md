@@ -52,10 +52,13 @@ shipped as a low-quality approximation.
   (Hebrew/Arabic classification, base level from `direction` / the `dir` attribute /
   `dir="auto"` first-strong detection, simplified N1/N2 neutral resolution, space
   re-derivation for reversed runs) — verified pixel-matching Chrome on Hebrew+English
-  paragraphs. Native backends shape each run. Reftest `bidi-rtl-ltr`. **Remaining:**
+  paragraphs. **Mirrored punctuation done** (UBA L4: a pure-punctuation token that
+  resolves to an RTL level paints reversed + mirrored — `(`↔`)`, `[`↔`]`, `<`↔`>`,
+  guillemets, etc.; strong-char runs are left to the backend to avoid double
+  mirroring). Native backends shape each run. Reftest `bidi-rtl-ltr`. **Remaining:**
   per-character levels (mixed direction *within* one word/token), explicit
-  embeddings/overrides (`bdi`/`bdo`/`unicode-bidi`, `‮`/LRE/RLE), mirrored
-  punctuation (`(` ↔ `)` in RTL), and RTL shaping on the pure-raster path.
+  embeddings/overrides (`bdi`/`bdo`/`unicode-bidi`, LRE/RLE), and RTL shaping on
+  the pure-raster path.
 - **[L] `writing-mode` (full vertical block-flow)** — a Latin run is set sideways
   today (the whole box rotates 90°, which reads correctly for a single line;
   reftest `writing-mode-vertical`). True vertical block-flow inverts the main/cross

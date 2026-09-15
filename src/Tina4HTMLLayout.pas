@@ -409,6 +409,46 @@ begin
   end;
 end;
 
+{ UBA L4 mirroring: a bracket/quote/operator paints as its mirror in an RTL run
+  (Bidi_Mirrored). Common pairs; returns cp unchanged when not mirrorable. }
+function BidiMirrorCP(cp: Cardinal): Cardinal;
+begin
+  case cp of
+    $0028: Result := $0029; $0029: Result := $0028;   // ( )
+    $005B: Result := $005D; $005D: Result := $005B;   // [ ]
+    $007B: Result := $007D; $007D: Result := $007B;   // { }
+    $003C: Result := $003E; $003E: Result := $003C;   // < >
+    $00AB: Result := $00BB; $00BB: Result := $00AB;   // « »
+    $2039: Result := $203A; $203A: Result := $2039;   // ‹ ›
+    $2264: Result := $2265; $2265: Result := $2264;   // ≤ ≥
+    $230A: Result := $230B; $230B: Result := $230A;   // ⌊ ⌋
+    $2308: Result := $2309; $2309: Result := $2308;   // ⌈ ⌉
+  else Result := cp;
+  end;
+end;
+
+{ Encode a codepoint as UTF-8. }
+function CPToU8(cp: Cardinal): string;
+begin
+  if cp < $80 then Result := Chr(cp)
+  else if cp < $800 then Result := Chr($C0 or (cp shr 6)) + Chr($80 or (cp and $3F))
+  else if cp < $10000 then Result := Chr($E0 or (cp shr 12)) + Chr($80 or ((cp shr 6) and $3F)) + Chr($80 or (cp and $3F))
+  else Result := Chr($F0 or (cp shr 18)) + Chr($80 or ((cp shr 12) and $3F)) + Chr($80 or ((cp shr 6) and $3F)) + Chr($80 or (cp and $3F));
+end;
+
+{ Reverse the characters of a pure-punctuation token and mirror each — the visual
+  form of a neutral run at an RTL (odd) level. Applied only to items with no
+  strong character (strong-char runs are shaped by the native backend, which
+  mirrors them itself; doing it here too would double-mirror). }
+function MirrorNeutralRTL(const S: string): string;
+var p: Integer; cps: array of Cardinal; n, i: Integer;
+begin
+  SetLength(cps, Length(S)); n := 0; p := 1;
+  while p <= Length(S) do begin cps[n] := BidiMirrorCP(NextCP(S, p)); Inc(n); end;
+  Result := '';
+  for i := n - 1 downto 0 do Result := Result + CPToU8(cps[i]);   // reverse + mirror
+end;
+
 { An item's bidi kind: its first strong character (L or R) decides; failing that,
   a digit makes it a number; otherwise it is neutral (resolved from context). }
 function ItemBidiKind(const S: string): TBidiKind;
@@ -3366,6 +3406,13 @@ var
         la := base; for j := i - 1 downto 0 do if lv[j] >= 0 then begin la := lv[j]; Break; end;
         lb := base; for j := i + 1 to n - 1 do if lv[j] >= 0 then begin lb := lv[j]; Break; end;
         if la = lb then lv[i] := la else lv[i] := base;   // N1/N2 (simplified)
+      end;
+    // L4 mirroring: a pure-punctuation item that resolved to an RTL (odd) level
+    // paints reversed + mirrored. Strong-char items are left for the backend.
+    for i := 0 to n - 1 do
+      if Odd(lv[i]) and (ItemBidiKind(items[li[i]].Text) = bkNeutral) then
+      begin
+        itm := items[li[i]]; itm.Text := MirrorNeutralRTL(itm.Text); items[li[i]] := itm;
       end;
     // L2: reverse a permutation mapping over runs with level >= lvl, highest first
     SetLength(res, n); for i := 0 to n - 1 do res[i] := i;
