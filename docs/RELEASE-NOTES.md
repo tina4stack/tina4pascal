@@ -33,9 +33,11 @@ bloating the compile size.
   `aarch64-iphonesim` RTL is built (133 units) and `ios/build-sim.sh` compiles
   `libtina4iossim.a`; `ios/sim/` is a SwiftUI host that renders HTML on the
   Simulator. A Pascal `writeln` and the full engine both verified running under
-  `simctl` — no device, no signing. Renders through the pure-Pascal rasterizer
-  (`Tina4RasterCanvas`); native Core Graphics on the sim (`univint`) is the
-  follow-up. See `docs/fpc-iphonesim.md`.
+  `simctl` — no device, no signing. Renders with the **native Core Graphics /
+  Core Text** canvas (`Tina4ShellIOS`, the same shell the physical iPhone uses) —
+  device-identical, system fonts and anti-aliasing. Unlocked by building the
+  `univint` framework bindings for iphonesim (`-Mmacpas`). A pure-Pascal raster
+  fallback (`--raster`) stays for the no-univint path. See `docs/fpc-iphonesim.md`.
 
 ### Native raster rendering (Android + watch path)
 - **Text.** `Tina4RasterCanvas.DrawText` was a no-op; it now draws a **7-segment

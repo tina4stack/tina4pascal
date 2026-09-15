@@ -20,11 +20,26 @@
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ENG="${TINA4_IOSSIM_ENG_DIR:-$HERE/sim}"    # dir holding tina4iossim.pas, app_units.inc
 SRC="${TINA4_SRC:-$HERE/../src}"            # shared engine units
 APP_UNIT_DIRS="${TINA4_APP_UNIT_DIRS:-}"    # extra -Fu dirs for a project's own units
+
+# Two rendering paths, both into App/libtina4iossim.a (the app links one lib):
+#   default = NATIVE  — Tina4ShellIOS (Core Graphics / Core Text), device-identical.
+#                       Needs univint built for iphonesim (docs/fpc-iphonesim.md).
+#   --raster / TINA4_SIM_RASTER=1 — the pure-Pascal raster canvas (no univint),
+#                       same rough fonts as the watch; the no-framework fallback.
+MODE="native"
+[ "${1:-}" = "--raster" ] && MODE="raster"
+[ "${TINA4_SIM_RASTER:-0}" = "1" ] && MODE="raster"
+if [ "$MODE" = "raster" ]; then
+  ENG="${TINA4_IOSSIM_ENG_DIR:-$HERE/sim}"        # tina4iossim.pas
+  ENTRY="$ENG/tina4iossim.pas"
+else
+  ENG="${TINA4_IOSSIM_ENG_DIR:-$HERE/sim/native}" # tina4iossimnative.pas
+  ENTRY="$ENG/tina4iossimnative.pas"
+fi
 WORK="$ENG/build"
-OUT="$ENG/App/libtina4iossim.a"
+OUT="$HERE/sim/App/libtina4iossim.a"
 
 FPCW="${TINA4_SIM_FPC:-$HOME/fpc-watchos}"
 PPC="$FPCW/bin/ppca64"
@@ -36,13 +51,13 @@ RTL="$FPCW/units/aarch64-iphonesim"
 SDK="$(xcrun --sdk iphonesimulator --show-sdk-path 2>/dev/null || true)"
 [ -n "$SDK" ] || { echo "iPhoneSimulator SDK not found (install Xcode iOS platform)"; exit 2; }
 
-mkdir -p "$ENG/App"
+mkdir -p "$HERE/sim/App"
 rm -rf "$WORK"; mkdir -p "$WORK"
 
-echo "compiling Pascal for arm64 iOS Simulator…"
+echo "compiling Pascal for arm64 iOS Simulator ($MODE canvas)…"
 # shellcheck disable=SC2086
 "$PPC" -Mdelphi -Tiphonesim -Paarch64 -O2 -Cn -XR"$SDK" \
-    -Fu"$RTL" -FE"$WORK" -FU"$WORK" -Fu"$SRC" $APP_UNIT_DIRS "$ENG/tina4iossim.pas" \
+    -Fu"$RTL" -FE"$WORK" -FU"$WORK" -Fu"$SRC" $APP_UNIT_DIRS "$ENTRY" \
     2>&1 | grep -Ei "error|fatal" && { echo "COMPILE FAILED"; exit 1; } || true
 
 RES="$(ls "$WORK"/linkfiles*.res 2>/dev/null | head -1)"

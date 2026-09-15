@@ -96,13 +96,41 @@ xcrun simctl install "$DEV" /tmp/dd/Build/Products/Debug-iphonesimulator/Tina4Si
 xcrun simctl launch  "$DEV" com.tina4.pascal.sim
 ```
 
-## What's still raster-only
+## Native Core Graphics / Core Text — now the default
 
-The Simulator app renders through `Tina4RasterCanvas`, not the native Core
-Graphics / Core Text shell (`Tina4ShellIOS`), because the shell needs the
-`univint` framework bindings and those aren't built for `aarch64-iphonesim` yet
-(they want their package's own build defines — the bare compile hits
-`CFBase.pas` "ENDIF without IF(N)DEF"). So the Simulator shows the same
-raster fidelity as the watch (7-segment + stroke fonts), not device-identical
-CG/CT. Building `univint` for iphonesim — and then compiling `Tina4ShellIOS` for
-the sim — is the follow-up (`docs/OUTSTANDING.md`, category F).
+The Simulator renders through the **native** shell (`Tina4ShellIOS`, the same
+Core Graphics / Core Text canvas the physical iPhone uses) — device-identical,
+system fonts and anti-aliasing, not the raster 7-segment font. That needed the
+`univint` framework bindings built for `aarch64-iphonesim`.
+
+The trap: univint units open with macpas conditionals (`{$ifc}` / `{$setc}`), and
+the `{$mode macpas}` switch is *inside* the first `{$ifc}` guard — so they must be
+compiled **`-Mmacpas`** from the command line, or the compiler can't parse the
+first directive (`CFBase.pas` "ENDIF without IF(N)DEF"). Build them ahead of the
+shell so the `-Mdelphi` shell finds them as `.ppu` (`.ppu` interop across modes is
+fine). The set the shell pulls — CFBase/CFString/…, CGContext/CGColor/CGFont/…,
+CTFont/CTLine/… — is ~40 units and compiles fast (header translation, no codegen).
+
+```sh
+# after the RTL + package units, build univint for iphonesim (-Mmacpas):
+for u in CFBase CFString CFAttributedString CFDictionary CFURL CFError \
+         CGBase CGContext CGColor CGColorSpace CGGeometry CGPath CGGradient \
+         CGImage CGImageSource CGBitmapContext CGAffineTransforms CGFont CGDataProvider \
+         CTFont CTFontTraits CTFontManager CTLine CTStringAttributes; do
+  $PPC -Tiphonesim -Paarch64 -Mmacpas -O2 -XR"$SDK" \
+       -FE~/fpc-watchos/units/aarch64-iphonesim -FU~/fpc-watchos/units/aarch64-iphonesim \
+       -Fu~/fpc-watchos/units/aarch64-iphonesim \
+       -Fu"$PWD/packages/univint/src" -Fi"$PWD/packages/univint/src" \
+       "packages/univint/src/$u.pas"
+done
+```
+
+Then `Tina4ShellIOS` compiles clean for iphonesim, and `ios/build-sim.sh`
+(default `--native`) archives `libtina4iossimnative.pas` into
+`libtina4iossim.a`. The app links `CoreGraphics`, `CoreText`, `CoreFoundation`,
+`ImageIO`, `MobileCoreServices`, and provides `tina4_ios_fetch_image` (the
+`<img>` loader — the minimal `ios/sim` host stubs it; port `ios/app/ImageLoader.m`
+for real image loading).
+
+The **raster** path (`Tina4RasterCanvas`, `--raster` / `TINA4_SIM_RASTER=1`) stays
+as the no-univint fallback — same rough fonts as the watch.

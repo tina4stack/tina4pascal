@@ -65,20 +65,19 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   device install with Push enabled on the App ID.
 
 ## F. Platform & toolchain
-- **[✅ raster / 🟡 native] iOS Simulator** — **DONE (raster path).** The
-  `aarch64-iphonesim` RTL is built (133 units, installed at
-  `~/fpc-watchos/units/aarch64-iphonesim`); `ios/build-sim.sh` compiles
-  `libtina4iossim.a` and `ios/sim/` is an XcodeGen app that renders HTML on the
-  Simulator — a Pascal `writeln` and the full engine both verified running on the
-  iOS Simulator, no physical iPhone (`docs/fpc-iphonesim.md`). **Remaining:**
-  (a) it renders through `Tina4RasterCanvas`, not the native `Tina4ShellIOS`
-  (Core Graphics/Core Text) — that needs `univint` built for iphonesim (its
-  package build defines; a bare compile hits `CFBase.pas` ENDIF errors), then
-  `Tina4ShellIOS` compiled for the sim; (b) wire `build ios-sim` / `deploy ios-sim`
-  into `tools/tina4pascal` + the MCP (currently a standalone `ios/build-sim.sh`);
-  (c) an upstream one-liner: FPC's iphonesim link step emits the removed
-  `-ios_simulator_version_min` (Xcode 26 `ld`) — fine for the static-lib path,
-  but worth a `t_darwin.pas` fix as a GitLab MR.
+- **[✅ DONE — native] iOS Simulator** — the engine runs on the iOS Simulator with
+  its **native Core Graphics / Core Text** canvas (`Tina4ShellIOS`),
+  device-identical, no physical iPhone. `aarch64-iphonesim` RTL (133 units) +
+  `univint` (~40 CF/CG/CT units, built `-Mmacpas`) installed at
+  `~/fpc-watchos/units/aarch64-iphonesim`; `ios/build-sim.sh` (default `--native`,
+  `--raster` fallback) → `libtina4iossim.a`; `ios/sim/` app verified rendering on
+  the Simulator (`docs/fpc-iphonesim.md`). **Remaining, minor:**
+  (a) wire `build ios-sim` / `deploy ios-sim` into `tools/tina4pascal` + the MCP
+  (currently the standalone `ios/build-sim.sh`) — held only by a concurrent edit
+  on that file; (b) port `ios/app/ImageLoader.m` so `<img>` loads on the sim (the
+  host stubs `tina4_ios_fetch_image` today); (c) an upstream one-liner — FPC's
+  iphonesim link step emits the removed `-ios_simulator_version_min` (Xcode 26
+  `ld`); fine for the static-lib path, but worth a `t_darwin.pas` GitLab MR.
 - **[M] Android emulator** — needs the Android SDK + `adb` + an **arm64** system
   image installed first (none on this host today); the arm64 `.so` then runs on an
   Apple-Silicon emulator and the CLI wires `deploy`/input to it. Not a free win

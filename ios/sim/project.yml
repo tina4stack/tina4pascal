@@ -15,6 +15,12 @@ targets:
     dependencies:
       - framework: App/libtina4iossim.a
         embed: false
+      # Apple C frameworks the native Core Graphics / Core Text engine links.
+      - sdk: CoreGraphics.framework
+      - sdk: CoreText.framework
+      - sdk: CoreFoundation.framework
+      - sdk: ImageIO.framework
+      - sdk: MobileCoreServices.framework
     info:
       path: App/Info.plist
       properties:
