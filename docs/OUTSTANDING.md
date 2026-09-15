@@ -15,11 +15,16 @@ Effort key: **S** small · **M** medium · **L** large.
 macOS + iOS (CoreGraphics) are complete here; these are the software compositor
 (Windows/Linux) and pure-raster (Android/watch) gaps.
 
-- **[M] Advanced blend modes** — `color-dodge`/`color-burn` and the non-separable
-  `hue`/`saturation`/`color`/`luminosity` fall back to source-over in the Win/Linux
-  `BlendPixel` (`Tina4ShellWin.pas:868`); `Tina4RasterCanvas.BlendPixel` has no CSS
-  blend modes at all. Dodge/burn are per-channel; the four non-separable ones need
-  the CSS set (SetLum / SetSat / ClipColor).
+- ~~**[M] Advanced blend modes**~~ — **DONE (raster + shared).** The shared
+  `BlendRGB` (`Tina4RenderBackend`) now covers all separable modes (dodge/burn
+  included) **and** the four non-separable ones (`hue`/`saturation`/`color`/
+  `luminosity`) via the CSS `Lum`/`Sat`/`SetLum`/`SetSat`/`ClipColor` set — so
+  `background-blend-mode` gets them everywhere. `mix-blend-mode` now composites on
+  the **raster** path too: `Tina4RasterCanvas` implements `BeginLayer`/
+  `EndLayerFiltered` (offscreen buffer → composite back with `BlendRGB`). Guarded
+  by `tests/raster/blend.html`. *Remaining:* the Win/Linux `BlendPixel`
+  (`Tina4ShellWin.pas`) should route through the shared `BlendRGB` rather than its
+  own partial set.
 - **[L] HiDPI** — shells run at density 1, no supersampling (`Tina4ShellWin.pas:828`,
   `Tina4ShellIOS.pas:14`). Engine already takes a density arg; read per-monitor DPI
   and size layer buffers to match.
@@ -32,7 +37,9 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   when unclipped (empty stack). Guarded by `tests/raster/clip.html` (golden) and
   the `clip-roundrect` reftest pair.
 - **[M] CSS filters / `backdrop-filter` / 3D on raster** — `BeginLayer` /
-  `EndLayerFiltered` are no-ops on the raster canvas.
+  `EndLayerFiltered` now composite for `mix-blend-mode`, but the `filter` chain,
+  `backdrop-filter` and 3D-quad mapping on the layer are still skipped (safe
+  degrade) on the raster canvas.
 
 ## B. Text & internationalization
 - **[L] Bidi / RTL** — `direction` is block-level only; `bdi`/`bdo` + full

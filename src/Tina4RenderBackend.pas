@@ -311,6 +311,13 @@ function RoundRectPolygon4(X, Y, W, H, R0, R1, R2, R3: Single): TTina4PointArray
   background-clip:text per-glyph colouring. }
 function GradSample(t: Single; const Colors: array of TTina4Color; const Positions: array of Single): TTina4Color;
 
+{ Blend a source colour over an opaque backdrop with a CSS blend mode — separable
+  (multiply/screen/overlay/darken/lighten/dodge/burn/hard-/soft-light/difference/
+  exclusion) or the four non-separable modes (hue/saturation/color/luminosity).
+  Alpha is taken from Src. Shared by background-blend-mode and the raster
+  mix-blend-mode compositor. }
+function BlendRGB(Src, Dst: TTina4Color; const Mode: string): TTina4Color;
+
 implementation
 
 { Per-corner rounded-rect → polygon. 6 segments per corner reads smooth at UI
@@ -891,17 +898,85 @@ begin
   if Result < 0 then Result := 0 else if Result > 1 then Result := 1;
 end;
 
-{ Blend a source colour over an opaque backdrop with a CSS blend mode (separable,
-  per RGB channel). Alpha is taken from Src. }
+{ The four NON-SEPARABLE CSS blend modes (hue/saturation/color/luminosity) work
+  on the whole colour, not per channel — via the CSS spec's Lum/Sat/SetLum/SetSat
+  helpers. Cs = source (top), Cb = backdrop; all channels 0..1, in/out by var. }
+function ColLum(r, g, b: Single): Single; inline;
+begin Result := 0.3 * r + 0.59 * g + 0.11 * b; end;
+
+procedure ClipColor(var r, g, b: Single);
+var l, n, x, sc: Single;
+begin
+  l := ColLum(r, g, b);
+  n := Min(r, Min(g, b)); x := Max(r, Max(g, b));
+  if n < 0 then
+  begin
+    sc := l - n; if sc <> 0 then begin
+      r := l + (r - l) * l / sc; g := l + (g - l) * l / sc; b := l + (b - l) * l / sc; end;
+  end;
+  if x > 1 then
+  begin
+    sc := x - l; if sc <> 0 then begin
+      r := l + (r - l) * (1 - l) / sc; g := l + (g - l) * (1 - l) / sc; b := l + (b - l) * (1 - l) / sc; end;
+  end;
+end;
+
+procedure SetLum(var r, g, b: Single; l: Single);
+var d: Single;
+begin d := l - ColLum(r, g, b); r := r + d; g := g + d; b := b + d; ClipColor(r, g, b); end;
+
+{ Set the saturation of (r,g,b) to s, preserving which channel is min/mid/max. }
+procedure SetSat(var r, g, b: Single; s: Single);
+  procedure Apply(var lo, mid, hi: Single);
+  begin
+    if hi > lo then begin mid := (mid - lo) / (hi - lo) * s; hi := s; end
+    else begin mid := 0; hi := 0; end;
+    lo := 0;
+  end;
+begin
+  // order the three channels, apply, then the caller's vars are updated in place
+  if r <= g then
+  begin
+    if g <= b then Apply(r, g, b)
+    else if r <= b then Apply(r, b, g)
+    else Apply(b, r, g);
+  end
+  else
+  begin
+    if r <= b then Apply(g, r, b)
+    else if g <= b then Apply(g, b, r)
+    else Apply(b, g, r);
+  end;
+end;
+
+function IsNonSepBlend(const Mode: string): Boolean; inline;
+begin
+  Result := (Mode = 'hue') or (Mode = 'saturation') or (Mode = 'color') or (Mode = 'luminosity');
+end;
+
+{ Blend a source colour over an opaque backdrop with a CSS blend mode (separable
+  per channel, or the four non-separable modes). Alpha is taken from Src. }
 function BlendRGB(Src, Dst: TTina4Color; const Mode: string): TTina4Color;
-var sr, sg, sb, dr, dg, db: Single;
+var sr, sg, sb, dr, dg, db, rr, rg, rb: Single;
 begin
   sr := ((Src shr 16) and $FF) / 255; sg := ((Src shr 8) and $FF) / 255; sb := (Src and $FF) / 255;
   dr := ((Dst shr 16) and $FF) / 255; dg := ((Dst shr 8) and $FF) / 255; db := (Dst and $FF) / 255;
-  Result := (Src and $FF000000)
-    or (Cardinal(Round(BlendChannel(sr, dr, Mode) * 255)) shl 16)
-    or (Cardinal(Round(BlendChannel(sg, dg, Mode) * 255)) shl 8)
-    or  Cardinal(Round(BlendChannel(sb, db, Mode) * 255));
+  if IsNonSepBlend(Mode) then
+  begin
+    if Mode = 'hue' then        begin rr := sr; rg := sg; rb := sb; SetSat(rr, rg, rb, Max(dr,Max(dg,db))-Min(dr,Min(dg,db))); SetLum(rr, rg, rb, ColLum(dr, dg, db)); end
+    else if Mode = 'saturation' then begin rr := dr; rg := dg; rb := db; SetSat(rr, rg, rb, Max(sr,Max(sg,sb))-Min(sr,Min(sg,sb))); SetLum(rr, rg, rb, ColLum(dr, dg, db)); end
+    else if Mode = 'color' then begin rr := sr; rg := sg; rb := sb; SetLum(rr, rg, rb, ColLum(dr, dg, db)); end
+    else begin { luminosity } rr := dr; rg := dg; rb := db; SetLum(rr, rg, rb, ColLum(sr, sg, sb)); end;
+    Result := (Src and $FF000000)
+      or (Cardinal(Round(Min(1,Max(0,rr)) * 255)) shl 16)
+      or (Cardinal(Round(Min(1,Max(0,rg)) * 255)) shl 8)
+      or  Cardinal(Round(Min(1,Max(0,rb)) * 255));
+  end
+  else
+    Result := (Src and $FF000000)
+      or (Cardinal(Round(BlendChannel(sr, dr, Mode) * 255)) shl 16)
+      or (Cardinal(Round(BlendChannel(sg, dg, Mode) * 255)) shl 8)
+      or  Cardinal(Round(BlendChannel(sb, db, Mode) * 255));
 end;
 
 procedure TTina4Canvas.FillGradientSoft(X, Y, W, H, Radius, AngleDeg, PeriodPx: Single; Kind: Integer;

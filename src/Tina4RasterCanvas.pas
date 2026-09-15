@@ -44,6 +44,11 @@ type
     FEdgeN: Integer;
     FClip: array of TRasterClip;   // active clip regions (the intersection to test)
     FClipSave: array of Integer;   // saved stack depths for ClearClip/RestoreState
+    FTgtOX, FTgtOY: Integer;       // doc-space origin of the current draw target (0 = main buffer)
+    FLayers: array of record       // offscreen layer stack (CSS filter / mix-blend-mode)
+      Pix: array of Cardinal; W, H, OX, OY: Integer;
+      Clip: array of TRasterClip; ClipSave: array of Integer;
+    end;
     function  InClip(px, py: Integer): Boolean;
     procedure PushClipSave;
     procedure AddEdge(x0, y0, x1, y1: Single);
@@ -82,6 +87,11 @@ type
     procedure ClearClip; override;
     procedure SaveState; override;
     procedure RestoreState; override;
+    { mix-blend-mode: render the subtree into an offscreen buffer, then composite
+      it back with the CSS blend mode. (CSS `filter`/`mask` on the layer are not
+      applied here yet — a safe degrade; see docs/OUTSTANDING.md A.) }
+    function  BeginLayer(X, Y, W, H, Pad: Single): Integer; override;
+    procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); override;
     function  SupportsRGBA: Boolean; override;
     procedure DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single); override;
   end;
@@ -112,8 +122,10 @@ procedure TTina4RasterCanvas.Clear(Color: TTina4Color);
 var i: Integer;
 begin
   for i := 0 to High(FPix) do FPix[i] := Color;
-  SetLength(FClip, 0);        // fresh frame: drop any clip a prior frame left
+  SetLength(FClip, 0);        // fresh frame: drop any clip/layer a prior frame left
   SetLength(FClipSave, 0);
+  SetLength(FLayers, 0);
+  FTgtOX := 0; FTgtOY := 0;
 end;
 
 function TTina4RasterCanvas.Bits: Pointer;
@@ -125,15 +137,18 @@ end;
 
 procedure TTina4RasterCanvas.BlendPixel(px, py: Integer; R, G, B: Byte; A: Single);
 var
-  idx, sa, inv, dstAi: Integer; dst: Cardinal;
+  idx, sa, inv, dstAi, bx, by: Integer; dst: Cardinal;
   dA, dR, dG, dB, outA, invF, sAf: Single;
   resR, resG, resB, resA: Integer;
 begin
-  if (px < 0) or (px >= FW) or (py < 0) or (py >= FH) then Exit;
+  // px,py are DOC coords; the current target may be an offscreen layer whose
+  // buffer starts at (FTgtOX,FTgtOY). Clip tests stay in doc space.
   if A <= 0 then Exit;
   if (Length(FClip) > 0) and not InClip(px, py) then Exit;   // overflow:hidden / rounded clip
+  bx := px - FTgtOX; by := py - FTgtOY;
+  if (bx < 0) or (bx >= FW) or (by < 0) or (by >= FH) then Exit;
   if A > 1 then A := 1;
-  idx := py * FW + px;
+  idx := by * FW + bx;
   dst := FPix[idx];
   dstAi := (dst shr 24) and $FF;
   sa := Round(A * 255);                          // source alpha 0..255
@@ -197,20 +212,24 @@ var
   py, s, e, i, j, cnt: Integer;
   sy, x, xa, xb, cov: Single;
   xs: array of Single; dirs: array of Integer;
-  wind, ixa, ixb, px: Integer;
+  wind, ixa, ixb, px, ox: Integer;
   tmpX: Single; tmpD: Integer;
   inside: Boolean;
 begin
   baseA := ((Color shr 24) and $FF) / 255;
   if baseA <= 0 then Exit;
   R := (Color shr 16) and $FF; G := (Color shr 8) and $FF; B := Color and $FF;
-  if minX < 0 then minX := 0; if minY < 0 then minY := 0;
-  if maxX >= FW then maxX := FW - 1; if maxY >= FH then maxY := FH - 1;
+  // minX..maxX are DOC coords; the draw target (an offscreen layer) may start at
+  // (FTgtOX,FTgtOY), so clamp to its doc extent and index FCov by the buffer x.
+  ox := FTgtOX;
+  if minX < FTgtOX then minX := FTgtOX; if minY < FTgtOY then minY := FTgtOY;
+  if maxX >= FTgtOX + FW then maxX := FTgtOX + FW - 1;
+  if maxY >= FTgtOY + FH then maxY := FTgtOY + FH - 1;
   if (minX > maxX) or (minY > maxY) then Exit;
   SetLength(xs, FEdgeN + 1); SetLength(dirs, FEdgeN + 1);
   for py := minY to maxY do
   begin
-    for i := minX to maxX do FCov[i] := 0;
+    for i := minX to maxX do FCov[i - ox] := 0;
     for s := 0 to SS - 1 do
     begin
       sy := py + (s + 0.5) / SS;
@@ -251,18 +270,18 @@ begin
         // add horizontal coverage (1/SS per sub-row), fractional at the ends
         ixa := Floor(xa); ixb := Floor(xb);
         if ixa = ixb then
-          FCov[ixa] := FCov[ixa] + (xb - xa) / SS
+          FCov[ixa - ox] := FCov[ixa - ox] + (xb - xa) / SS
         else
         begin
-          FCov[ixa] := FCov[ixa] + (ixa + 1 - xa) / SS;
-          for px := ixa + 1 to ixb - 1 do FCov[px] := FCov[px] + 1 / SS;
-          if ixb <= maxX then FCov[ixb] := FCov[ixb] + (xb - ixb) / SS;
+          FCov[ixa - ox] := FCov[ixa - ox] + (ixa + 1 - xa) / SS;
+          for px := ixa + 1 to ixb - 1 do FCov[px - ox] := FCov[px - ox] + 1 / SS;
+          if ixb <= maxX then FCov[ixb - ox] := FCov[ixb - ox] + (xb - ixb) / SS;
         end;
       end;
     end;
     for px := minX to maxX do
     begin
-      cov := FCov[px];
+      cov := FCov[px - ox];
       if cov > 0 then BlendPixel(px, py, R, G, B, baseA * cov);
     end;
   end;
@@ -678,6 +697,67 @@ end;
 procedure TTina4RasterCanvas.RestoreState;
 begin
   ClearClip;
+end;
+
+function TTina4RasterCanvas.BeginLayer(X, Y, W, H, Pad: Single): Integer;
+var ox, oy, bw, bh, n: Integer;
+begin
+  ox := Floor(X - Pad); oy := Floor(Y - Pad);
+  bw := Ceil(X + W + Pad) - ox; bh := Ceil(Y + H + Pad) - oy;
+  if (bw <= 0) or (bh <= 0) then Exit(-1);
+  n := Length(FLayers); SetLength(FLayers, n + 1);
+  // stash the current target (parent) so End can restore it
+  FLayers[n].Pix := FPix; FLayers[n].W := FW; FLayers[n].H := FH;
+  FLayers[n].OX := FTgtOX; FLayers[n].OY := FTgtOY;
+  FLayers[n].Clip := Copy(FClip); FLayers[n].ClipSave := Copy(FClipSave);
+  // redirect drawing into a fresh transparent buffer covering the padded rect
+  FPix := nil; SetLength(FPix, bw * bh);   // zero-filled = fully transparent
+  FW := bw; FH := bh; FTgtOX := ox; FTgtOY := oy;
+  SetLength(FCov, FW);
+  SetLength(FClip, 0); SetLength(FClipSave, 0);   // layer draws unclipped; parent clip applies on composite
+  Result := n;
+end;
+
+procedure TTina4RasterCanvas.EndLayerFiltered(Handle: Integer;
+  const FilterSpec, BlendMode, MaskSpec: string);
+var
+  layPix: array of Cardinal;
+  lw, lh, lox, loy, n, bx, by, dpx, dpy, dbx, dby: Integer;
+  c, dst: Cardinal; srcA: Single; blended: TTina4Color; useBlend: Boolean;
+begin
+  n := Length(FLayers);
+  if n = 0 then Exit;
+  // capture the just-drawn layer buffer
+  layPix := FPix; lw := FW; lh := FH; lox := FTgtOX; loy := FTgtOY;
+  // restore the parent target
+  Dec(n);
+  FPix := FLayers[n].Pix; FW := FLayers[n].W; FH := FLayers[n].H;
+  FTgtOX := FLayers[n].OX; FTgtOY := FLayers[n].OY;
+  FClip := FLayers[n].Clip; FClipSave := FLayers[n].ClipSave;
+  SetLength(FLayers, n);
+  SetLength(FCov, FW);
+  // (FilterSpec / MaskSpec not applied on the raster path yet — safe degrade.)
+  useBlend := (BlendMode <> '') and (BlendMode <> 'normal');
+  // composite the layer back onto the parent at (lox,loy), doc coords
+  for by := 0 to lh - 1 do
+    for bx := 0 to lw - 1 do
+    begin
+      c := layPix[by * lw + bx];
+      srcA := ((c shr 24) and $FF) / 255;
+      if srcA <= 0 then Continue;
+      dpx := lox + bx; dpy := loy + by;
+      if useBlend then
+      begin
+        dbx := dpx - FTgtOX; dby := dpy - FTgtOY;   // parent-buffer index for the backdrop
+        if (dbx < 0) or (dbx >= FW) or (dby < 0) or (dby >= FH) then dst := 0
+        else dst := FPix[dby * FW + dbx];
+        // blend the layer colour against the backdrop, then source-over at aS
+        blended := BlendRGB((c and $00FFFFFF) or $FF000000, dst or $FF000000, LowerCase(BlendMode));
+        BlendPixel(dpx, dpy, (blended shr 16) and $FF, (blended shr 8) and $FF, blended and $FF, srcA);
+      end
+      else
+        BlendPixel(dpx, dpy, (c shr 16) and $FF, (c shr 8) and $FF, c and $FF, srcA);
+    end;
 end;
 
 function TTina4RasterCanvas.SupportsRGBA: Boolean;
