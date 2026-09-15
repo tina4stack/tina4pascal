@@ -42,13 +42,13 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   degrade) on the raster canvas.
 
 ## B. Text & internationalization
-Most of B is done: `hyphens: manual`, `font-variant: small-caps`, `ruby`,
-`font-stretch`, and **bidi** (line-level UBA reorder, mirrored punctuation,
-`<bdo>`/`<bdi>`). What remains is genuinely large or data-dependent — full
-vertical `writing-mode` block-flow (an axis-inversion rewrite), `hyphens: auto`
-(needs a hyphenation dictionary), per-character bidi + `unicode-bidi` control
-codes, and accents/CJK on the pure-raster stroke font — each a multi-session or
-data effort, left honestly open rather than shipped as a low-quality hack.
+Nearly all of B is done: `hyphens: manual`, `font-variant: small-caps`, `ruby`,
+`font-stretch`, **bidi** (line-level UBA reorder, mirrored punctuation,
+`<bdo>`/`<bdi>`), and **`writing-mode: vertical-rl`** (real column block-flow).
+What remains is data-dependent or niche — `hyphens: auto` (needs a hyphenation
+dictionary), `writing-mode: vertical-lr` + upright CJK orientation, per-character
+bidi + `unicode-bidi` control codes, and accents/CJK on the pure-raster stroke
+font — left honestly open rather than shipped as a low-quality hack.
 
 - **[L → mostly done] Bidi / RTL** — **line-level UBA reordering DONE.** Mixed
   LTR/RTL lines are reordered logical→visual by the Unicode Bidi Algorithm L2 rule
