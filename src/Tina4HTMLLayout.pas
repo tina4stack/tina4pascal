@@ -2115,11 +2115,12 @@ begin
         begin
           baseW[i] := 18; growF[i] := 0; shrinkF[i] := 0;
         end
-        else if cs.FlexBasis >= 0 then
+        else if (cs.FlexBasis <> -1) and (ResolveSize(cs.FlexBasis, contentW) >= 0) then
         begin
           // flex-basis is the item's base main size (content-box), taking
-          // precedence over width — e.g. `flex: 0 0 60px`. auto (-1) falls through.
-          baseW[i] := cs.FlexBasis;
+          // precedence over width — px OR a percentage of the container (`25%`).
+          // auto (-1) falls through to width / content.
+          baseW[i] := ResolveSize(cs.FlexBasis, contentW);
           if not SameText(cs.BoxSizing, 'border-box') then
             baseW[i] := baseW[i] + cs.Padding.Horz + cs.BorderWidths.Horz;
         end
@@ -2386,7 +2387,8 @@ begin
     // for a row) before grow/shrink distribute the container's content height.
     if isCol then
       for i := 0 to items.Count - 1 do
-        if items[i].Style.FlexBasis >= 0 then items[i].H := items[i].Style.FlexBasis;
+        if (items[i].Style.FlexBasis <> -1) and (ResolveSize(items[i].Style.FlexBasis, contentH) >= 0) then
+          items[i].H := ResolveSize(items[i].Style.FlexBasis, contentH);
     // main-axis packing (single line)
     sumMain := 0;
     for i := 0 to items.Count - 1 do
