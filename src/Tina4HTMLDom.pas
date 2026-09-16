@@ -346,6 +346,7 @@ type
     OverflowWrap: string;
     Hyphens: string;   // 'manual' (default) | 'none' | 'auto' — inherited
     TextOverflow: string;
+    LineClamp: Integer;   // -webkit-line-clamp: max lines before clipping (0 = none)
     BoxShadow: TBoxShadow;                 // first shadow (compat); full list below
     BoxShadows: array[0..7] of TBoxShadow; // all comma-separated shadows, [0] = on top
     BoxShadowCount: Integer;               // number of shadows in BoxShadows
@@ -2418,7 +2419,7 @@ begin
   Result.WordBreak := 'normal';
   Result.OverflowWrap := 'normal';
   Result.Hyphens := 'manual';
-  Result.TextOverflow := 'clip';
+  Result.TextOverflow := 'clip'; Result.LineClamp := 0;
   Result.BoxShadow.Active := False;
   Result.BoxShadowCount := 0;
   Result.ObjectFit := 'fill';
@@ -2987,7 +2988,7 @@ begin
   Result.Overflow := 'visible';
   Result.OverflowX := 'visible';
   Result.OverflowY := 'visible';
-  Result.TextOverflow := 'clip';
+  Result.TextOverflow := 'clip'; Result.LineClamp := 0;
   Result.ObjectFit := 'fill';
   Result.BackgroundImage := '';
   Result.BackgroundSize := 'auto';
@@ -4484,6 +4485,8 @@ begin
 
   if Decls.TryGetValue('text-overflow', Temp) and not ShouldSkip(Temp) then
     Style.TextOverflow := Temp.ToLower;
+  if (Decls.TryGetValue('-webkit-line-clamp', Temp) or Decls.TryGetValue('line-clamp', Temp)) and not ShouldSkip(Temp) then
+    Style.LineClamp := StrToIntDef(Trim(Temp), 0);
 
   // box-shadow: one or more (comma-separated) shadows, each
   //   [inset] offsetX offsetY [blur [spread]] [color]   — first listed paints on top

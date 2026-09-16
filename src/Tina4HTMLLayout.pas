@@ -4357,6 +4357,16 @@ begin
   if box.VerticalRL or box.VerticalLR then contentW := Max(1, FContainingH);  // wrap against the content height
   LayoutChildren(box, Tag, st, contentX, contentY, contentW, usedH);
   FContainingH := savedCH;
+  // -webkit-line-clamp: cap the content to N lines and clip the rest — the box
+  // becomes a (non-scrolling) clip container. Ellipsis on the clamped line is
+  // not synthesised. Its own clip is needed since line-clamp has no explicit
+  // height, so the overflow-y block below (gated on eh>=0) doesn't run.
+  if (st.LineClamp > 0) and (usedH > st.LineClamp * LineHeightOf(st) + 0.5) then
+  begin
+    box.MaxScroll := usedH - st.LineClamp * LineHeightOf(st);   // excess → clipped
+    box.Scrollable := False;
+    usedH := st.LineClamp * LineHeightOf(st);
+  end;
   if box.VerticalRL or box.VerticalLR then
   begin
     if box.VerticalLR then
