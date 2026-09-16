@@ -83,6 +83,7 @@ type
     FSheet: TCSSStyleSheet;
     FBaseStyle: TComputedStyle;
     FViewportW: Single;            // for <picture>/srcset media + sizes eval
+    FViewportH: Single;            // initial containing block height — position:fixed anchor
     FContainingH: Single;          // containing block's definite content height, or -1
                                    // (auto) — the % base for a child's height:NN%
     FSynthTags: TList<THTMLTag>;   // anonymous flex-item wrappers (freed each layout)
@@ -4114,7 +4115,9 @@ begin
           absX := 0; absY := 0;
           if cs.CSSLeft > -9998 then absX := cs.CSSLeft
           else if cs.CSSRight > -9998 then absX := CX + CW - absBox.W - cs.CSSRight;
-          if cs.CSSTop > -9998 then absY := cs.CSSTop;
+          if cs.CSSTop > -9998 then absY := cs.CSSTop
+          else if cs.CSSBottom > -9998 then          // pin to the viewport bottom
+            absY := FViewportH - absBox.H - cs.CSSBottom;
           ShiftBoxTree(absBox, absX - absBox.X, absY - absBox.Y);
           Continue;
         end;
@@ -4836,6 +4839,7 @@ begin
   FViewportW := ViewportW;
   SetLength(FFloats, 0);   // fresh float context per layout
   if ViewportH <= 0 then ViewportH := ViewportW * 0.66;   // rough default when unknown
+  FViewportH := ViewportH;     // position:fixed bottom/right anchor (stays the viewport)
   FContainingH := ViewportH;   // the initial containing block (viewport) height for height:NN%
   FreeSynthTags;               // discard last layout's anonymous flex-item wrappers
   SetCalcContext(ViewportW, ViewportH);   // vw/vh + reset deferred calc() table
