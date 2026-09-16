@@ -455,7 +455,7 @@ type
     function MaxCornerRadius: Single;
     class function Default: TComputedStyle; static;
     class function ForTag(Tag: THTMLTag; const ParentStyle: TComputedStyle; StyleSheet: TCSSStyleSheet = nil): TComputedStyle; static;
-    class procedure ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle); static;
+    class procedure ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle; GlobalVars: TDictionary<string, string> = nil); static;
     { Apply a raw "k:v;k:v" declaration block onto a copy of Base (used to resolve
       a @keyframes stop's transform/opacity/colours). }
     class function ResolveBlock(const Block: string; const Base: TComputedStyle): TComputedStyle; static;
@@ -3354,9 +3354,13 @@ begin
     end;
   end;
 
-  // Inline style overrides (highest priority)
+  // Inline style overrides (highest priority). Pass the sheet's global custom
+  // properties so an inline var(--brand) resolves against :root design tokens.
   if Tag.Style.Count > 0 then
-    ApplyDeclarations(Tag.Style, Result, ParentStyle);
+    if StyleSheet <> nil then
+      ApplyDeclarations(Tag.Style, Result, ParentStyle, StyleSheet.CustomProps)
+    else
+      ApplyDeclarations(Tag.Style, Result, ParentStyle, nil);
 
   // the `hidden` attribute is equivalent to display:none
   if Tag.HasAttribute('hidden') then
@@ -3801,7 +3805,7 @@ begin
   end;
 end;
 
-class procedure TComputedStyle.ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle);
+class procedure TComputedStyle.ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle; GlobalVars: TDictionary<string, string>);
 var
   Temp: string;
   VarProps, ResolvedDecls: TDictionary<string, string>;
@@ -3851,6 +3855,10 @@ begin
     VarProps := TDictionary<string, string>.Create;
     ResolvedDecls := TDictionary<string, string>.Create;
     try
+      // global (:root / stylesheet) custom properties first, then the element's
+      // own inline --props override them.
+      if GlobalVars <> nil then
+        for DKV in GlobalVars do VarProps.AddOrSetValue(DKV.Key, DKV.Value);
       for DKV in Decls do
         if DKV.Key.StartsWith('--') then VarProps.AddOrSetValue(DKV.Key, DKV.Value);
       for DKV in Decls do
