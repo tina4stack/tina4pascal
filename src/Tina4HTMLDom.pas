@@ -180,6 +180,7 @@ type
     FOnParseError: TCSSStyleSheetParseError;
     FHasInteractiveSelectors: Boolean;  // any rule uses :hover/:active/:focus?
     FHasPseudo: Boolean;                // any rule targets ::before / ::after
+    FHasCounters: Boolean;              // any rule sets counter-reset/counter-increment
     // Indexed cascade — rules grouped by their routing key so a tag
     // with class "btn" only checks rules that could plausibly match it.
     // (FPC note: declared as TObjectDictionary because FPC's rtl-generics
@@ -248,6 +249,7 @@ type
     /// </summary>
     property HasInteractiveSelectors: Boolean read FHasInteractiveSelectors;
     property HasPseudo: Boolean read FHasPseudo;
+    property HasCounters: Boolean read FHasCounters;
     property CustomProps: TDictionary<string, string> read FCustomProps;
     { @import URLs found while parsing (in encounter order). The host fetches
       each like a <link rel=stylesheet> and AddCSS's it (drain until empty for
@@ -621,6 +623,10 @@ begin
   Rule.SelectorParts := Rule.SelectorLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
   if Rule.SelectorLower.EndsWith(':before') or Rule.SelectorLower.EndsWith(':after') then
     FHasPseudo := True;   // covers ::before/::after too (they end with :before/:after)
+  if (Rule.Declarations <> nil) and
+     (Rule.Declarations.ContainsKey('counter-reset') or
+      Rule.Declarations.ContainsKey('counter-increment')) then
+    FHasCounters := True;
 
   Sel := Rule.Selector.Trim;
   // Find the last descendant-separated part. Trim trailing combinators.
