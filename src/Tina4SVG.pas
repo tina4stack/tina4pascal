@@ -19,8 +19,10 @@ unit Tina4SVG;
   shared FillLinearGradient/FillRadialGradient, clipped to the shape. Not yet:
   gradientTransform, spreadMethod, href stop-inheritance, gradient strokes.
   clip-path="url(#id)" clips an element (or a <g> subtree) to a <clipPath>'s
-  first shape (userSpaceOnUse). Not yet: multi-shape/objectBoundingBox clipPaths,
-  mask, filters, patterns, <use>, <tspan> positioning, dash arrays. }
+  first shape (userSpaceOnUse). <use href="#id" x y> re-paints a referenced
+  element (incl. from <defs>), translated, inheriting the use's presentation.
+  Not yet: multi-shape/objectBoundingBox clipPaths, mask, filters, patterns,
+  <use> width/height override, <tspan> positioning, dash arrays. }
 
 {$mode delphi}{$H+}
 
@@ -233,17 +235,16 @@ end;
   so a fill="url(#g)" resolves without re-walking the tree. }
 var
   GDefs: TStringList = nil;
+  GUseDepth: Integer = 0;   // <use> recursion guard (cyclic / deep references)
 
+{ index every element carrying an id — gradients/clipPaths for url(#id), and any
+  element for a <use href="#id">. First id wins (document order). }
 procedure CollectGradients(Tag: THTMLTag);
 var c: THTMLTag; id: string;
 begin
   if (Tag = nil) or (GDefs = nil) then Exit;
-  if SameText(Tag.TagName, 'lineargradient') or SameText(Tag.TagName, 'radialgradient')
-     or SameText(Tag.TagName, 'clippath') then
-  begin
-    id := LowerCase(Tag.GetAttribute('id'));
-    if (id <> '') and (GDefs.IndexOf(id) < 0) then GDefs.AddObject(id, Tag);
-  end;
+  id := LowerCase(Tag.GetAttribute('id'));
+  if (id <> '') and (GDefs.IndexOf(id) < 0) then GDefs.AddObject(id, Tag);
   for c in Tag.Children do CollectGradients(c);
 end;
 
@@ -269,6 +270,19 @@ function LookupClipPath(const Val: string): THTMLTag;
 begin
   Result := LookupGradient(Val);   // same url(#id) resolver + shared id map
   if (Result <> nil) and not SameText(Result.TagName, 'clippath') then Result := nil;
+end;
+
+{ resolve a <use> href/xlink:href ("#id") -> the referenced element, or nil }
+function LookupById(const Ref: string): THTMLTag;
+var id: string; p: Integer;
+begin
+  Result := nil;
+  if GDefs = nil then Exit;
+  id := Trim(Ref);
+  while (id <> '') and ((id[1] = '#') or (id[1] = '''') or (id[1] = '"')) do Delete(id, 1, 1);
+  while (id <> '') and ((id[Length(id)] = '''') or (id[Length(id)] = '"')) do Delete(id, Length(id), 1);
+  p := GDefs.IndexOf(LowerCase(Trim(id)));
+  if p >= 0 then Result := THTMLTag(GDefs.Objects[p]);
 end;
 
 { a length as a fraction/coordinate: "50%" -> 0.5, else the plain number }
@@ -937,6 +951,10 @@ var
   clipTag: THTMLTag;
   clipPts: TTina4PointArray;
   clipped: Boolean;
+  useTarget: THTMLTag;
+  us: TSvgState;
+  um: TMat;
+  href: string;
 begin
   st := MergeState(Tag, Parent);
   tn := LowerCase(Tag.TagName);
@@ -963,6 +981,22 @@ begin
   else if tn = 'polyline' then PaintPoly(Canvas, Tag, st, False)
   else if tn = 'polygon' then PaintPoly(Canvas, Tag, st, True)
   else if tn = 'text' then PaintText(Canvas, Tag, st)
+  else if tn = 'use' then
+  begin
+    // <use href="#id" x y> — re-paint the referenced element, translated by x/y,
+    // inheriting this <use>'s presentation (fill etc.). Guarded against cycles.
+    href := PresAttr(Tag, 'href');
+    if href = '' then href := Tag.GetAttribute('xlink:href');
+    useTarget := LookupById(href);
+    if (useTarget <> nil) and (useTarget <> Tag) and (GUseDepth < 8) then
+    begin
+      um := MatId;
+      um.e := ToF(PresAttr(Tag, 'x')); um.f := ToF(PresAttr(Tag, 'y'));
+      us := st; us.CTM := MatMul(st.CTM, um);
+      Inc(GUseDepth);
+      try PaintNode(Canvas, useTarget, us); finally Dec(GUseDepth); end;
+    end;
+  end
   else if tn = 'path' then
   begin
     SetLength(contours, 64);

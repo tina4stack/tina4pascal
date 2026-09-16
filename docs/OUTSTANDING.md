@@ -124,9 +124,11 @@ low-quality hack.
   matching Chrome (3.34%). **`clip-path="url(#id)"` also done** — clips an element
   or a `<g>` subtree to a `<clipPath>`'s first shape (userSpaceOnUse) via the
   polygon clip; reftest `svg-clip-path` (delta 0.00%), verified 0.00% vs Chrome
-  on a circle-clipped rect + a rect-clipped group. Remaining: `gradientTransform`,
+  on a circle-clipped rect + a rect-clipped group. **`<use href="#id" x y>` also done** — re-paints a referenced
+  element (incl. from `<defs>`), translated, inheriting the use's presentation,
+  cycle-guarded; reftest `svg-use` (delta 0.00%). Remaining: `gradientTransform`,
   `spreadMethod`, `href` stop-inheritance, gradient *strokes*, multi-shape/
-  objectBoundingBox clipPaths, mask, filters, patterns, `<use>`.
+  objectBoundingBox clipPaths, mask, filters, patterns, `<use>` width/height.
 - **[S] Lottie** — no gradient support.
 - ~~**[S] Canvas2D image transforms**~~ — **DONE.** `drawImage` now honours the
   2D context matrix: an axis-aligned matrix (translate + scale, incl. flip) maps
