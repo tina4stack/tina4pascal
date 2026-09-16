@@ -1978,7 +1978,8 @@ var
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
   isCol: Boolean;
   dir, jc, ai, ia: string;
-  sumMain, freeMain, curr, gap, crossOff, usedFixed, sumGrow, targetW: Single;
+  sumMain, freeMain, curr, gap, crossOff, usedFixed, sumGrow, targetW, autoShare: Single;
+  autoCount: Integer;
   lineW, lineH, lineFree, lx, lgap, lineY, totalH, flexGap: Single;
   baseW, growF, shrinkF: array of Single;
   overflowMain, scaledShrink: Single;   // flex-shrink distribution (row, single-line)
@@ -2422,6 +2423,24 @@ begin
           end;
     end;
 
+    // auto margins on the main axis absorb the free space (margin-left:auto pushes
+    // an item to the end) and override justify-content's distribution.
+    autoCount := 0;
+    for i := 0 to items.Count - 1 do
+      if isCol then
+      begin
+        if items[i].Style.Margin.Top = -1 then Inc(autoCount);
+        if items[i].Style.Margin.Bottom = -1 then Inc(autoCount);
+      end
+      else
+      begin
+        if items[i].Style.Margin.Left = -1 then Inc(autoCount);
+        if items[i].Style.Margin.Right = -1 then Inc(autoCount);
+      end;
+    autoShare := 0;
+    if (autoCount > 0) and (freeMain > 0) then
+    begin autoShare := freeMain / autoCount; freeMain := 0; end;   // consumed; none left for jc
+
     curr := 0; gap := 0;
     if (jc = 'center') then curr := freeMain / 2
     else if (jc = 'flex-end') or (jc = 'end') then curr := freeMain
@@ -2439,6 +2458,7 @@ begin
       if (ia = '') or (ia = 'auto') then ia := ai;
       if isCol then
       begin
+        if cb.Style.Margin.Top = -1 then curr := curr + autoShare;   // leading auto margin
         // cross axis = horizontal
         if (ia = 'stretch') and not crossFixed[i] and (cb.W < contentW) then
           cb.W := contentW;                       // stretch: fill the cross axis
@@ -2447,9 +2467,11 @@ begin
         else crossOff := 0;
         ShiftBoxTree(cb, contentX + crossOff, contentY + curr);
         curr := curr + cb.H + gap + flexGap;
+        if cb.Style.Margin.Bottom = -1 then curr := curr + autoShare;   // trailing auto margin
       end
       else
       begin
+        if cb.Style.Margin.Left = -1 then curr := curr + autoShare;   // leading auto margin
         // cross axis = vertical
         if (ia = 'stretch') and not crossFixed[i] and (cb.H < contentH) then
           cb.H := contentH;                       // stretch: equal-height items
@@ -2458,6 +2480,7 @@ begin
         else crossOff := 0;
         ShiftBoxTree(cb, contentX + curr, contentY + crossOff);
         curr := curr + cb.W + gap + flexGap;
+        if cb.Style.Margin.Right = -1 then curr := curr + autoShare;   // trailing auto margin
       end;
     end;
 
