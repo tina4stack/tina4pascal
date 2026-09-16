@@ -3514,9 +3514,10 @@ var
         it.Box.H := it.Box.H * (CW / it.Box.W);
         it.Box.W := CW;
       end;
-      it.W := it.Box.W; it.H := it.Box.H;
+      it.W := it.Box.W;
+      it.H := it.Box.H + Max(0, cs.Margin.Top) + Max(0, cs.Margin.Bottom);   // vertical margins join the line box
       it.FontSize := cs.FontSize; it.Styles := []; it.DecorLines := 0; it.DecorStyle := 0; it.DecorColor := 0;
-      it.Ascent := it.Box.H;  // baseline at the box bottom (default vertical-align)
+      it.Ascent := Max(0, cs.Margin.Top) + it.Box.H + Max(0, cs.Margin.Bottom);
       it.SpaceBefore := (items.Count > 0) and pendingSpace;
       pendingSpace := False;
       Box.Children.Add(it.Box);
@@ -3556,9 +3557,12 @@ var
         it.Box := MakeInlineContainer(T, cs, CW)
       else
         it.Box := MakeInlineBlock(T, cs);
-      it.W := it.Box.W; it.H := it.Box.H;
+      it.W := it.Box.W;
+      // vertical margins join the line box: they grow the line height (it.H) and
+      // sit above/below the baseline (bottom margin edge, the content-less case).
+      it.H := it.Box.H + Max(0, cs.Margin.Top) + Max(0, cs.Margin.Bottom);
       it.FontSize := cs.FontSize; it.Styles := []; it.DecorLines := 0; it.DecorStyle := 0; it.DecorColor := 0;
-      it.Ascent := it.Box.H;  // baseline at the box bottom (default vertical-align)
+      it.Ascent := Max(0, cs.Margin.Top) + it.Box.H + Max(0, cs.Margin.Bottom);
       it.SpaceBefore := (items.Count > 0) and pendingSpace;
       pendingSpace := False;
       Box.Children.Add(it.Box);
@@ -3683,7 +3687,7 @@ var
     lineTop, lineH: Single; justify: Boolean = False; isLast: Boolean = False);
   var
     idx, k: Integer;
-    lineW, xShift, x, maxAscent, gapExtra, flx0, flx1, availW: Single;
+    lineW, xShift, x, maxAscent, gapExtra, flx0, flx1, availW, mt: Single;
     gaps: Integer;
     it: TInlineItem;
     run: TTextRun;
@@ -3781,20 +3785,23 @@ var
         x := x + FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width + gapExtra + ParentStyle.WordSpacing;
       if it.Box <> nil then
       begin
+        // the box's own top margin offsets it below the margin-box top that
+        // it.H / it.Ascent (which include the vertical margins) reserve for it.
+        mt := Max(0, it.Box.Style.Margin.Top);
         if SameText(it.Box.Style.VerticalAlign, 'top') or
            SameText(it.Box.Style.VerticalAlign, 'text-top') then
           // top / text-top: box top at the line's top (text-top ignores half-leading)
-          ShiftBoxTree(it.Box, x, lineTop)
+          ShiftBoxTree(it.Box, x, lineTop + mt)
         else if SameText(it.Box.Style.VerticalAlign, 'bottom') or
                 SameText(it.Box.Style.VerticalAlign, 'text-bottom') then
-          // bottom / text-bottom: box bottom at the line's bottom
-          ShiftBoxTree(it.Box, x, lineTop + Max(0, lineH - it.H))
+          // bottom / text-bottom: margin box bottom at the line's bottom
+          ShiftBoxTree(it.Box, x, lineTop + Max(0, lineH - it.H) + mt)
         else if SameText(it.Box.Style.VerticalAlign, 'middle') then
-          // centre the box within the line box (matches browsers for the
+          // centre the margin box within the line box (matches browsers for the
           // common case of same-height inline-blocks filling the line)
-          ShiftBoxTree(it.Box, x, lineTop + (lineH - it.H) / 2)
-        else // baseline: box bottom on the baseline
-          ShiftBoxTree(it.Box, x, lineTop + maxAscent - it.Ascent);
+          ShiftBoxTree(it.Box, x, lineTop + (lineH - it.H) / 2 + mt)
+        else // baseline: margin box bottom on the baseline
+          ShiftBoxTree(it.Box, x, lineTop + maxAscent - it.Ascent + mt);
       end
       else if (tfsSmallCaps in it.Styles) and (it.Text <> '') then
         // font-variant:small-caps — paint per-case sub-runs; x advances by it.W below
