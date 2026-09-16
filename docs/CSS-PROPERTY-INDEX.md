@@ -105,7 +105,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | Property | Status | Note |
 |---|---|---|
 | background-color | ✅ | alpha-scaled by opacity |
-| background (shorthand) | 🟡 | colour + image (`url(...)` and every gradient) parse from the shorthand; position / size / repeat within the shorthand still need their longhands |
+| background (shorthand) | ✅ | colour + image (`url(...)` and every gradient) **plus position / `/ size` / repeat** now parse from the shorthand (e.g. `#eee url(x) center / cover no-repeat`) — url stripped first so its path `/` doesn't split the size. Verified 0.00% vs Chrome + the longhand ref (reftest `bg-shorthand-possize`). Multi-layer `url()` image lists still take one image |
 | background-image: url() | ✅ | painted via the cached/async image path; size cover/contain/auto, position, repeat; clipped |
 | background: linear-gradient() | ✅ | real multi-stop gradient (up to 8 stops + positions), angle honored; backend NSGradient on Cocoa (base fallback = flat avg) |
 | background: radial-gradient() | ✅ | parsed + painted (center radial); shape/size keywords accepted, not yet modelled |
@@ -206,7 +206,7 @@ mode renderer doesn't yet have):
     **background-blend-mode** (software per-background-layer blend compositing —
     the existing blend path is Cocoa CGBlendMode, not pure-Pascal).
 
-Coverage: **105 ✅ · 6 🟡 · 3 📦 · 0 ❌** — no property is entirely unhandled.
+Coverage: **106 ✅ · 5 🟡 · 3 📦 · 0 ❌** — no property is entirely unhandled.
 (An ours-vs-Chrome pass exposed two flex bugs the ours-vs-ours reftests missed —
 reverse-direction packing and column-direction `flex-wrap` — both now **fixed**
 and verified 0.0–0.25% vs Chrome.)

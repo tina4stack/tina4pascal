@@ -2820,6 +2820,65 @@ begin
   Result := 1.0;
 end;
 
+{ Pull background-position / -size / -repeat out of a `background` shorthand once
+  its url(...) has been removed (so the path's '/' doesn't split the size).
+  Colour and other tokens are skipped. Mirrors the three longhand parsers. }
+procedure ApplyBgShorthandParts(const S: string; EmSize: Single; var Style: TComputedStyle);
+var
+  low, posStr, sizeStr, t: string;
+  slashPos, n: Integer;
+  vals, szvals: TArray<string>;
+  function IsNum(const x: string): Boolean;
+  begin Result := (x <> '') and CharInSet(x[1], ['0'..'9', '.', '-', '+']); end;
+  function IsPosTok(const x: string): Boolean;
+  begin Result := (x = 'left') or (x = 'right') or (x = 'top') or (x = 'bottom')
+                  or (x = 'center') or IsNum(x); end;
+begin
+  low := S.ToLower;
+  // repeat keyword (check the compound forms before bare `repeat`)
+  if low.Contains('no-repeat') then Style.BgRepeat := 'no-repeat'
+  else if low.Contains('repeat-x') then Style.BgRepeat := 'repeat-x'
+  else if low.Contains('repeat-y') then Style.BgRepeat := 'repeat-y'
+  else if low.Contains('space') then Style.BgRepeat := 'space'
+  else if low.Contains('round') then Style.BgRepeat := 'round'
+  else if low.Contains('repeat') then Style.BgRepeat := 'repeat';
+  // position [ / size ]: everything before the first '/' holds the position
+  slashPos := S.IndexOf('/');
+  if slashPos >= 0 then posStr := S.Substring(0, slashPos) else posStr := S;
+  SetLength(vals, 0);
+  for t in posStr.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+    if IsPosTok(t) then begin SetLength(vals, Length(vals) + 1); vals[High(vals)] := t; end;
+  n := Length(vals);
+  if n >= 1 then
+  begin
+    if vals[0] = 'left' then Style.BgPosX := 0
+    else if vals[0] = 'center' then begin Style.BgPosX := -50; if n = 1 then Style.BgPosY := -50; end
+    else if vals[0] = 'right' then Style.BgPosX := -100
+    else if vals[0] = 'top' then Style.BgPosY := 0            // a lone vertical keyword
+    else if vals[0] = 'bottom' then Style.BgPosY := -100
+    else Style.BgPosX := TComputedStyle.ParseLength(vals[0], EmSize);
+    if n >= 2 then
+    begin
+      if vals[1] = 'top' then Style.BgPosY := 0
+      else if vals[1] = 'center' then Style.BgPosY := -50
+      else if vals[1] = 'bottom' then Style.BgPosY := -100
+      else Style.BgPosY := TComputedStyle.ParseLength(vals[1], EmSize);
+    end;
+  end;
+  // size: the token(s) right after '/', up to the first non-size token
+  if slashPos >= 0 then
+  begin
+    sizeStr := S.Substring(slashPos + 1).Trim;
+    SetLength(szvals, 0);
+    for t in sizeStr.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+      if (t = 'cover') or (t = 'contain') or (t = 'auto') or IsNum(t) then
+      begin SetLength(szvals, Length(szvals) + 1); szvals[High(szvals)] := t; end
+      else Break;                                            // stop at repeat/attachment/etc.
+    if Length(szvals) = 1 then Style.BackgroundSize := szvals[0]
+    else if Length(szvals) >= 2 then Style.BackgroundSize := szvals[0] + ' ' + szvals[1];
+  end;
+end;
+
 class function TComputedStyle.ForTag(Tag: THTMLTag; const ParentStyle: TComputedStyle; StyleSheet: TCSSStyleSheet): TComputedStyle;
 var
   TN, Temp, BtnClass: string;
@@ -3718,6 +3777,8 @@ var
   Temp: string;
   BgVal, ColorPart: string;
   UrlPos: Integer;
+  BgRest: string;
+  i: Integer;
   LH: Single;
   BParts, RParts, OvParts, SParts, OParts, FlexParts, TsParts, BgParts, GArgs, InsetParts, TfArgs: TStringArray;
   BP, BT, SP, ST, OP, OT, TsP, TsT, GArg, OvPart: string;
@@ -3765,6 +3826,16 @@ begin
         if ColorPart <> '' then
           Style.BackgroundColor := ParseColor(ColorPart);
       end;
+      // position / size / repeat from the shorthand — strip url(...) first so
+      // its path '/' doesn't split the size (e.g. `url(x) center/cover no-repeat`)
+      BgRest := BgVal;
+      UrlPos := BgRest.ToLower.IndexOf('url(');
+      if UrlPos >= 0 then
+      begin
+        i := BgRest.IndexOf(')', UrlPos);
+        if i > UrlPos then BgRest := BgRest.Remove(UrlPos, i - UrlPos + 1);
+      end;
+      ApplyBgShorthandParts(BgRest, Style.FontSize, Style);
     end
     else if not BgVal.ToLower.Contains('gradient(') then
       // a gradient value is handled by the gradient parser below; don't let

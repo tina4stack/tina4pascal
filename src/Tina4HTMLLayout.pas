@@ -5079,6 +5079,35 @@ begin
         and SameValue(r0, ResolvedCornerR(st, 3, bw, bh));
 end;
 
+{ Resolve an explicit `background-size` ("W", "W H", "W auto", %s) to device
+  pixels. -1 from ValOf means `auto`, which takes the aspect ratio from the
+  other axis (both auto → natural size). }
+procedure ExplicitBgSize(const Sz: string; iw, ih, boxW, boxH: Single; var dw, dh: Single);
+var
+  toks: TArray<string>;
+  wv, hv: Single;
+  function ValOf(const t: string; ref: Single): Single;
+  var s: string;
+  begin
+    s := Trim(t);
+    if (s = '') or (s = 'auto') then Exit(-1);
+    if (s <> '') and (s[Length(s)] = '%') then
+      Result := StrToFloatDef(Copy(s, 1, Length(s) - 1), 0) / 100 * ref
+    else if s.EndsWith('px') then Result := StrToFloatDef(Copy(s, 1, Length(s) - 2), ref)
+    else Result := StrToFloatDef(s, ref);
+  end;
+begin
+  dw := iw; dh := ih;
+  toks := Sz.Split([' '], TStringSplitOptions.ExcludeEmpty);
+  if Length(toks) = 0 then Exit;
+  wv := ValOf(toks[0], boxW);
+  if Length(toks) >= 2 then hv := ValOf(toks[1], boxH) else hv := -1;
+  if (wv < 0) and (hv < 0) then Exit;
+  if wv < 0 then begin dh := hv; if ih > 0 then dw := iw * (hv / ih); end
+  else if hv < 0 then begin dw := wv; if iw > 0 then dh := ih * (wv / iw); end
+  else begin dw := wv; dh := hv; end;
+end;
+
 procedure PaintBackgroundImage(Canvas: TTina4Canvas; Box: TLayoutBox;
   const st: TComputedStyle; y: Single);
 var
@@ -5103,6 +5132,12 @@ begin
   begin
     scale := Min(Box.W / iw, Box.H / ih);
     dw := iw * scale; dh := ih * scale;
+  end
+  else if (sz <> '') and (sz <> 'auto') then
+  begin
+    // explicit `background-size: W [H]` — lengths absolute, % of the box, `auto`
+    // keeps the aspect ratio from the other axis. One value → height auto.
+    ExplicitBgSize(sz, iw, ih, Box.W, Box.H, dw, dh);
   end;
 
   // position: negative sentinel = percentage (center=-50, right/bottom=-100);
