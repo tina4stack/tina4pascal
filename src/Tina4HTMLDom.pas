@@ -356,6 +356,7 @@ type
     BoxShadows: array[0..7] of TBoxShadow; // all comma-separated shadows, [0] = on top
     BoxShadowCount: Integer;               // number of shadows in BoxShadows
     ObjectFit: string;     // 'fill' (default), 'cover', 'contain', 'none', 'scale-down'
+    ObjectPosition: string; // '' (=center) or 'x y' keywords/percent for the fitted image
     BackgroundImage: string; // URL from background-image: url(...)
     BackgroundSize: string;  // 'auto', 'cover', 'contain', or explicit size
     CSSPosition: string;   // 'static', 'relative', 'absolute', 'fixed', 'sticky'
@@ -2694,6 +2695,7 @@ begin
   Result.BoxShadow.Active := False;
   Result.BoxShadowCount := 0;
   Result.ObjectFit := 'fill';
+  Result.ObjectPosition := '';
   Result.BackgroundImage := '';
   Result.BackgroundSize := 'auto';
   Result.CSSPosition := 'static';
@@ -3261,6 +3263,7 @@ begin
   Result.OverflowY := 'visible';
   Result.TextOverflow := 'clip'; Result.LineClamp := 0;
   Result.ObjectFit := 'fill';
+  Result.ObjectPosition := '';
   Result.BackgroundImage := '';
   Result.BackgroundSize := 'auto';
   Result.CSSPosition := 'static';
@@ -4497,6 +4500,8 @@ begin
 
   if Decls.TryGetValue('object-fit', Temp) and not ShouldSkip(Temp) then
     Style.ObjectFit := Temp.Trim.ToLower;
+  if Decls.TryGetValue('object-position', Temp) and not ShouldSkip(Temp) then
+    Style.ObjectPosition := Temp.Trim.ToLower;
   if Decls.TryGetValue('background-image', Temp) and not ShouldSkip(Temp) then
     ExtractBgImageUrl(Temp, Style.BackgroundImage);
   if Decls.TryGetValue('background-size', Temp) and not ShouldSkip(Temp) then

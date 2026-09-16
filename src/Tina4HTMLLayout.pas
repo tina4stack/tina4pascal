@@ -5674,6 +5674,67 @@ begin
   Canvas.ClearClip;
 end;
 
+{ Parse object-position into x/y alignment fractions (0=left/top, 1=right/
+  bottom). Keywords (left/right/top/bottom/center) resolve to their axis in any
+  order; positional percentages fill x then y; '' / center => 0.5, 0.5. }
+procedure ParseObjectPosition(const S: string; out fx, fy: Single);
+var
+  parts: TArray<string>; i, posIdx: Integer; t: string; fs: TFormatSettings;
+begin
+  fx := 0.5; fy := 0.5;
+  if Trim(S) = '' then Exit;
+  fs := DefaultFormatSettings; fs.DecimalSeparator := '.';
+  parts := Trim(S).Split([' '], TStringSplitOptions.ExcludeEmpty);
+  posIdx := 0;
+  for i := 0 to High(parts) do
+  begin
+    t := parts[i];
+    if t = 'left' then fx := 0
+    else if t = 'right' then fx := 1
+    else if t = 'top' then fy := 0
+    else if t = 'bottom' then fy := 1
+    else if t = 'center' then Inc(posIdx)
+    else if (Length(t) > 0) and (t[Length(t)] = '%') then
+    begin
+      if posIdx = 0 then fx := StrToFloatDef(Copy(t, 1, Length(t) - 1), 50, fs) / 100
+      else fy := StrToFloatDef(Copy(t, 1, Length(t) - 1), 50, fs) / 100;
+      Inc(posIdx);
+    end
+    else Inc(posIdx);   // px / unknown: leave the axis centred, consume a slot
+  end;
+end;
+
+{ Destination rect for drawing an image of intrinsic IntrW×IntrH into the box
+  [BX,BY,BW,BH] under object-fit + object-position. 'fill' (and any unknown)
+  stretches to the box; contain/cover/none/scale-down scale uniformly and
+  object-position places the result (which may overflow, for cover/none). }
+procedure ComputeObjectFitRect(const Fit, Position: string;
+  BX, BY, BW, BH: Single; IntrW, IntrH: Single; out DX, DY, DW, DH: Single);
+var scale, sContain, fx, fy: Single;
+begin
+  DX := BX; DY := BY; DW := BW; DH := BH;
+  if (IntrW <= 0) or (IntrH <= 0) or (BW <= 0) or (BH <= 0) then Exit;
+  if (Fit = '') or (Fit = 'fill') then Exit;   // non-uniform stretch to the box
+
+  sContain := BW / IntrW; if BH / IntrH < sContain then sContain := BH / IntrH;
+  if Fit = 'contain' then scale := sContain
+  else if Fit = 'cover' then
+  begin
+    scale := BW / IntrW; if BH / IntrH > scale then scale := BH / IntrH;
+  end
+  else if Fit = 'none' then scale := 1
+  else if Fit = 'scale-down' then
+  begin
+    scale := sContain; if scale > 1 then scale := 1;
+  end
+  else Exit;   // unknown keyword: leave as fill
+
+  DW := IntrW * scale; DH := IntrH * scale;
+  ParseObjectPosition(Position, fx, fy);
+  DX := BX + (BW - DW) * fx;   // free space (negative when the image overflows)
+  DY := BY + (BH - DH) * fy;
+end;
+
 procedure PaintBoxEx(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single;
   Opacity: Single; Hidden: Boolean);
 var
@@ -5715,6 +5776,9 @@ var
   mcr: Single;   // resolved max border-radius (px; % resolved against this box)
   olStyle: string; olw, olx, oly, olrw, olrh: Single;   // dashed/dotted/double outline edges
   shi: Integer;   // box-shadow list index
+  ofIW, ofIH: Single;                  // intrinsic image size for object-fit
+  ofDX, ofDY, ofDW, ofDH: Single;      // object-fit destination rect
+  ofClipped: Boolean;                  // did we set a clip for the fitted image?
 begin
   st := Box.Style;
   vRotSaved := False;
@@ -5842,15 +5906,25 @@ begin
   begin
     if Box.ImageHandle >= 0 then
     begin
+      // object-fit: scale the photo uniformly (cover/contain/none/scale-down)
+      // inside its box and place it per object-position, instead of stretching.
+      ofDX := Box.X; ofDY := y; ofDW := Box.W; ofDH := Box.H;
+      if (st.ObjectFit <> '') and (st.ObjectFit <> 'fill') and
+         Canvas.ImageSize(Box.ImageHandle, ofIW, ofIH) and (ofIW > 0) and (ofIH > 0) then
+        ComputeObjectFitRect(st.ObjectFit, st.ObjectPosition,
+          Box.X, y, Box.W, Box.H, ofIW, ofIH, ofDX, ofDY, ofDW, ofDH);
+      // border-radius clips to the rounded box; otherwise clip only when the
+      // fitted image overflows (cover/none), so contain/fill draw unclipped.
+      ofClipped := True;
       if mcr > 0 then
-      begin
-        // border-radius on <img>: clip the photo to the rounded box (50% → circle)
-        Canvas.ClipRoundRect(Box.X, y, Box.W, Box.H, mcr);
-        Canvas.DrawImage(Box.ImageHandle, Box.X, y, Box.W, Box.H);
-        Canvas.ClearClip;
-      end
+        Canvas.ClipRoundRect(Box.X, y, Box.W, Box.H, mcr)
+      else if (ofDX < Box.X - 0.5) or (ofDY < y - 0.5) or
+              (ofDX + ofDW > Box.X + Box.W + 0.5) or (ofDY + ofDH > y + Box.H + 0.5) then
+        Canvas.ClipRoundRect(Box.X, y, Box.W, Box.H, 0)   // rectangular clip
       else
-        Canvas.DrawImage(Box.ImageHandle, Box.X, y, Box.W, Box.H);
+        ofClipped := False;
+      Canvas.DrawImage(Box.ImageHandle, ofDX, ofDY, ofDW, ofDH);
+      if ofClipped then Canvas.ClearClip;
       Exit;
     end;
     Canvas.FillRect(Box.X, y, Box.W, Box.H, IMG_PLACEHOLDER_BG);
