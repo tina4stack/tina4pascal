@@ -4357,6 +4357,11 @@ begin
   if box.VerticalRL or box.VerticalLR then contentW := Max(1, FContainingH);  // wrap against the content height
   LayoutChildren(box, Tag, st, contentX, contentY, contentW, usedH);
   FContainingH := savedCH;
+  // width: fit-content / min-content / max-content (the -3 sentinel from
+  // ParseLength) → shrink the block to its content width (approximated by
+  // NaturalW, the widest laid-out line) instead of filling the container.
+  if (st.ExplicitWidth = -3) and (box.NaturalW > 0) then
+    box.W := Min(box.W, box.NaturalW + edgeL + edgeR);
   // -webkit-line-clamp: cap the content to N lines and clip the rest — the box
   // becomes a (non-scrolling) clip container. Ellipsis on the clamped line is
   // not synthesised. Its own clip is needed since line-clamp has no explicit
