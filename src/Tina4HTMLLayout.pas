@@ -4100,13 +4100,24 @@ begin
           LayoutBlock(Box, c, ParentStyle, CX, CY, CW);
           absBox := Box.Children[Box.Children.Count - 1];
         end;
+        // left+right both pinned with no explicit width → stretch to fill the gap
+        // (CSS: the width resolves to containing-block − left − right). Same for
+        // top+bottom → stretch the height. This is what `inset:Npx` relies on.
+        if (ResolveSize(cs.ExplicitWidth, CW) < 0) and (cs.CSSLeft > -9998) and (cs.CSSRight > -9998) then
+          absBox.W := Max(0, CW - cs.CSSLeft - cs.CSSRight)
         // Shrink-to-fit: an out-of-flow box with no explicit width sizes to its
         // content (CSS "shrink-to-fit"), not the full container — e.g. a pill
         // pinned with `right` only should hug its text, not span the row.
-        if (ResolveSize(cs.ExplicitWidth, CW) < 0) and (absBox.NaturalW > 0) then
+        else if (ResolveSize(cs.ExplicitWidth, CW) < 0) and (absBox.NaturalW > 0) then
         begin
           absCH := absBox.NaturalW + cs.Padding.Horz + cs.BorderWidths.Horz;
           if absCH < absBox.W then absBox.W := absCH;
+        end;
+        if (ResolveSize(cs.ExplicitHeight, 0) < 0) and (cs.CSSTop > -9998) and (cs.CSSBottom > -9998) then
+        begin
+          absCH := ResolveSize(ParentStyle.ExplicitHeight, 0);
+          if absCH < 0 then absCH := Box.NaturalH;
+          absBox.H := Max(0, absCH - cs.CSSTop - cs.CSSBottom);
         end;
         // fixed is viewport-relative (origin 0,0); absolute is container-relative.
         // Paint (PaintBoxEx) drops the scroll offset for fixed so it stays put.
