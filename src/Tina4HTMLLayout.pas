@@ -4390,11 +4390,15 @@ begin
     box.MaxScrollX := box.NaturalW - contentW;
   end;
   box.H := usedH + edgeT + edgeB;
-  // aspect-ratio: with a known width and auto height, derive the height from the
-  // ratio (the common `width + aspect-ratio` media-box case). Content taller than
-  // this is handled by overflow, as in browsers.
+  // aspect-ratio: derive the auto axis from the definite one. Width + auto height
+  // → height from the ratio (the common media-box case); a definite height with
+  // auto width → width from the ratio (the block stops stretching to full width,
+  // matching Chrome). Content overflowing is handled as in browsers.
   if (st.AspectRatio > 0) and (ResolveSize(st.ExplicitHeight, 0) < 0) and (box.W > 0) then
-    box.H := box.W / st.AspectRatio;
+    box.H := box.W / st.AspectRatio
+  else if (st.AspectRatio > 0) and (ResolveSize(st.ExplicitWidth, contentW) < 0)
+       and (ResolveSize(st.ExplicitHeight, 0) >= 0) and (box.H > 0) then
+    box.W := box.H * st.AspectRatio;
   // min-height / max-height clamp (border-box; px resolved, % against 0)
   mnh := ResolveSize(st.MinHeight, 0);
   mxh := ResolveSize(st.MaxHeight, 0);
