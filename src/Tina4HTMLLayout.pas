@@ -365,6 +365,34 @@ begin
   end;
 end;
 
+{ Remove the invisible Unicode bidi control characters (marks, embeddings,
+  overrides, isolates) so they never render as tofu. Their full embedding effect
+  isn't modelled (the per-item bidi resolves from strong characters), so dropping
+  them is strictly better than painting a missing-glyph box. Covers LRM/RLM/ALM,
+  LRE/RLE/PDF/LRO/RLO, and LRI/RLI/FSI/PDI. }
+function StripBidiControls(const S: string): string;
+begin
+  Result := S;
+  if Pos(#$E2, Result) > 0 then
+  begin
+    // U+200E..200F (E2 80 8E/8F) and U+202A..202E (E2 80 AA..AE)
+    Result := StringReplace(Result, #$E2#$80#$8E, '', [rfReplaceAll]);
+    Result := StringReplace(Result, #$E2#$80#$8F, '', [rfReplaceAll]);
+    Result := StringReplace(Result, #$E2#$80#$AA, '', [rfReplaceAll]);
+    Result := StringReplace(Result, #$E2#$80#$AB, '', [rfReplaceAll]);
+    Result := StringReplace(Result, #$E2#$80#$AC, '', [rfReplaceAll]);
+    Result := StringReplace(Result, #$E2#$80#$AD, '', [rfReplaceAll]);
+    Result := StringReplace(Result, #$E2#$80#$AE, '', [rfReplaceAll]);
+    // U+2066..2069 (E2 81 A6..A9)
+    Result := StringReplace(Result, #$E2#$81#$A6, '', [rfReplaceAll]);
+    Result := StringReplace(Result, #$E2#$81#$A7, '', [rfReplaceAll]);
+    Result := StringReplace(Result, #$E2#$81#$A8, '', [rfReplaceAll]);
+    Result := StringReplace(Result, #$E2#$81#$A9, '', [rfReplaceAll]);
+  end;
+  if Pos(#$D8, Result) > 0 then
+    Result := StringReplace(Result, #$D8#$9C, '', [rfReplaceAll]);   // U+061C ALM
+end;
+
 { ---- Unicode bidi (UBA) — enough for mixed LTR/RTL paragraphs ---------------
   A pragmatic subset: classify each item by its first strong character (or its
   digits), resolve a display level, and reorder a line's items by the UBA L2
@@ -3121,7 +3149,7 @@ var
         GatherPreText(txt, St, wsMode);
         Exit;
       end;
-      txt := CollapseWS(T.Text);
+      txt := StripBidiControls(CollapseWS(T.Text));   // drop invisible bidi controls (no tofu)
       // soft hyphen U+00AD (UTF-8 $C2$AD): a break opportunity, invisible unless
       // a line breaks there. With hyphens:none we strip it (no artifact); with
       // manual/auto (the CSS default) it is kept and handled per-word below.

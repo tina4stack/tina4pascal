@@ -64,10 +64,12 @@ font — left honestly open rather than shipped as a low-quality hack.
   paragraphs. **Mirrored punctuation done** (UBA L4: a pure-punctuation token that
   resolves to an RTL level paints reversed + mirrored — `(`↔`)`, `[`↔`]`, `<`↔`>`,
   guillemets, etc.; strong-char runs are left to the backend to avoid double
-  mirroring). Native backends shape each run. Reftest `bidi-rtl-ltr`. **Remaining:**
-  per-character levels (mixed direction *within* one word/token), explicit
-  embeddings via control codes (`unicode-bidi`, LRE/RLE), and RTL shaping on the
-  pure-raster path. (`<bdi>`/`<bdo>` elements DONE.)
+  mirroring). Native backends shape each run. Reftest `bidi-rtl-ltr`. The invisible
+  `unicode-bidi` control characters (LRM/RLM/ALM, LRE/RLE/PDF/LRO/RLO,
+  LRI/RLI/FSI/PDI) are stripped so they never tofu (`StripBidiControls`).
+  **Remaining:** per-character levels (mixed direction *within* one word/token),
+  the *embedding effect* of those control codes (not just their glyphs), and RTL
+  shaping on the pure-raster path. (`<bdi>`/`<bdo>` elements DONE.)
 - ~~**[L] `writing-mode` (full vertical block-flow)**~~ — **DONE for `vertical-rl`**
   with a definite height: the inline content lays out against the height (wrapping
   into columns) and paints 90° CW into right-to-left columns — top-to-bottom runs,
