@@ -375,6 +375,8 @@ type
     FlexBasis: Single;
     FlexGap: Single;
     AlignSelf: string;            // per-item cross alignment ('' = inherit align-items)
+    JustifyItems: string;         // grid inline-axis item alignment ('' = stretch)
+    JustifySelf: string;          // per-item grid inline alignment ('' = inherit justify-items)
     CSSOrder: Integer;            // flex/grid `order`
     // CSS Grid (subset)
     GridTemplateColumns: string;  // track list: px / % / fr / repeat(n, size) / auto
@@ -2445,7 +2447,7 @@ begin
   Result.FlexShrink := 1;
   Result.FlexBasis := -1;
   Result.FlexGap := 0;
-  Result.AlignSelf := ''; Result.CSSOrder := 0;
+  Result.AlignSelf := ''; Result.JustifyItems := ''; Result.JustifySelf := ''; Result.CSSOrder := 0;
   Result.GridTemplateColumns := ''; Result.GridTemplateRows := ''; Result.GridAutoRows := '';
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
@@ -3012,7 +3014,7 @@ begin
   Result.FlexShrink := 1;
   Result.FlexBasis := -1;
   Result.FlexGap := 0;
-  Result.AlignSelf := ''; Result.CSSOrder := 0;
+  Result.AlignSelf := ''; Result.JustifyItems := ''; Result.JustifySelf := ''; Result.CSSOrder := 0;
   Result.GridTemplateColumns := ''; Result.GridTemplateRows := ''; Result.GridAutoRows := '';
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
@@ -4587,8 +4589,35 @@ begin
     Style.FlexWrap := Temp.Trim.ToLower;
   if Decls.TryGetValue('justify-content', Temp) and not ShouldSkip(Temp) then
     Style.JustifyContent := Temp.Trim.ToLower;
+  // place-* shorthands: <align> [<justify>] (one value = both). Applied BEFORE
+  // the longhands below so an explicit align-items/justify-items still wins.
+  if Decls.TryGetValue('place-items', Temp) and not ShouldSkip(Temp) then
+  begin
+    OvParts := Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    if Length(OvParts) >= 1 then Style.AlignItems := OvParts[0];
+    if Length(OvParts) >= 2 then Style.JustifyItems := OvParts[1]
+    else if Length(OvParts) >= 1 then Style.JustifyItems := OvParts[0];
+  end;
+  if Decls.TryGetValue('place-self', Temp) and not ShouldSkip(Temp) then
+  begin
+    OvParts := Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    if Length(OvParts) >= 1 then Style.AlignSelf := OvParts[0];
+    if Length(OvParts) >= 2 then Style.JustifySelf := OvParts[1]
+    else if Length(OvParts) >= 1 then Style.JustifySelf := OvParts[0];
+  end;
+  if Decls.TryGetValue('place-content', Temp) and not ShouldSkip(Temp) then
+  begin
+    OvParts := Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    if Length(OvParts) >= 1 then Style.AlignContent := OvParts[0];
+    if Length(OvParts) >= 2 then Style.JustifyContent := OvParts[1]
+    else if Length(OvParts) >= 1 then Style.JustifyContent := OvParts[0];
+  end;
   if Decls.TryGetValue('align-items', Temp) and not ShouldSkip(Temp) then
     Style.AlignItems := Temp.Trim.ToLower;
+  if Decls.TryGetValue('justify-items', Temp) and not ShouldSkip(Temp) then
+    Style.JustifyItems := Temp.Trim.ToLower;
+  if Decls.TryGetValue('justify-self', Temp) and not ShouldSkip(Temp) then
+    Style.JustifySelf := Temp.Trim.ToLower;
   if Decls.TryGetValue('align-content', Temp) and not ShouldSkip(Temp) then
     Style.AlignContent := Temp.Trim.ToLower;
   if Decls.TryGetValue('align-self', Temp) and not ShouldSkip(Temp) then

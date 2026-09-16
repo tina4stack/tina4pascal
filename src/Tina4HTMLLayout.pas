@@ -2575,7 +2575,8 @@ var
   itemTags: TList<THTMLTag>;
   mL, mR, mT, mB, availInner, ew, eh: Single;
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
-  rowGap, colGap, frUnit, fixedSum, frSum, cellW, cellH, colXk, rowYr, defH: Single;
+  rowGap, colGap, frUnit, fixedSum, frSum, cellW, cellH, colXk, rowYr, defH, jOff, aOff, freeRows: Single;
+  jsx, asx: string;   // resolved grid item justify / align (inline / block)
   trackW, trackFr, colX, rowH, rowFr: array of Single;
   trackFixed: array of Boolean;
   rowIsFr: array of Boolean;
@@ -2880,7 +2881,13 @@ begin
       cellW := colGap * (span - 1);
       for k := curCol to Min(curCol + span - 1, ncols - 1) do cellW := cellW + trackW[k];
 
-      cs.ExplicitWidth := cellW; cs.BoxSizing := 'border-box';
+      // justify-self (item) / justify-items (container), default stretch. Only an
+      // auto-width item stretches to the cell; an explicit width is kept and the
+      // item is aligned within the cell at paint (below).
+      jsx := cs.JustifySelf; if (jsx = '') or (jsx = 'auto') then jsx := st.JustifyItems;
+      if jsx = '' then jsx := 'stretch';
+      if (jsx = 'stretch') and (cs.ExplicitWidth = -1) then cs.ExplicitWidth := cellW;
+      cs.BoxSizing := 'border-box';
       cb := MakeReplacedBox(itemTags[i], cs, cellW);
       if (cb = nil) and IsFormControlTag(itemTags[i].TagName) then
         cb := MakeControl(itemTags[i], cs, cellW)
@@ -2976,17 +2983,45 @@ begin
       if SameText(st.BoxSizing, 'border-box') then contentH := Max(contentH, eh - edgeT - edgeB)
       else contentH := Max(contentH, eh);
     end;
+    // align-content: stretch (default) — a definite height taller than the auto
+    // rows grows them to fill it, so cells give align-self room to centre/end.
+    if (nrows > 0) and (Trim(st.GridTemplateRows) = '') and (Trim(st.GridAutoRows) = '')
+       and ((LowerCase(st.AlignContent) = '') or (LowerCase(st.AlignContent) = 'stretch')) then
+    begin
+      freeRows := contentH - rowGap * Max(0, nrows - 1);
+      for k := 0 to nrows - 1 do freeRows := freeRows - rowH[k];
+      if freeRows > 0 then
+        for k := 0 to nrows - 1 do rowH[k] := rowH[k] + freeRows / nrows;
+    end;
 
     for i := 0 to itemTags.Count - 1 do
     begin
       cb := box.Children[i];
       rowYr := contentY;
       for k := 0 to iRow[i] - 1 do rowYr := rowYr + rowH[k] + rowGap;
-      // stretch to the cell: one row, or the sum of spanned rows (+ inner gaps)
+      // cell height: one row, or the sum of spanned rows (+ inner gaps)
       cellH := rowGap * (iRowSpan[i] - 1);
       for k := iRow[i] to Min(iRow[i] + iRowSpan[i] - 1, nrows - 1) do cellH := cellH + rowH[k];
-      if cb.H < cellH then cb.H := cellH;
-      ShiftBoxTree(cb, colX[iCol[i]] - cb.X, rowYr - cb.Y);
+      // cell width: spanned columns (+ their gaps)
+      cellW := colGap * (iSpan[i] - 1);
+      for k := iCol[i] to Min(iCol[i] + iSpan[i] - 1, ncols - 1) do cellW := cellW + trackW[k];
+      // align-self (item) / align-items (container), block axis; default stretch
+      asx := cb.Style.AlignSelf; if (asx = '') or (asx = 'auto') then asx := st.AlignItems;
+      if asx = '' then asx := 'stretch';
+      if (asx = 'stretch') and (ResolveSize(cb.Style.ExplicitHeight, 0) < 0) then
+      begin if cb.H < cellH then cb.H := cellH; aOff := 0; end
+      else if asx = 'center' then aOff := (cellH - cb.H) / 2
+      else if (asx = 'end') or (asx = 'flex-end') or (asx = 'self-end') then aOff := cellH - cb.H
+      else aOff := 0;   // start
+      // justify (inline axis): resolved earlier as jsx during build
+      jsx := cb.Style.JustifySelf; if (jsx = '') or (jsx = 'auto') then jsx := st.JustifyItems;
+      if jsx = '' then jsx := 'stretch';
+      if jsx = 'center' then jOff := (cellW - cb.W) / 2
+      else if (jsx = 'end') or (jsx = 'flex-end') or (jsx = 'self-end') then jOff := cellW - cb.W
+      else jOff := 0;   // start / stretch (already filled)
+      if jOff < 0 then jOff := 0;
+      if aOff < 0 then aOff := 0;
+      ShiftBoxTree(cb, colX[iCol[i]] + jOff - cb.X, rowYr + aOff - cb.Y);
     end;
 
     box.H := contentH + edgeT + edgeB;

@@ -63,6 +63,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | grid-column, grid-row | ✅ | explicit start line + span, or `N / M`; occupancy-aware auto-placement around them |
 | grid-template-rows | ✅ | px / % / fr / auto row tracks. fr and % resolve against a definite container height and distribute the leftover; with an indefinite height they fall back to content size (matches Chrome) |
 | grid-template-areas, grid-area | ✅ | `"a a b" "a a c"` named-area template; an item's `grid-area: name` is placed at that area's bounding cell rect (row/col start + span). Single or double quotes |
+| justify-items, justify-self | ✅ | grid item inline-axis alignment within its cell: stretch (default — auto-width fills the track), start/center/end. `justify-self` overrides `justify-items` per item. Reftest `grid-place-items` |
+| place-items, place-self, place-content | ✅ | shorthands: `<align> [<justify>]` (one value = both axes) → align-items/justify-items, align-self/justify-self, align-content/justify-content. Longhands still override. Reftest `grid-place-items` |
 
 ## Typography
 
