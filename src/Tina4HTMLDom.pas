@@ -162,9 +162,12 @@ type
     RoutingKey: string;
     // Selector pre-tokenized at parse time:
     //   SelectorLower    — Selector.Trim.ToLower (cached)
-    //   SelectorParts    — descendant-split parts of SelectorLower
+    //   SelectorParts    — the simple selectors left-to-right (subject last)
+    //   SelectorCombs    — combinator joining part[k] to part[k+1]:
+    //                      'desc' | 'child' | 'adj' | 'sib' (len = parts-1)
     SelectorLower: string;
     SelectorParts: TStringArray;
+    SelectorCombs: TStringArray;
     constructor Create;
     destructor Destroy; override;
   end;
@@ -180,6 +183,7 @@ type
     FOnParseError: TCSSStyleSheetParseError;
     FHasInteractiveSelectors: Boolean;  // any rule uses :hover/:active/:focus?
     FHasPseudo: Boolean;                // any rule targets ::before / ::after
+    FHasCounters: Boolean;              // any rule sets counter-reset/counter-increment
     // Indexed cascade — rules grouped by their routing key so a tag
     // with class "btn" only checks rules that could plausibly match it.
     // (FPC note: declared as TObjectDictionary because FPC's rtl-generics
@@ -248,6 +252,7 @@ type
     /// </summary>
     property HasInteractiveSelectors: Boolean read FHasInteractiveSelectors;
     property HasPseudo: Boolean read FHasPseudo;
+    property HasCounters: Boolean read FHasCounters;
     property CustomProps: TDictionary<string, string> read FCustomProps;
     { @import URLs found while parsing (in encounter order). The host fetches
       each like a <link rel=stylesheet> and AddCSS's it (drain until empty for
@@ -375,6 +380,8 @@ type
     FlexBasis: Single;
     FlexGap: Single;
     AlignSelf: string;            // per-item cross alignment ('' = inherit align-items)
+    JustifyItems: string;         // grid inline-axis item alignment ('' = stretch)
+    JustifySelf: string;          // per-item grid inline alignment ('' = inherit justify-items)
     CSSOrder: Integer;            // flex/grid `order`
     // CSS Grid (subset)
     GridTemplateColumns: string;  // track list: px / % / fr / repeat(n, size) / auto
@@ -603,6 +610,59 @@ begin
   FUniversalRules.Clear;
 end;
 
+{ Split a selector into its simple selectors and the combinators between them.
+  Combinators: descendant (whitespace), child '>', adjacent-sibling '+',
+  general-sibling '~'. Combs[k] joins Parts[k] to Parts[k+1]; a symbol
+  combinator overrides a tentative descendant from surrounding whitespace. }
+procedure TokenizeSelector(const Sel: string; out Parts, Combs: TStringArray);
+var
+  i, L: Integer; ch: Char; cur, pending: string; needComb: Boolean;
+begin
+  SetLength(Parts, 0); SetLength(Combs, 0);
+  cur := ''; pending := ''; needComb := False;
+  L := Length(Sel); i := 1;
+  while i <= L do
+  begin
+    ch := Sel[i];
+    if (ch = ' ') or (ch = #9) then
+    begin
+      if cur <> '' then
+      begin
+        SetLength(Parts, Length(Parts) + 1); Parts[High(Parts)] := cur;
+        cur := ''; needComb := True; pending := '';
+      end;
+      Inc(i); Continue;
+    end;
+    if (ch = '>') or (ch = '+') or (ch = '~') then
+    begin
+      if cur <> '' then
+      begin
+        SetLength(Parts, Length(Parts) + 1); Parts[High(Parts)] := cur;
+        cur := ''; needComb := True; pending := '';
+      end;
+      case ch of
+        '>': pending := 'child';
+        '+': pending := 'adj';
+        '~': pending := 'sib';
+      end;
+      Inc(i); Continue;
+    end;
+    // first char of a new part: emit the combinator that precedes it
+    if (cur = '') and needComb then
+    begin
+      SetLength(Combs, Length(Combs) + 1);
+      if pending = '' then Combs[High(Combs)] := 'desc' else Combs[High(Combs)] := pending;
+      needComb := False; pending := '';
+    end;
+    cur := cur + ch;
+    Inc(i);
+  end;
+  if cur <> '' then
+  begin
+    SetLength(Parts, Length(Parts) + 1); Parts[High(Parts)] := cur;
+  end;
+end;
+
 procedure TCSSStyleSheet.ClassifyRule(Rule: TCSSRule);
 // Compute the routing key for a rule based on its LAST selector part
 // (the one that selects the tag itself; preceding parts are descendant
@@ -610,21 +670,26 @@ procedure TCSSStyleSheet.ClassifyRule(Rule: TCSSRule);
 // Also pre-tokenize the selector so SelectorMatches doesn't repeat the
 // Trim/ToLower/Split work on every call.
 var
-  Sel, LastPart, Rest: string;
-  I, DotPos, HashPos, BracketPos, ColonPos, EndPos: Integer;
+  LastPart, Rest: string;
+  DotPos, HashPos, BracketPos, ColonPos, EndPos: Integer;
   List: TList<TCSSRule>;
 begin
-  // Pre-tokenize the selector. Lowercase once, split-by-space once.
+  // Pre-tokenize the selector into simple selectors + combinators (handles
+  // descendant ' ', child '>', adjacent '+', general-sibling '~').
   Rule.SelectorLower := Rule.Selector.Trim.ToLower;
-  Rule.SelectorParts := Rule.SelectorLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+  TokenizeSelector(Rule.SelectorLower, Rule.SelectorParts, Rule.SelectorCombs);
   if Rule.SelectorLower.EndsWith(':before') or Rule.SelectorLower.EndsWith(':after') then
     FHasPseudo := True;   // covers ::before/::after too (they end with :before/:after)
+  if (Rule.Declarations <> nil) and
+     (Rule.Declarations.ContainsKey('counter-reset') or
+      Rule.Declarations.ContainsKey('counter-increment')) then
+    FHasCounters := True;
 
-  Sel := Rule.Selector.Trim;
-  // Find the last descendant-separated part. Trim trailing combinators.
-  I := Sel.LastIndexOf(' ');
-  if I >= 0 then LastPart := Sel.Substring(I + 1).Trim
-  else LastPart := Sel;
+  // Routing key comes from the subject (last simple selector). Deriving it from
+  // the tokenized subject means a symbol combinator without spaces (`div>p`)
+  // still routes under its real target tag/class/id, not a bogus 'div>p' key.
+  if Length(Rule.SelectorParts) = 0 then Exit;
+  LastPart := Rule.SelectorParts[High(Rule.SelectorParts)];
   if LastPart = '' then Exit;
 
   // Strip any trailing pseudo-class / attribute selector for routing
@@ -1267,6 +1332,109 @@ begin
     Result := A.SourceOrder - B.SourceOrder;
 end;
 
+{ The previous element sibling of Tag (skipping #text and injected pseudo
+  nodes), or nil. Used by the +/~ combinators. }
+function PrevElementSibling(Tag: THTMLTag): THTMLTag;
+var p, c: THTMLTag; i, idx: Integer;
+begin
+  Result := nil;
+  p := Tag.Parent;
+  if p = nil then Exit;
+  idx := -1;
+  for i := 0 to p.Children.Count - 1 do
+    if p.Children[i] = Tag then begin idx := i; Break; end;
+  if idx < 0 then Exit;
+  for i := idx - 1 downto 0 do
+  begin
+    c := p.Children[i];
+    if (c.TagName <> '#text') and not c.TagName.StartsWith('tina4::') then Exit(c);
+  end;
+end;
+
+{ 1-based position of Tag among its element siblings (skipping #text and
+  injected tina4:: pseudo nodes). SameType restricts the count/position to
+  siblings sharing Tag's tag name (for :*-of-type). Total returns the sibling
+  count under the same filter. A parentless tag counts as the only child. }
+function StructuralChildPos(Tag: THTMLTag; SameType: Boolean; out Total: Integer): Integer;
+var p, c: THTMLTag; i: Integer;
+begin
+  Total := 0; Result := 0;
+  p := Tag.Parent;
+  if p = nil then begin Total := 1; Exit(1); end;
+  for i := 0 to p.Children.Count - 1 do
+  begin
+    c := p.Children[i];
+    if (c.TagName = '#text') or c.TagName.StartsWith('tina4::') then Continue;
+    if SameType and not SameText(c.TagName, Tag.TagName) then Continue;
+    Inc(Total);
+    if c = Tag then Result := Total;
+  end;
+  if Result = 0 then Result := 1;   // defensive (Tag not found under parent)
+end;
+
+{ Match a 1-based index against an An+B expression (`2n+1`, `odd`, `even`,
+  `3`, `n`, `-n+3`). Matches when some k>=0 gives Idx = a*k + b. }
+function MatchNthExpr(Idx: Integer; const Arg: string): Boolean;
+var s, nn: string; a, b, np, k: Integer;
+begin
+  s := StringReplace(LowerCase(Trim(Arg)), ' ', '', [rfReplaceAll]);
+  if s = 'odd' then begin a := 2; b := 1; end
+  else if s = 'even' then begin a := 2; b := 0; end
+  else
+  begin
+    np := Pos('n', s);
+    if np = 0 then
+    begin
+      a := 0;
+      nn := s; if (nn <> '') and (nn[1] = '+') then Delete(nn, 1, 1);
+      b := StrToIntDef(nn, 0);
+    end
+    else
+    begin
+      nn := Copy(s, 1, np - 1);
+      if (nn = '') or (nn = '+') then a := 1
+      else if nn = '-' then a := -1
+      else a := StrToIntDef(nn, 0);
+      nn := Copy(s, np + 1, Length(s));
+      if (nn <> '') and (nn[1] = '+') then Delete(nn, 1, 1);
+      b := StrToIntDef(nn, 0);
+    end;
+  end;
+  if a = 0 then Exit(Idx = b);
+  if ((Idx - b) mod a) <> 0 then Exit(False);
+  k := (Idx - b) div a;
+  Result := k >= 0;
+end;
+
+{ Evaluate one structural pseudo-class (name like ':nth-child', arg like
+  '2n+1') against Tag. Unknown names return True (already filtered earlier). }
+function MatchesStructural(const Name, Arg: string; Tag: THTMLTag): Boolean;
+var pos, total: Integer;
+begin
+  if Name = ':first-child' then
+    begin StructuralChildPos(Tag, False, total); Result := StructuralChildPos(Tag, False, total) = 1; end
+  else if Name = ':last-child' then
+    begin pos := StructuralChildPos(Tag, False, total); Result := pos = total; end
+  else if Name = ':only-child' then
+    begin StructuralChildPos(Tag, False, total); Result := total = 1; end
+  else if Name = ':first-of-type' then
+    begin Result := StructuralChildPos(Tag, True, total) = 1; end
+  else if Name = ':last-of-type' then
+    begin pos := StructuralChildPos(Tag, True, total); Result := pos = total; end
+  else if Name = ':only-of-type' then
+    begin StructuralChildPos(Tag, True, total); Result := total = 1; end
+  else if Name = ':nth-child' then
+    begin pos := StructuralChildPos(Tag, False, total); Result := MatchNthExpr(pos, Arg); end
+  else if Name = ':nth-last-child' then
+    begin pos := StructuralChildPos(Tag, False, total); Result := MatchNthExpr(total - pos + 1, Arg); end
+  else if Name = ':nth-of-type' then
+    begin pos := StructuralChildPos(Tag, True, total); Result := MatchNthExpr(pos, Arg); end
+  else if Name = ':nth-last-of-type' then
+    begin pos := StructuralChildPos(Tag, True, total); Result := MatchNthExpr(total - pos + 1, Arg); end
+  else
+    Result := True;
+end;
+
 function MatchesSingleSelector(const Sel: string; Tag: THTMLTag): Boolean;
 var
   SelTag, SelClass, SelId: string;
@@ -1276,12 +1444,21 @@ var
   ColonIdx, BracketStart, BracketEnd, EqIdx: Integer;
   AttrChecks: array of TPair<string, string>;
   APair, Check: TPair<string, string>;
+  StructChecks: array of TPair<string, string>;
+  SPair: TPair<string, string>;
+  PName, PArg: string;
+  ParenPos: Integer;
+  NotChecks: array of string;
+  NotInner, NC: string;
+  NotStart, NotJ, NotDepth: Integer;
   Classes: TStringArray;
   Found: Boolean;
 begin
   Result := False;
   if not Assigned(Tag) or (Tag.TagName = '#text') or (Tag.TagName = 'root') then
     Exit;
+  SetLength(StructChecks, 0);
+  SetLength(NotChecks, 0);
 
   // Parse selector into tag, class, id parts
   // e.g., "div.container#main" -> tag=div, class=container, id=main
@@ -1295,6 +1472,33 @@ begin
   SetLength(AttrChecks, 0);
 
   S := Sel;
+
+  // Extract :not(...) segments first, paren-aware — the inner selector may
+  // carry its own ':' (e.g. :not(:last-child)) that would derail the suffix
+  // scanner below. Each becomes a negation: the tag must NOT match the inner.
+  if S.ToLower.IndexOf(':not(') >= 0 then
+  begin
+    while True do
+    begin
+      NotStart := S.ToLower.IndexOf(':not(');
+      if NotStart < 0 then Break;
+      NotDepth := 1; NotJ := NotStart + 5;   // first char after '('
+      while (NotJ < Length(S)) and (NotDepth > 0) do
+      begin
+        if S.Chars[NotJ] = '(' then Inc(NotDepth)
+        else if S.Chars[NotJ] = ')' then Dec(NotDepth);
+        if NotDepth = 0 then Break;
+        Inc(NotJ);
+      end;
+      NotInner := S.Substring(NotStart + 5, NotJ - (NotStart + 5)).Trim;
+      if NotInner <> '' then
+      begin
+        SetLength(NotChecks, Length(NotChecks) + 1);
+        NotChecks[High(NotChecks)] := NotInner;
+      end;
+      S := S.Remove(NotStart, NotJ - NotStart + 1);   // drop the ':not(...)'
+    end;
+  end;
 
   // Fast path: most CSS selectors are pure tag/class/id and contain
   // neither `:` nor `[`. Skip the pseudo-class suffix scan and the
@@ -1315,7 +1519,32 @@ begin
       else if Suffix = ':active' then begin RequireActive := True; S := S.Substring(0, ColonIdx); end
       else if Suffix = ':focus' then begin RequireFocus := True; S := S.Substring(0, ColonIdx); end
       else if Suffix = ':checked' then begin RequireChecked := True; S := S.Substring(0, ColonIdx); end
-      else Break;
+      else
+      begin
+        // Structural pseudo-classes: :first-child, :last-child, :only-child,
+        // :nth-child(An+B), :nth-last-child, and the *-of-type variants. Split
+        // an optional (arg); an unrecognised name breaks (left embedded => no
+        // match, as before), keeping an unknown pseudo from matching wrongly.
+        PName := Suffix; PArg := '';
+        ParenPos := PName.IndexOf('(');
+        if ParenPos >= 0 then
+        begin
+          PArg := PName.Substring(ParenPos + 1);
+          if PArg.EndsWith(')') then PArg := PArg.Substring(0, PArg.Length - 1);
+          PName := PName.Substring(0, ParenPos);
+        end;
+        if (PName = ':first-child') or (PName = ':last-child') or (PName = ':only-child') or
+           (PName = ':first-of-type') or (PName = ':last-of-type') or (PName = ':only-of-type') or
+           (PName = ':nth-child') or (PName = ':nth-last-child') or
+           (PName = ':nth-of-type') or (PName = ':nth-last-of-type') then
+        begin
+          SPair.Key := PName; SPair.Value := PArg;
+          SetLength(StructChecks, Length(StructChecks) + 1);
+          StructChecks[High(StructChecks)] := SPair;
+          S := S.Substring(0, ColonIdx);
+        end
+        else Break;
+      end;
     end;
   end;
 
@@ -1417,7 +1646,8 @@ begin
   // pseudo-class flags is required or an attribute check is in play.
   if (SelTag = '') and (SelClass = '') and (SelId = '') and
      (not (RequireHover or RequireActive or RequireFocus or RequireChecked)) and
-     (Length(AttrChecks) = 0) then Exit;
+     (Length(AttrChecks) = 0) and (Length(StructChecks) = 0) and
+     (Length(NotChecks) = 0) then Exit;
 
   // Pseudo-class state checks. All required flags must currently be set
   // on the tag for the selector to match.
@@ -1434,6 +1664,15 @@ begin
     if Check.Value <> #1#1 then
       if Tag.GetAttribute(Check.Key, '') <> Check.Value then Exit;
   end;
+
+  // Structural pseudo-classes (evaluated last: they need the tag's position
+  // among its element siblings, which the tag/class/id filters don't touch).
+  for SPair in StructChecks do
+    if not MatchesStructural(SPair.Key, SPair.Value, Tag) then Exit;
+
+  // :not(...) — the tag must match none of the negated inner selectors.
+  for NC in NotChecks do
+    if MatchesSingleSelector(NC, Tag) then Exit;
 
   Result := True;
 end;
@@ -1456,7 +1695,7 @@ begin
     temp := TCSSRule.Create;
     try
       temp.SelectorLower := baseSel;
-      temp.SelectorParts := baseSel.Split([' '], TStringSplitOptions.ExcludeEmpty);
+      TokenizeSelector(baseSel, temp.SelectorParts, temp.SelectorCombs);
       if SelectorMatches(temp, Tag) then
       begin
         for k in rule.Declarations.Keys do
@@ -1470,35 +1709,67 @@ begin
 end;
 
 function TCSSStyleSheet.SelectorMatches(Rule: TCSSRule; Tag: THTMLTag): Boolean;
-// Uses Rule.SelectorParts cached at parse time so we don't pay
-// Trim+ToLower+Split per match: match the last simple selector against
-// the tag, then walk ancestors for descendant parts.
+// Uses Rule.SelectorParts / SelectorCombs cached at parse time. Matches the
+// subject (last simple selector) against the tag, then walks leftward honouring
+// each combinator: descendant (any ancestor, greedy), child (direct parent),
+// adjacent-sibling (immediately preceding element), general-sibling (any
+// preceding element). Greedy — sufficient for the selectors real pages use.
 var
-  Current: THTMLTag;
-  PartIdx: Integer;
+  Current, Cand: THTMLTag;
+  k: Integer;
+  comb: string;
+  matched: Boolean;
 begin
   Result := False;
   if not Assigned(Tag) or (Tag.TagName = '#text') or (Tag.TagName = 'root') then
     Exit;
   if Length(Rule.SelectorParts) = 0 then Exit;
 
-  // Match the last simple selector against the tag
+  // Match the subject (last simple selector) against the tag
   if not MatchesSingleSelector(Rule.SelectorParts[High(Rule.SelectorParts)], Tag) then
     Exit;
 
   if Length(Rule.SelectorParts) = 1 then
     Exit(True);
 
-  // Walk ancestors greedy-matching descendant parts in reverse
-  Current := Tag.Parent;
-  PartIdx := Length(Rule.SelectorParts) - 2;
-  while (PartIdx >= 0) and Assigned(Current) do
+  Current := Tag;
+  for k := Length(Rule.SelectorParts) - 2 downto 0 do
   begin
-    if MatchesSingleSelector(Rule.SelectorParts[PartIdx], Current) then
-      Dec(PartIdx);
-    Current := Current.Parent;
+    if k < Length(Rule.SelectorCombs) then comb := Rule.SelectorCombs[k] else comb := 'desc';
+    if comb = 'child' then
+    begin
+      Current := Current.Parent;
+      if not Assigned(Current) or not MatchesSingleSelector(Rule.SelectorParts[k], Current) then Exit;
+    end
+    else if comb = 'adj' then
+    begin
+      Cand := PrevElementSibling(Current);
+      if not Assigned(Cand) or not MatchesSingleSelector(Rule.SelectorParts[k], Cand) then Exit;
+      Current := Cand;
+    end
+    else if comb = 'sib' then
+    begin
+      Cand := PrevElementSibling(Current); matched := False;
+      while Assigned(Cand) do
+      begin
+        if MatchesSingleSelector(Rule.SelectorParts[k], Cand) then begin matched := True; Break; end;
+        Cand := PrevElementSibling(Cand);
+      end;
+      if not matched then Exit;
+      Current := Cand;
+    end
+    else  // descendant: greedy walk up ancestors
+    begin
+      Current := Current.Parent; matched := False;
+      while Assigned(Current) do
+      begin
+        if MatchesSingleSelector(Rule.SelectorParts[k], Current) then begin matched := True; Break; end;
+        Current := Current.Parent;
+      end;
+      if not matched then Exit;
+    end;
   end;
-  Result := PartIdx < 0;
+  Result := True;
 end;
 
 procedure TCSSStyleSheet.ApplyTo(Tag: THTMLTag; Declarations: TCSSDeclarations);
@@ -2445,7 +2716,7 @@ begin
   Result.FlexShrink := 1;
   Result.FlexBasis := -1;
   Result.FlexGap := 0;
-  Result.AlignSelf := ''; Result.CSSOrder := 0;
+  Result.AlignSelf := ''; Result.JustifyItems := ''; Result.JustifySelf := ''; Result.CSSOrder := 0;
   Result.GridTemplateColumns := ''; Result.GridTemplateRows := ''; Result.GridAutoRows := '';
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
@@ -3012,7 +3283,7 @@ begin
   Result.FlexShrink := 1;
   Result.FlexBasis := -1;
   Result.FlexGap := 0;
-  Result.AlignSelf := ''; Result.CSSOrder := 0;
+  Result.AlignSelf := ''; Result.JustifyItems := ''; Result.JustifySelf := ''; Result.CSSOrder := 0;
   Result.GridTemplateColumns := ''; Result.GridTemplateRows := ''; Result.GridAutoRows := '';
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
@@ -4587,8 +4858,35 @@ begin
     Style.FlexWrap := Temp.Trim.ToLower;
   if Decls.TryGetValue('justify-content', Temp) and not ShouldSkip(Temp) then
     Style.JustifyContent := Temp.Trim.ToLower;
+  // place-* shorthands: <align> [<justify>] (one value = both). Applied BEFORE
+  // the longhands below so an explicit align-items/justify-items still wins.
+  if Decls.TryGetValue('place-items', Temp) and not ShouldSkip(Temp) then
+  begin
+    OvParts := Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    if Length(OvParts) >= 1 then Style.AlignItems := OvParts[0];
+    if Length(OvParts) >= 2 then Style.JustifyItems := OvParts[1]
+    else if Length(OvParts) >= 1 then Style.JustifyItems := OvParts[0];
+  end;
+  if Decls.TryGetValue('place-self', Temp) and not ShouldSkip(Temp) then
+  begin
+    OvParts := Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    if Length(OvParts) >= 1 then Style.AlignSelf := OvParts[0];
+    if Length(OvParts) >= 2 then Style.JustifySelf := OvParts[1]
+    else if Length(OvParts) >= 1 then Style.JustifySelf := OvParts[0];
+  end;
+  if Decls.TryGetValue('place-content', Temp) and not ShouldSkip(Temp) then
+  begin
+    OvParts := Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+    if Length(OvParts) >= 1 then Style.AlignContent := OvParts[0];
+    if Length(OvParts) >= 2 then Style.JustifyContent := OvParts[1]
+    else if Length(OvParts) >= 1 then Style.JustifyContent := OvParts[0];
+  end;
   if Decls.TryGetValue('align-items', Temp) and not ShouldSkip(Temp) then
     Style.AlignItems := Temp.Trim.ToLower;
+  if Decls.TryGetValue('justify-items', Temp) and not ShouldSkip(Temp) then
+    Style.JustifyItems := Temp.Trim.ToLower;
+  if Decls.TryGetValue('justify-self', Temp) and not ShouldSkip(Temp) then
+    Style.JustifySelf := Temp.Trim.ToLower;
   if Decls.TryGetValue('align-content', Temp) and not ShouldSkip(Temp) then
     Style.AlignContent := Temp.Trim.ToLower;
   if Decls.TryGetValue('align-self', Temp) and not ShouldSkip(Temp) then

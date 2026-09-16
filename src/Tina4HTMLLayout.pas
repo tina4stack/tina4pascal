@@ -88,6 +88,7 @@ type
                                    // (auto) — the % base for a child's height:NN%
     FSynthTags: TList<THTMLTag>;   // anonymous flex-item wrappers (freed each layout)
     FFloats: array of TFloatBand;  // active float context (absolute coords)
+    FCounters: TDictionary<string, TList<Integer>>;  // CSS counters: name -> nesting stack
     function FontStylesOf(const St: TComputedStyle): TTina4FontStyles;
     procedure ComputeDecor(const St: TComputedStyle; var FS: TTina4FontStyles;
       out Lines, Sty: Byte; out Col: TTina4Color);
@@ -121,6 +122,16 @@ type
     function MakeAnonTextItem(Parent: THTMLTag; const S: string): THTMLTag;
     function PseudoTag(Tag: THTMLTag; const Which: string): THTMLTag;
     procedure InjectPseudo(Tag: THTMLTag);
+    { CSS counters. FCounters holds a nesting stack per name; document-order
+      traversal in InjectPseudo pushes on counter-reset, adds on
+      counter-increment, and pops the element's resets on exit. }
+    procedure ResetCounterState;
+    function CounterStack(const Name: string): TList<Integer>;
+    function CounterApplyReset(const Spec: string): TStringList;
+    procedure CounterApplyIncrement(const Spec: string);
+    procedure CounterPop(Names: TStringList);
+    function ResolveContentValue(Tag: THTMLTag; const CV: string): string;
+    function ResolveContentFunc(Tag: THTMLTag; const Fn, Arg: string): string;
   public
     constructor Create(Canvas: TTina4Canvas; Sheet: TCSSStyleSheet);
     destructor Destroy; override;
@@ -526,12 +537,15 @@ begin
   FCanvas := Canvas;
   FSheet := Sheet;
   FSynthTags := TList<THTMLTag>.Create;
+  FCounters := TDictionary<string, TList<Integer>>.Create;
 end;
 
 destructor TLayoutEngine.Destroy;
 begin
   FreeSynthTags;
   FSynthTags.Free;
+  ResetCounterState;
+  FCounters.Free;
   inherited Destroy;
 end;
 
@@ -576,6 +590,231 @@ begin
   Result := t;
 end;
 
+{ Strip a single/double quote pair from a token (for counters() separators). }
+function StripQuotes(const S: string): string;
+var t: string;
+begin
+  t := Trim(S);
+  if (Length(t) >= 2) and ((t[1] = '"') and (t[Length(t)] = '"')) then
+    Exit(Copy(t, 2, Length(t) - 2));
+  if (Length(t) >= 2) and ((t[1] = '''') and (t[Length(t)] = '''')) then
+    Exit(Copy(t, 2, Length(t) - 2));
+  Result := t;
+end;
+
+{ Roman numerals (1..3999 practical range); <=0 falls back to decimal. }
+function CounterToRoman(N: Integer; Upper: Boolean): string;
+const
+  Vals: array[0..12] of Integer =
+    (1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1);
+  Syms: array[0..12] of string =
+    ('m', 'cm', 'd', 'cd', 'c', 'xc', 'l', 'xl', 'x', 'ix', 'v', 'iv', 'i');
+var i: Integer;
+begin
+  if N <= 0 then Exit(IntToStr(N));
+  Result := '';
+  for i := 0 to 12 do
+    while N >= Vals[i] do begin Result := Result + Syms[i]; N := N - Vals[i]; end;
+  if Upper then Result := UpperCase(Result);
+end;
+
+{ Bijective base-26 alpha (a..z, aa..); <=0 falls back to decimal. }
+function CounterToAlpha(N: Integer; Upper: Boolean): string;
+var base: Integer; c: Char;
+begin
+  if N <= 0 then Exit(IntToStr(N));
+  Result := '';
+  while N > 0 do
+  begin
+    Dec(N);
+    base := N mod 26;
+    if Upper then c := Chr(Ord('A') + base) else c := Chr(Ord('a') + base);
+    Result := c + Result;
+    N := N div 26;
+  end;
+end;
+
+{ Render a counter value per a list-style keyword (decimal is the default). }
+function FormatCounter(V: Integer; const Style: string): string;
+var s: string;
+begin
+  s := LowerCase(Trim(Style));
+  if (s = '') or (s = 'decimal') then Exit(IntToStr(V));
+  if s = 'decimal-leading-zero' then
+  begin
+    if (V >= 0) and (V < 10) then Exit('0' + IntToStr(V)) else Exit(IntToStr(V));
+  end;
+  if s = 'lower-roman' then Exit(CounterToRoman(V, False));
+  if s = 'upper-roman' then Exit(CounterToRoman(V, True));
+  if (s = 'lower-alpha') or (s = 'lower-latin') then Exit(CounterToAlpha(V, False));
+  if (s = 'upper-alpha') or (s = 'upper-latin') then Exit(CounterToAlpha(V, True));
+  if s = 'none' then Exit('');
+  Result := IntToStr(V);
+end;
+
+{ Parse a `counter-reset`/`counter-increment` value into name/value pairs.
+  Each name may be followed by an integer; a bare name uses DefVal. }
+procedure ParseCounterPairs(const Spec: string; DefVal: Integer;
+  Names: TStringList; Vals: TList<Integer>);
+var parts: TArray<string>; i, n: Integer;
+begin
+  parts := Trim(Spec).Split([' '], TStringSplitOptions.ExcludeEmpty);
+  i := 0;
+  while i < Length(parts) do
+  begin
+    if (parts[i] = 'none') or (parts[i] = '') then begin Inc(i); Continue; end;
+    Names.Add(parts[i]);
+    if (i + 1 < Length(parts)) and TryStrToInt(parts[i + 1], n) then
+    begin Vals.Add(n); Inc(i, 2); end
+    else begin Vals.Add(DefVal); Inc(i); end;
+  end;
+end;
+
+{ Clear all counter stacks (start of each Build). }
+procedure TLayoutEngine.ResetCounterState;
+var v: TList<Integer>;
+begin
+  if FCounters = nil then Exit;
+  for v in FCounters.Values do v.Free;
+  FCounters.Clear;
+end;
+
+{ The nesting stack for a counter name, created empty on first use. }
+function TLayoutEngine.CounterStack(const Name: string): TList<Integer>;
+begin
+  if not FCounters.TryGetValue(Name, Result) then
+  begin
+    Result := TList<Integer>.Create;
+    FCounters.AddOrSetValue(Name, Result);
+  end;
+end;
+
+{ counter-reset: push a new nested level per named counter. Returns the names
+  pushed so the caller can pop them when the element's scope ends. }
+function TLayoutEngine.CounterApplyReset(const Spec: string): TStringList;
+var names: TStringList; vals: TList<Integer>; i: Integer;
+begin
+  Result := TStringList.Create;
+  names := TStringList.Create; vals := TList<Integer>.Create;
+  try
+    ParseCounterPairs(Spec, 0, names, vals);
+    for i := 0 to names.Count - 1 do
+    begin
+      CounterStack(names[i]).Add(vals[i]);   // push new level
+      Result.Add(names[i]);
+    end;
+  finally names.Free; vals.Free; end;
+end;
+
+{ counter-increment: add to the innermost value (auto-creating at 0). }
+procedure TLayoutEngine.CounterApplyIncrement(const Spec: string);
+var names: TStringList; vals: TList<Integer>; i: Integer; st: TList<Integer>;
+begin
+  names := TStringList.Create; vals := TList<Integer>.Create;
+  try
+    ParseCounterPairs(Spec, 1, names, vals);
+    for i := 0 to names.Count - 1 do
+    begin
+      st := CounterStack(names[i]);
+      if st.Count = 0 then st.Add(0);
+      st[st.Count - 1] := st[st.Count - 1] + vals[i];
+    end;
+  finally names.Free; vals.Free; end;
+end;
+
+{ Pop the innermost level of each named counter (element scope ended). }
+procedure TLayoutEngine.CounterPop(Names: TStringList);
+var i: Integer; st: TList<Integer>;
+begin
+  if Names = nil then Exit;
+  for i := 0 to Names.Count - 1 do
+    if FCounters.TryGetValue(Names[i], st) and (st.Count > 0) then
+      st.Delete(st.Count - 1);
+end;
+
+{ Resolve one content function: counter(), counters() or attr(). }
+function TLayoutEngine.ResolveContentFunc(Tag: THTMLTag; const Fn, Arg: string): string;
+var parts: TArray<string>; nm, sty, sep: string; st: TList<Integer>; i: Integer;
+begin
+  Result := '';
+  if Fn = 'attr' then
+  begin
+    if Tag <> nil then Result := Tag.GetAttribute(Trim(Arg), '');
+  end
+  else if Fn = 'counter' then
+  begin
+    parts := Arg.Split([',']);
+    nm := Trim(parts[0]);
+    if Length(parts) >= 2 then sty := Trim(parts[1]) else sty := 'decimal';
+    if FCounters.TryGetValue(nm, st) and (st.Count > 0) then
+      Result := FormatCounter(st[st.Count - 1], sty)
+    else
+      Result := FormatCounter(0, sty);
+  end
+  else if Fn = 'counters' then
+  begin
+    parts := Arg.Split([',']);
+    nm := Trim(parts[0]);
+    if Length(parts) >= 2 then sep := StripQuotes(parts[1]) else sep := '';
+    if Length(parts) >= 3 then sty := Trim(parts[2]) else sty := 'decimal';
+    if FCounters.TryGetValue(nm, st) then
+      for i := 0 to st.Count - 1 do
+      begin
+        if i > 0 then Result := Result + sep;
+        Result := Result + FormatCounter(st[i], sty);
+      end;
+  end;
+end;
+
+{ Resolve a full `content` value into display text: concatenates quoted string
+  literals with counter()/counters()/attr() results; unknown keywords add
+  nothing. This supersedes UnquoteContent when counters are in play. }
+function TLayoutEngine.ResolveContentValue(Tag: THTMLTag; const CV: string): string;
+var
+  s, ident, arg: string; i, L: Integer; ch, q: Char; res: TStringBuilder;
+begin
+  Result := '';
+  s := Trim(CV);
+  if (s = '') or SameText(s, 'none') or SameText(s, 'normal') then Exit;
+  L := Length(s);
+  res := TStringBuilder.Create;
+  try
+    i := 1;
+    while i <= L do
+    begin
+      ch := s[i];
+      if (ch = '"') or (ch = '''') then
+      begin
+        q := ch; Inc(i);
+        while (i <= L) and (s[i] <> q) do
+        begin
+          if (s[i] = '\') and (i < L) then Inc(i);   // simple escape
+          res.Append(s[i]); Inc(i);
+        end;
+        if i <= L then Inc(i);   // closing quote
+      end
+      else if ch = ' ' then Inc(i)
+      else
+      begin
+        ident := '';
+        while (i <= L) and (s[i] <> '(') and (s[i] <> ' ') do
+        begin ident := ident + s[i]; Inc(i); end;
+        if (i <= L) and (s[i] = '(') then
+        begin
+          Inc(i); arg := '';
+          while (i <= L) and (s[i] <> ')') do begin arg := arg + s[i]; Inc(i); end;
+          if i <= L then Inc(i);   // ')'
+          res.Append(ResolveContentFunc(Tag, LowerCase(ident), arg));
+        end;
+        // a bare keyword (open-quote/etc.) contributes nothing
+      end;
+    end;
+    Result := res.ToString;
+  finally
+    res.Free;
+  end;
+end;
+
 { Build a synthetic ::before/::after element for Tag if a matching rule sets a
   generating `content`. The pseudo's declarations are baked into .Style (applied
   last by ForTag), and the unquoted content becomes a #text child. Returns nil
@@ -594,6 +833,11 @@ begin
     if not FSheet.CollectPseudoStyle(Tag, Which, decls) then Exit;
     if not decls.TryGetValue('content', cv) then Exit;   // no content => no box
     if SameText(Trim(cv), 'none') or SameText(Trim(cv), 'normal') then Exit;
+    // The pseudo's own counter-increment applies as it is generated (document
+    // order: ::before sits at the start of its element's content), before its
+    // content's counter() references are resolved. A pseudo is a leaf with no
+    // descendant scope, so counter-reset on it is left to the host element.
+    if decls.TryGetValue('counter-increment', k) then CounterApplyIncrement(k);
     p := THTMLTag.Create;
     p.TagName := 'tina4::' + Which;
     p.Parent := Tag;
@@ -610,7 +854,7 @@ begin
     end;
     for k in decls.Keys do
       if decls.TryGetValue(k, v) then p.Style.AddOrSetValue(k, v);
-    txt := UnquoteContent(cv);
+    txt := ResolveContentValue(Tag, cv);
     if txt <> '' then
     begin
       tx := THTMLTag.Create;
@@ -634,6 +878,10 @@ var
   i: Integer;
   c, pb, pa: THTMLTag;
   kids: TList<THTMLTag>;
+  edecls: TCSSDeclarations;
+  spec: string;
+  pushed: TStringList;
+  isElem: Boolean;
 begin
   if Tag = nil then Exit;
   // strip previously-injected pseudo children. THTMLTag.Destroy self-detaches
@@ -642,6 +890,33 @@ begin
   for i := Tag.Children.Count - 1 downto 0 do
     if Tag.Children[i].TagName.StartsWith('tina4::') then
       Tag.Children[i].Free;
+
+  isElem := (Tag.TagName <> '#text') and (Tag.TagName <> 'root');
+  pushed := nil;
+
+  // Element-level counter-reset / -increment, applied in document order before
+  // this element's ::before and children (only for pages that use counters, so
+  // the extra per-element match is never paid on a plain ::before page).
+  if isElem and (FSheet <> nil) and FSheet.HasCounters then
+  begin
+    edecls := TCSSDeclarations.Create;
+    try
+      FSheet.ApplyTo(Tag, edecls);
+      if edecls.TryGetValue('counter-reset', spec) then pushed := CounterApplyReset(spec);
+      if edecls.TryGetValue('counter-increment', spec) then CounterApplyIncrement(spec);
+    finally
+      edecls.Free;
+    end;
+  end;
+
+  // ::before — generated at the start of the element's content
+  if isElem then
+  begin
+    pb := PseudoTag(Tag, 'before');
+    if pb <> nil then Tag.Children.Insert(0, pb);
+  end;
+
+  // recurse real children in document order (pseudos already present are skipped)
   kids := TList<THTMLTag>.Create;
   try
     for c in Tag.Children do kids.Add(c);
@@ -651,11 +926,14 @@ begin
   finally
     kids.Free;
   end;
-  if (Tag.TagName = '#text') or (Tag.TagName = 'root') then Exit;
-  pb := PseudoTag(Tag, 'before');
-  if pb <> nil then Tag.Children.Insert(0, pb);
-  pa := PseudoTag(Tag, 'after');
-  if pa <> nil then Tag.Children.Add(pa);
+
+  // ::after, then release the counters this element reset (scope ends)
+  if isElem then
+  begin
+    pa := PseudoTag(Tag, 'after');
+    if pa <> nil then Tag.Children.Add(pa);
+    if pushed <> nil then begin CounterPop(pushed); pushed.Free; end;
+  end;
 end;
 
 function TLayoutEngine.FontStylesOf(const St: TComputedStyle): TTina4FontStyles;
@@ -2575,7 +2853,8 @@ var
   itemTags: TList<THTMLTag>;
   mL, mR, mT, mB, availInner, ew, eh: Single;
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
-  rowGap, colGap, frUnit, fixedSum, frSum, cellW, cellH, colXk, rowYr, defH: Single;
+  rowGap, colGap, frUnit, fixedSum, frSum, cellW, cellH, colXk, rowYr, defH, jOff, aOff, freeRows: Single;
+  jsx, asx: string;   // resolved grid item justify / align (inline / block)
   trackW, trackFr, colX, rowH, rowFr: array of Single;
   trackFixed: array of Boolean;
   rowIsFr: array of Boolean;
@@ -2880,7 +3159,13 @@ begin
       cellW := colGap * (span - 1);
       for k := curCol to Min(curCol + span - 1, ncols - 1) do cellW := cellW + trackW[k];
 
-      cs.ExplicitWidth := cellW; cs.BoxSizing := 'border-box';
+      // justify-self (item) / justify-items (container), default stretch. Only an
+      // auto-width item stretches to the cell; an explicit width is kept and the
+      // item is aligned within the cell at paint (below).
+      jsx := cs.JustifySelf; if (jsx = '') or (jsx = 'auto') then jsx := st.JustifyItems;
+      if jsx = '' then jsx := 'stretch';
+      if (jsx = 'stretch') and (cs.ExplicitWidth = -1) then cs.ExplicitWidth := cellW;
+      cs.BoxSizing := 'border-box';
       cb := MakeReplacedBox(itemTags[i], cs, cellW);
       if (cb = nil) and IsFormControlTag(itemTags[i].TagName) then
         cb := MakeControl(itemTags[i], cs, cellW)
@@ -2976,17 +3261,45 @@ begin
       if SameText(st.BoxSizing, 'border-box') then contentH := Max(contentH, eh - edgeT - edgeB)
       else contentH := Max(contentH, eh);
     end;
+    // align-content: stretch (default) — a definite height taller than the auto
+    // rows grows them to fill it, so cells give align-self room to centre/end.
+    if (nrows > 0) and (Trim(st.GridTemplateRows) = '') and (Trim(st.GridAutoRows) = '')
+       and ((LowerCase(st.AlignContent) = '') or (LowerCase(st.AlignContent) = 'stretch')) then
+    begin
+      freeRows := contentH - rowGap * Max(0, nrows - 1);
+      for k := 0 to nrows - 1 do freeRows := freeRows - rowH[k];
+      if freeRows > 0 then
+        for k := 0 to nrows - 1 do rowH[k] := rowH[k] + freeRows / nrows;
+    end;
 
     for i := 0 to itemTags.Count - 1 do
     begin
       cb := box.Children[i];
       rowYr := contentY;
       for k := 0 to iRow[i] - 1 do rowYr := rowYr + rowH[k] + rowGap;
-      // stretch to the cell: one row, or the sum of spanned rows (+ inner gaps)
+      // cell height: one row, or the sum of spanned rows (+ inner gaps)
       cellH := rowGap * (iRowSpan[i] - 1);
       for k := iRow[i] to Min(iRow[i] + iRowSpan[i] - 1, nrows - 1) do cellH := cellH + rowH[k];
-      if cb.H < cellH then cb.H := cellH;
-      ShiftBoxTree(cb, colX[iCol[i]] - cb.X, rowYr - cb.Y);
+      // cell width: spanned columns (+ their gaps)
+      cellW := colGap * (iSpan[i] - 1);
+      for k := iCol[i] to Min(iCol[i] + iSpan[i] - 1, ncols - 1) do cellW := cellW + trackW[k];
+      // align-self (item) / align-items (container), block axis; default stretch
+      asx := cb.Style.AlignSelf; if (asx = '') or (asx = 'auto') then asx := st.AlignItems;
+      if asx = '' then asx := 'stretch';
+      if (asx = 'stretch') and (ResolveSize(cb.Style.ExplicitHeight, 0) < 0) then
+      begin if cb.H < cellH then cb.H := cellH; aOff := 0; end
+      else if asx = 'center' then aOff := (cellH - cb.H) / 2
+      else if (asx = 'end') or (asx = 'flex-end') or (asx = 'self-end') then aOff := cellH - cb.H
+      else aOff := 0;   // start
+      // justify (inline axis): resolved earlier as jsx during build
+      jsx := cb.Style.JustifySelf; if (jsx = '') or (jsx = 'auto') then jsx := st.JustifyItems;
+      if jsx = '' then jsx := 'stretch';
+      if jsx = 'center' then jOff := (cellW - cb.W) / 2
+      else if (jsx = 'end') or (jsx = 'flex-end') or (jsx = 'self-end') then jOff := cellW - cb.W
+      else jOff := 0;   // start / stretch (already filled)
+      if jOff < 0 then jOff := 0;
+      if aOff < 0 then aOff := 0;
+      ShiftBoxTree(cb, colX[iCol[i]] + jOff - cb.X, rowYr + aOff - cb.Y);
     end;
 
     box.H := contentH + edgeT + edgeB;
@@ -4879,7 +5192,11 @@ begin
   // Tier-1 custom elements: expand registered template tags into their markup
   // BEFORE pseudos/layout, idempotently each Build (same pattern as InjectPseudo).
   if HasCustomElements(body) then ExpandCustomElements(body);
-  if (FSheet <> nil) and FSheet.HasPseudo then InjectPseudo(body);
+  if (FSheet <> nil) and (FSheet.HasPseudo or FSheet.HasCounters) then
+  begin
+    ResetCounterState;   // counters restart each Build (document-order traversal)
+    InjectPseudo(body);
+  end;
   Result := TLayoutBox.Create;
   Result.Tag := body;
   Result.Style := TComputedStyle.ForTag(body, base, FSheet);

@@ -63,6 +63,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | grid-column, grid-row | ✅ | explicit start line + span, or `N / M`; occupancy-aware auto-placement around them |
 | grid-template-rows | ✅ | px / % / fr / auto row tracks. fr and % resolve against a definite container height and distribute the leftover; with an indefinite height they fall back to content size (matches Chrome) |
 | grid-template-areas, grid-area | ✅ | `"a a b" "a a c"` named-area template; an item's `grid-area: name` is placed at that area's bounding cell rect (row/col start + span). Single or double quotes |
+| justify-items, justify-self | ✅ | grid item inline-axis alignment within its cell: stretch (default — auto-width fills the track), start/center/end. `justify-self` overrides `justify-items` per item. Reftest `grid-place-items` |
+| place-items, place-self, place-content | ✅ | shorthands: `<align> [<justify>]` (one value = both axes) → align-items/justify-items, align-self/justify-self, align-content/justify-content. Longhands still override. Reftest `grid-place-items` |
 
 ## Typography
 
@@ -112,7 +114,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | background: conic-gradient() | ✅ | angular sweep (`from <angle>`, `at` center); per-pixel software fill (`FillGradientSoft`, `ArcTan2` angle → stop) blitted via `DrawRGBA`, rounded-clipped |
 | background: repeating-linear-gradient() | ✅ | stop pattern tiled by its px period (`Frac(proj/period)`); same soft-gradient path |
 | background-clip: text, -webkit-background-clip | ✅ | the background is suppressed and painted **into the glyphs** — each glyph is a solid sample of the gradient at its position along the CSS axis (per-glyph, UTF-8 aware). Close approximation of the true text mask |
-| content (::before / ::after) | ✅ | generated-content pseudo-elements synthesised into the tree (`CollectPseudoStyle` + layout `InjectPseudo`): the matching `base::before`/`::after` rule's declarations bake into the pseudo box, the unquoted `content` becomes its text. Handles `content:""` (e.g. a badge dot) and blockifies an absolutely-positioned pseudo. `attr()` / counters not yet |
+| content (::before / ::after) | ✅ | generated-content pseudo-elements synthesised into the tree (`CollectPseudoStyle` + layout `InjectPseudo`): the matching `base::before`/`::after` rule's declarations bake into the pseudo box, the `content` value resolves to text. Handles `content:""` (e.g. a badge dot) and blockifies an absolutely-positioned pseudo. The value tokeniser concatenates quoted string literals with `counter()`, `counters()` and `attr()` results |
+| counter-reset, counter-increment | ✅ | `content: counter(name[, style])` and `counters(name, "sep"[, style])`. Document-order traversal in `InjectPseudo` keeps a nesting **stack** per counter — reset pushes a level, increment adds to the innermost, the element's resets pop when its scope ends — so nested `counters(item,".")` yields 1 / 1.1 / 1.2 / 2. Styles: decimal (default), decimal-leading-zero, lower/upper-roman, lower/upper-alpha(latin). Reftests `css-counter-section`, `css-counter-nested`, `css-counter-roman` |
 | box-shadow | ✅ | soft blur (NSShadow) + spread + corner-radius aware, outset; inset still TODO |
 | outline (+ width/style/color/offset) | ✅ | painted: stroke outside the border box, offset by outline-offset (dashed→solid) |
 
@@ -153,6 +156,11 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | Property | Status | Note |
 |---|---|---|
 | :hover / :active / :focus / :checked | ✅ | matcher + runtime state, end-to-end |
+| :first-child, :last-child, :only-child | ✅ | position among element siblings (#text and injected pseudo nodes skipped). Reftest `css-first-last-child` |
+| :nth-child(), :nth-last-child() | ✅ | full An+B micro-syntax: `odd`/`even`, `2n`, `2n+1`, `3`, `n`, `-n+3`. Reftest `css-nth-child` |
+| :first-of-type, :last-of-type, :only-of-type, :nth-of-type(), :nth-last-of-type() | ✅ | same as the -child variants but counted only among same-tag siblings. Reftest `css-nth-of-type` |
+| combinators: descendant, `>`, `+`, `~` | ✅ | selectors tokenise into simple selectors + combinators (`TokenizeSelector`); the matcher walks leftward from the subject honouring each — child = direct parent, adjacent = immediately-preceding element sibling, general = any preceding sibling (greedy). Rule routing keys off the tokenized subject so `div>p` (no spaces) still indexes correctly. Reftests `css-child-combinator`, `css-adjacent-sibling`, `css-general-sibling` |
+| :not() | ✅ | negation of a simple inner selector, extracted paren-aware so `:not(:last-child)` (nested colon) parses; the inner may be a tag, class, id, `[attr]` or structural pseudo. Multiple `:not()` on one selector combine. Reftests `css-not-class`, `css-not-lastchild` |
 | appearance: none | ✅ | radios/checkboxes render as styled boxes |
 | cursor | ✅ | desktop shells set the native OS pointer (pointer/text/move/grab/resize/crosshair/not-allowed/none…); inherits down the DOM. Touch shells ignore it |
 | pointer-events | ✅ | `none` makes the box + subtree transparent to hit-testing (clicks pass through) |
