@@ -346,6 +346,7 @@ type
     OverflowWrap: string;
     Hyphens: string;   // 'manual' (default) | 'none' | 'auto' — inherited
     TextOverflow: string;
+    LineClamp: Integer;   // -webkit-line-clamp: max lines before clipping (0 = none)
     BoxShadow: TBoxShadow;                 // first shadow (compat); full list below
     BoxShadows: array[0..7] of TBoxShadow; // all comma-separated shadows, [0] = on top
     BoxShadowCount: Integer;               // number of shadows in BoxShadows
@@ -378,6 +379,7 @@ type
     // CSS Grid (subset)
     GridTemplateColumns: string;  // track list: px / % / fr / repeat(n, size) / auto
     GridTemplateRows: string;
+    GridAutoRows: string;    // implicit-row track size (grid-auto-rows)
     GridColumn: string;           // item placement: 'span N' (start/end lines TBD)
     GridRow: string;
     GridTemplateAreas: string;    // raw "…" "…" rows on the container
@@ -454,7 +456,7 @@ type
     function MaxCornerRadius: Single;
     class function Default: TComputedStyle; static;
     class function ForTag(Tag: THTMLTag; const ParentStyle: TComputedStyle; StyleSheet: TCSSStyleSheet = nil): TComputedStyle; static;
-    class procedure ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle); static;
+    class procedure ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle; GlobalVars: TDictionary<string, string> = nil); static;
     { Apply a raw "k:v;k:v" declaration block onto a copy of Base (used to resolve
       a @keyframes stop's transform/opacity/colours). }
     class function ResolveBlock(const Block: string; const Base: TComputedStyle): TComputedStyle; static;
@@ -2417,7 +2419,7 @@ begin
   Result.WordBreak := 'normal';
   Result.OverflowWrap := 'normal';
   Result.Hyphens := 'manual';
-  Result.TextOverflow := 'clip';
+  Result.TextOverflow := 'clip'; Result.LineClamp := 0;
   Result.BoxShadow.Active := False;
   Result.BoxShadowCount := 0;
   Result.ObjectFit := 'fill';
@@ -2444,7 +2446,7 @@ begin
   Result.FlexBasis := -1;
   Result.FlexGap := 0;
   Result.AlignSelf := ''; Result.CSSOrder := 0;
-  Result.GridTemplateColumns := ''; Result.GridTemplateRows := '';
+  Result.GridTemplateColumns := ''; Result.GridTemplateRows := ''; Result.GridAutoRows := '';
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
   Result.TextShadowActive := False;
@@ -2748,6 +2750,15 @@ begin
   begin
     Result := StrToFloatDef(Str.Replace('em', ''), 0) * EmSize;
   end
+  // viewport units — resolve against the ICB set by SetCalcContext (0 before then)
+  else if Str.EndsWith('vmin') then
+    Result := StrToFloatDef(Str.Replace('vmin', ''), 0) * Min(GCalcVpW, GCalcVpH) / 100
+  else if Str.EndsWith('vmax') then
+    Result := StrToFloatDef(Str.Replace('vmax', ''), 0) * Max(GCalcVpW, GCalcVpH) / 100
+  else if Str.EndsWith('vh') then
+    Result := StrToFloatDef(Str.Replace('vh', ''), 0) * GCalcVpH / 100
+  else if Str.EndsWith('vw') then
+    Result := StrToFloatDef(Str.Replace('vw', ''), 0) * GCalcVpW / 100
   else if Str.EndsWith('px') then
   begin
     Result := StrToFloatDef(Str.Replace('px', ''), 0);
@@ -2818,6 +2829,65 @@ begin
     Exit;
   end;
   Result := 1.0;
+end;
+
+{ Pull background-position / -size / -repeat out of a `background` shorthand once
+  its url(...) has been removed (so the path's '/' doesn't split the size).
+  Colour and other tokens are skipped. Mirrors the three longhand parsers. }
+procedure ApplyBgShorthandParts(const S: string; EmSize: Single; var Style: TComputedStyle);
+var
+  low, posStr, sizeStr, t: string;
+  slashPos, n: Integer;
+  vals, szvals: TArray<string>;
+  function IsNum(const x: string): Boolean;
+  begin Result := (x <> '') and CharInSet(x[1], ['0'..'9', '.', '-', '+']); end;
+  function IsPosTok(const x: string): Boolean;
+  begin Result := (x = 'left') or (x = 'right') or (x = 'top') or (x = 'bottom')
+                  or (x = 'center') or IsNum(x); end;
+begin
+  low := S.ToLower;
+  // repeat keyword (check the compound forms before bare `repeat`)
+  if low.Contains('no-repeat') then Style.BgRepeat := 'no-repeat'
+  else if low.Contains('repeat-x') then Style.BgRepeat := 'repeat-x'
+  else if low.Contains('repeat-y') then Style.BgRepeat := 'repeat-y'
+  else if low.Contains('space') then Style.BgRepeat := 'space'
+  else if low.Contains('round') then Style.BgRepeat := 'round'
+  else if low.Contains('repeat') then Style.BgRepeat := 'repeat';
+  // position [ / size ]: everything before the first '/' holds the position
+  slashPos := S.IndexOf('/');
+  if slashPos >= 0 then posStr := S.Substring(0, slashPos) else posStr := S;
+  SetLength(vals, 0);
+  for t in posStr.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+    if IsPosTok(t) then begin SetLength(vals, Length(vals) + 1); vals[High(vals)] := t; end;
+  n := Length(vals);
+  if n >= 1 then
+  begin
+    if vals[0] = 'left' then Style.BgPosX := 0
+    else if vals[0] = 'center' then begin Style.BgPosX := -50; if n = 1 then Style.BgPosY := -50; end
+    else if vals[0] = 'right' then Style.BgPosX := -100
+    else if vals[0] = 'top' then Style.BgPosY := 0            // a lone vertical keyword
+    else if vals[0] = 'bottom' then Style.BgPosY := -100
+    else Style.BgPosX := TComputedStyle.ParseLength(vals[0], EmSize);
+    if n >= 2 then
+    begin
+      if vals[1] = 'top' then Style.BgPosY := 0
+      else if vals[1] = 'center' then Style.BgPosY := -50
+      else if vals[1] = 'bottom' then Style.BgPosY := -100
+      else Style.BgPosY := TComputedStyle.ParseLength(vals[1], EmSize);
+    end;
+  end;
+  // size: the token(s) right after '/', up to the first non-size token
+  if slashPos >= 0 then
+  begin
+    sizeStr := S.Substring(slashPos + 1).Trim;
+    SetLength(szvals, 0);
+    for t in sizeStr.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+      if (t = 'cover') or (t = 'contain') or (t = 'auto') or IsNum(t) then
+      begin SetLength(szvals, Length(szvals) + 1); szvals[High(szvals)] := t; end
+      else Break;                                            // stop at repeat/attachment/etc.
+    if Length(szvals) = 1 then Style.BackgroundSize := szvals[0]
+    else if Length(szvals) >= 2 then Style.BackgroundSize := szvals[0] + ' ' + szvals[1];
+  end;
 end;
 
 class function TComputedStyle.ForTag(Tag: THTMLTag; const ParentStyle: TComputedStyle; StyleSheet: TCSSStyleSheet): TComputedStyle;
@@ -2918,7 +2988,7 @@ begin
   Result.Overflow := 'visible';
   Result.OverflowX := 'visible';
   Result.OverflowY := 'visible';
-  Result.TextOverflow := 'clip';
+  Result.TextOverflow := 'clip'; Result.LineClamp := 0;
   Result.ObjectFit := 'fill';
   Result.BackgroundImage := '';
   Result.BackgroundSize := 'auto';
@@ -2943,7 +3013,7 @@ begin
   Result.FlexBasis := -1;
   Result.FlexGap := 0;
   Result.AlignSelf := ''; Result.CSSOrder := 0;
-  Result.GridTemplateColumns := ''; Result.GridTemplateRows := '';
+  Result.GridTemplateColumns := ''; Result.GridTemplateRows := ''; Result.GridAutoRows := '';
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
   Result.TextShadowActive := False;
@@ -3294,9 +3364,13 @@ begin
     end;
   end;
 
-  // Inline style overrides (highest priority)
+  // Inline style overrides (highest priority). Pass the sheet's global custom
+  // properties so an inline var(--brand) resolves against :root design tokens.
   if Tag.Style.Count > 0 then
-    ApplyDeclarations(Tag.Style, Result, ParentStyle);
+    if StyleSheet <> nil then
+      ApplyDeclarations(Tag.Style, Result, ParentStyle, StyleSheet.CustomProps)
+    else
+      ApplyDeclarations(Tag.Style, Result, ParentStyle, nil);
 
   // the `hidden` attribute is equivalent to display:none
   if Tag.HasAttribute('hidden') then
@@ -3713,11 +3787,45 @@ begin
   if Length(nums) >= 4 then Result.SpreadRadius := nums[3];
 end;
 
-class procedure TComputedStyle.ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle);
+{ Substitute var(--name[, fallback]) in a value against Props (recursively). A
+  standalone twin of TCSSStyleSheet.ResolveVarWith for the inline-style path. }
+function ResolveVarStr(const Value: string; Props: TDictionary<string, string>): string;
+var VarStart, VarEnd, CommaPos: Integer; VarExpr, VarName, Fallback, Resolved: string;
+begin
+  Result := Value;
+  VarStart := Result.IndexOf('var(');
+  while VarStart >= 0 do
+  begin
+    VarEnd := Result.IndexOf(')', VarStart + 4);
+    if VarEnd < 0 then Break;
+    VarExpr := Result.Substring(VarStart + 4, VarEnd - VarStart - 4).Trim;
+    CommaPos := VarExpr.IndexOf(',');
+    if CommaPos >= 0 then
+    begin VarName := VarExpr.Substring(0, CommaPos).Trim; Fallback := VarExpr.Substring(CommaPos + 1).Trim; end
+    else begin VarName := VarExpr; Fallback := ''; end;
+    if Props.TryGetValue(VarName, Resolved) then
+    begin
+      if Resolved.Contains('var(') then Resolved := ResolveVarStr(Resolved, Props);
+      Result := Result.Substring(0, VarStart) + Resolved + Result.Substring(VarEnd + 1);
+    end
+    else if Fallback <> '' then
+      Result := Result.Substring(0, VarStart) + Fallback + Result.Substring(VarEnd + 1)
+    else Break;
+    VarStart := Result.IndexOf('var(');
+  end;
+end;
+
+class procedure TComputedStyle.ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle; GlobalVars: TDictionary<string, string>);
 var
   Temp: string;
+  VarProps, ResolvedDecls: TDictionary<string, string>;
+  DKV: TPair<string, string>;
+  HadVar: Boolean;
   BgVal, ColorPart: string;
   UrlPos: Integer;
+  BgRest: string;
+  BgLayers: TArray<string>;
+  i: Integer;
   LH: Single;
   BParts, RParts, OvParts, SParts, OParts, FlexParts, TsParts, BgParts, GArgs, InsetParts, TfArgs: TStringArray;
   BP, BT, SP, ST, OP, OT, TsP, TsT, GArg, OvPart: string;
@@ -3746,6 +3854,31 @@ var
   end;
 
 begin
+  // Inline var(): resolve var(--x) against the element's own custom properties
+  // before applying (stylesheet/:root-scoped vars are already resolved upstream).
+  // Covers `style="--c:red; background:var(--c)"`.
+  HadVar := False;
+  for DKV in Decls do
+    if DKV.Value.Contains('var(') then begin HadVar := True; Break; end;
+  if HadVar then
+  begin
+    VarProps := TDictionary<string, string>.Create;
+    ResolvedDecls := TDictionary<string, string>.Create;
+    try
+      // global (:root / stylesheet) custom properties first, then the element's
+      // own inline --props override them.
+      if GlobalVars <> nil then
+        for DKV in GlobalVars do VarProps.AddOrSetValue(DKV.Key, DKV.Value);
+      for DKV in Decls do
+        if DKV.Key.StartsWith('--') then VarProps.AddOrSetValue(DKV.Key, DKV.Value);
+      for DKV in Decls do
+        if DKV.Value.Contains('var(') then
+          ResolvedDecls.AddOrSetValue(DKV.Key, ResolveVarStr(DKV.Value, VarProps));
+      for DKV in ResolvedDecls do Decls.AddOrSetValue(DKV.Key, DKV.Value);   // mutate after iterating
+    finally
+      ResolvedDecls.Free; VarProps.Free;
+    end;
+  end;
   if Decls.TryGetValue('color', Temp) and not ShouldSkip(Temp) then
     Style.Color := ParseColor(Temp);
   if Decls.TryGetValue('background-color', Temp) and not ShouldSkip(Temp) then
@@ -3765,10 +3898,32 @@ begin
         if ColorPart <> '' then
           Style.BackgroundColor := ParseColor(ColorPart);
       end;
+      // position / size / repeat from the shorthand — strip url(...) first so
+      // its path '/' doesn't split the size (e.g. `url(x) center/cover no-repeat`)
+      BgRest := BgVal;
+      UrlPos := BgRest.ToLower.IndexOf('url(');
+      if UrlPos >= 0 then
+      begin
+        i := BgRest.IndexOf(')', UrlPos);
+        if i > UrlPos then BgRest := BgRest.Remove(UrlPos, i - UrlPos + 1);
+      end;
+      ApplyBgShorthandParts(BgRest, Style.FontSize, Style);
     end
-    else if not BgVal.ToLower.Contains('gradient(') then
-      // a gradient value is handled by the gradient parser below; don't let
-      // ParseColor turn it into a bogus solid colour
+    else if BgVal.ToLower.Contains('gradient(') then
+    begin
+      // a `<gradient>, <colour>` layer list: the trailing solid colour is the
+      // background-color (bottom layer); the gradient (parsed below) paints on
+      // top. Split at top level so the gradient's own commas don't interfere.
+      BgLayers := SplitTopLevelCommas(BgVal);
+      if Length(BgLayers) >= 2 then
+      begin
+        BgRest := BgLayers[High(BgLayers)].Trim;
+        if (not BgRest.ToLower.Contains('gradient(')) and (not BgRest.ToLower.Contains('url(')) then
+          Style.BackgroundColor := ParseColor(BgRest);
+      end;
+    end
+    else
+      // a plain solid colour
       Style.BackgroundColor := ParseColor(BgVal);
   end;
   if Decls.TryGetValue('font-family', Temp) and not ShouldSkip(Temp) then
@@ -4330,6 +4485,8 @@ begin
 
   if Decls.TryGetValue('text-overflow', Temp) and not ShouldSkip(Temp) then
     Style.TextOverflow := Temp.ToLower;
+  if (Decls.TryGetValue('-webkit-line-clamp', Temp) or Decls.TryGetValue('line-clamp', Temp)) and not ShouldSkip(Temp) then
+    Style.LineClamp := StrToIntDef(Trim(Temp), 0);
 
   // box-shadow: one or more (comma-separated) shadows, each
   //   [inset] offsetX offsetY [blur [spread]] [color]   — first listed paints on top
@@ -4456,6 +4613,8 @@ begin
     Style.GridTemplateColumns := Temp.Trim.ToLower;
   if Decls.TryGetValue('grid-template-rows', Temp) and not ShouldSkip(Temp) then
     Style.GridTemplateRows := Temp.Trim.ToLower;
+  if Decls.TryGetValue('grid-auto-rows', Temp) and not ShouldSkip(Temp) then
+    Style.GridAutoRows := Temp.Trim.ToLower;
   if Decls.TryGetValue('grid-column', Temp) and not ShouldSkip(Temp) then
     Style.GridColumn := Temp.Trim.ToLower;
   if Decls.TryGetValue('grid-row', Temp) and not ShouldSkip(Temp) then

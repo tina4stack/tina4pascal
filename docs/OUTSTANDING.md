@@ -13,7 +13,10 @@ Effort key: **S** small · **M** medium · **L** large.
 
 ## A. Rendering fidelity — software / raster path
 macOS + iOS (CoreGraphics) are complete here; these are the software compositor
-(Windows/Linux) and pure-raster (Android/watch) gaps.
+(Windows/Linux) and pure-raster (Android/watch) gaps. These can't be proven from
+a macOS `--snapshot` (it always takes the Cocoa path) — **`docs/CATEGORY-A-LINUX-TESTING.md`**
+is the concrete plan to verify the three remaining items on Linux/Xlib (build,
+`Xvfb` snapshot via `LinSaveBmp`, per-item diff-vs-Chrome, gate integration).
 
 - ~~**[M] Advanced blend modes**~~ — **DONE (raster + shared).** The shared
   `BlendRGB` (`Tina4RenderBackend`) now covers all separable modes (dodge/burn
@@ -50,11 +53,14 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
 ## B. Text & internationalization
 Nearly all of B is done: `hyphens: manual`, `font-variant: small-caps`, `ruby`,
 `font-stretch`, **bidi** (line-level UBA reorder, mirrored punctuation,
-`<bdo>`/`<bdi>`), and **`writing-mode: vertical-rl`** (real column block-flow).
-What remains is data-dependent or niche — `hyphens: auto` (needs a hyphenation
-dictionary), `writing-mode: vertical-lr` + upright CJK orientation, per-character
-bidi + `unicode-bidi` control codes, and accents/CJK on the pure-raster stroke
-font — left honestly open rather than shipped as a low-quality hack.
+`<bdo>`/`<bdi>`, **per-character direction within a token** via the shaping
+backend), and **`writing-mode: vertical-rl` *and* `vertical-lr`** (real column
+block-flow, both directions). What remains is data-dependent or niche —
+`hyphens: auto` (needs a hyphenation dictionary), upright CJK orientation
+(`text-orientation: upright`), a vertical block without a definite height, the
+*embedding effect* of the `unicode-bidi` control codes, and accents/CJK on the
+pure-raster stroke font — left honestly open rather than shipped as a
+low-quality hack.
 
 - **[L → mostly done] Bidi / RTL** — **line-level UBA reordering DONE.** Mixed
   LTR/RTL lines are reordered logical→visual by the Unicode Bidi Algorithm L2 rule
@@ -67,17 +73,24 @@ font — left honestly open rather than shipped as a low-quality hack.
   mirroring). Native backends shape each run. Reftest `bidi-rtl-ltr`. The invisible
   `unicode-bidi` control characters (LRM/RLM/ALM, LRE/RLE/PDF/LRO/RLO,
   LRI/RLI/FSI/PDI) are stripped so they never tofu (`StripBidiControls`).
-  **Remaining:** per-character levels (mixed direction *within* one word/token),
+  **Per-character direction within one token DONE on the native path** — a token
+  that mixes scripts (e.g. `abc99שלום`) is one shaped run, so Core Text / the
+  native backend resolves its internal bidi and it pixel-matches Chrome. **Remaining:**
   the *embedding effect* of those control codes (not just their glyphs), and RTL
-  shaping on the pure-raster path. (`<bdi>`/`<bdo>` elements DONE.)
-- ~~**[L] `writing-mode` (full vertical block-flow)**~~ — **DONE for `vertical-rl`**
-  with a definite height: the inline content lays out against the height (wrapping
-  into columns) and paints 90° CW into right-to-left columns — top-to-bottom runs,
-  CW-rotated Latin glyphs, upright box background/border. Verified matching Chrome
-  (1.83%); gated so horizontal layout is untouched (155/155). **Remaining:**
-  `vertical-lr` (columns left-to-right), a `vertical-rl` block without a definite
-  height (still the flat single-line fallback), and upright CJK glyph orientation
-  (`text-orientation: upright`).
+  shaping on the pure-raster path (no shaper — the watch/Android stroke font).
+  (`<bdi>`/`<bdo>` elements DONE.)
+- ~~**[L] `writing-mode` (full vertical block-flow)**~~ — **DONE for `vertical-rl`
+  *and* `vertical-lr`** with a definite height: the inline content lays out against
+  the height (wrapping into columns) and paints 90° CW — top-to-bottom runs,
+  CW-rotated Latin glyphs, upright box background/border. `vertical-rl` fills
+  right-to-left columns; `vertical-lr` reverses the column order in layout
+  (`ReverseVColumns` reflects each line box about the content centre, half-leading
+  preserved) so the same rotation fills left-to-right columns. Both verified
+  matching Chrome (`vertical-rl` 1.83%, `vertical-lr` 5.16% raw / sub-pixel once
+  aligned); gated so horizontal layout is untouched (156/156, reftests
+  `writing-mode-vertical` + `writing-mode-vertical-lr`). **Remaining:** a vertical
+  block without a definite height (still the flat single-line fallback), and
+  upright CJK glyph orientation (`text-orientation: upright`).
 - **[S] `font-stretch`** — **DONE (synthetic).** Keywords + `<percentage>` parse to
   a factor; the run advance is scaled to match and the glyphs paint through a
   horizontal `Scale`. Carried as a `Styles` marker (no per-run field) and bucketed
@@ -102,9 +115,28 @@ font — left honestly open rather than shipped as a low-quality hack.
   for WebP still TODO.
 - **[L] PNG/JPEG on the raster path** — not decoded (needs a native shell or a
   pure-Pascal decoder) — the watch/headless gap.
-- **[M] SVG** — basic shapes/paths only; gradients, clip/mask, filters not done.
+- **[M mostly done] SVG** — shapes/paths **and fill gradients** now:
+  `<linearGradient>`/`<radialGradient>` via `fill="url(#id)"`, `<stop>`
+  offset/stop-color/stop-opacity, objectBoundingBox (default) + userSpaceOnUse,
+  painted through the shared `FillLinearGradient`/`FillRadialGradient` clipped to
+  the shape (real polygon clip on Cocoa/iOS). Reftests `svg-linear-gradient` +
+  `svg-radial-gradient` (both delta 0.00% vs the CSS-gradient ref), verified
+  matching Chrome (3.34%). **`clip-path="url(#id)"` also done** — clips an element
+  or a `<g>` subtree to a `<clipPath>`'s first shape (userSpaceOnUse) via the
+  polygon clip; reftest `svg-clip-path` (delta 0.00%), verified 0.00% vs Chrome
+  on a circle-clipped rect + a rect-clipped group. **`<use href="#id" x y>` also done** — re-paints a referenced
+  element (incl. from `<defs>`), translated, inheriting the use's presentation,
+  cycle-guarded; reftest `svg-use` (delta 0.00%). Remaining: `gradientTransform`,
+  `spreadMethod`, `href` stop-inheritance, gradient *strokes*, multi-shape/
+  objectBoundingBox clipPaths, mask, filters, patterns, `<use>` width/height.
 - **[S] Lottie** — no gradient support.
-- **[S] Canvas2D** — image draw axis-aligned only (rotate/scale TODO).
+- ~~**[S] Canvas2D image transforms**~~ — **DONE.** `drawImage` now honours the
+  2D context matrix: an axis-aligned matrix (translate + scale, incl. flip) maps
+  both corners through the CTM so the drawn size follows `ctx.scale` on every
+  backend; rotation/skew draw through the full user→device matrix
+  (`TransformMatrix`, honoured on Cocoa/iOS — degrades to axis-aligned where the
+  shell has no device transform, same as CSS transforms there). Verified via a
+  runtime Cocoa snapshot (natural / 1.5× scaled / 35°-rotated all correct).
 - **[S] `<video>` (macOS)** — `AVPlayerView` loop TODO + GUI-run verify pending.
 
 ## D. Capture stack (per-shell)
@@ -152,10 +184,17 @@ font — left honestly open rather than shipped as a low-quality hack.
   is the fix; the backing-store is still TODO.
 
 ## H. Interaction model
+- ~~**[S] `<a href>` scheme links**~~ — **DONE.** A click on an anchor with no
+  `onclick`/control fires the core link hook (`Tina4InvokeLink`, OS-free); the
+  shell-side `Tina4LinkOpen` opener hands the URL to the OS by scheme
+  (`tel:`→dialer, `mailto:`→mail, `sms:`→messages, `http(s):`→browser, `geo:`/
+  `maps:`→maps) via `open`/`ShellExecute`/`xdg-open`. Wired in htmlviewer
+  (`Tina4InstallLinkOpener`); verified all four schemes dispatch with exact URLs.
 - **[M] `user-select` / `resize`** — parsed-ignored (no selection model / resize).
 - **[L] Shadow DOM / `<slot>`** — passthrough only.
 
 ## Testing gaps
-- The three fidelity items in **A** (blend modes, HiDPI, clip-path/transform) have
-  no tests.
+- The remaining fidelity items in **A** (desktop blend modes → shared `BlendRGB`,
+  HiDPI, clip-path/transform) have no tests on the Linux/Windows path — the plan
+  to close that is `docs/CATEGORY-A-LINUX-TESTING.md`.
 - All shell code (Swift / Objective-C / Java) is device- and build-verified only.

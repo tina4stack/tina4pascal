@@ -66,6 +66,8 @@ type
     RubyBaseline: Single;          // <ruby> atom: base baseline offset from box top (0 = not ruby)
     VerticalRL: Boolean;           // writing-mode:vertical-rl — content laid out against the
                                    // height, painted rotated 90° CW into right-to-left columns
+    VerticalLR: Boolean;           // writing-mode:vertical-lr — same CW rotation, but the
+                                   // column order is reversed in layout so columns read L→R
     constructor Create;
     destructor Destroy; override;
   end;
@@ -81,6 +83,7 @@ type
     FSheet: TCSSStyleSheet;
     FBaseStyle: TComputedStyle;
     FViewportW: Single;            // for <picture>/srcset media + sizes eval
+    FViewportH: Single;            // initial containing block height — position:fixed anchor
     FContainingH: Single;          // containing block's definite content height, or -1
                                    // (auto) — the % base for a child's height:NN%
     FSynthTags: TList<THTMLTag>;   // anonymous flex-item wrappers (freed each layout)
@@ -1792,6 +1795,43 @@ begin
     ShiftBoxTree(B.Children[i], DX, DY);
 end;
 
+{ Reverse the column (block-progression) order of a vertical writing-mode box's
+  content in place. The vertical-rl paint rotates content 90° CW, so the first
+  laid-out column (fy=0) lands rightmost — that is `vertical-rl`. For
+  `vertical-lr` the columns must read left-to-right, so each line is reflected
+  about the content's vertical centre before that same rotation runs: line k
+  (top-to-bottom) trades places with line N-1-k, its glyphs untouched. A run's
+  Y is the text top — line top plus the half-leading — so the line box is
+  reflected and the half-leading (derived from the first line, so glyphs keep
+  their place inside the line box) is re-added; reflecting the raw Y instead
+  would flip the half-leading to the wrong side and shift every column. A child
+  box reflects by its own height and its whole subtree moves with it. CTop is
+  the content top, Extent the column-axis span (the block extent the lines used). }
+procedure ReverseVColumns(B: TLayoutBox; CTop, Extent, LineH: Single);
+var
+  i: Integer;
+  r: TTextRun;
+  ch: TLayoutBox;
+  halfLead, lineTop: Single;
+begin
+  halfLead := 1.0e30;                       // offset of text within its line box
+  for i := 0 to B.Runs.Count - 1 do
+    if B.Runs[i].Y - CTop < halfLead then halfLead := B.Runs[i].Y - CTop;
+  if halfLead > 1.0e29 then halfLead := 0;  // no runs
+  for i := 0 to B.Runs.Count - 1 do
+  begin
+    r := B.Runs[i];
+    lineTop := r.Y - halfLead;
+    r.Y := (CTop + (Extent - LineH) - (lineTop - CTop)) + halfLead;
+    B.Runs[i] := r;
+  end;
+  for i := 0 to B.Children.Count - 1 do
+  begin
+    ch := B.Children[i];
+    ShiftBoxTree(ch, 0, (CTop + (Extent - ch.H) - (ch.Y - CTop)) - ch.Y);
+  end;
+end;
+
 { Full inner layout for an inline-block CONTAINER (block children, explicit
   width) — e.g. side-by-side panels. Built at origin, shifted by FlushLine. }
 function TLayoutEngine.MakeInlineContainer(Tag: THTMLTag; const St: TComputedStyle;
@@ -1939,7 +1979,8 @@ var
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
   isCol: Boolean;
   dir, jc, ai, ia: string;
-  sumMain, freeMain, curr, gap, crossOff, usedFixed, sumGrow, targetW: Single;
+  sumMain, freeMain, curr, gap, crossOff, usedFixed, sumGrow, targetW, autoShare: Single;
+  autoCount: Integer;
   lineW, lineH, lineFree, lx, lgap, lineY, totalH, flexGap: Single;
   baseW, growF, shrinkF: array of Single;
   overflowMain, scaledShrink: Single;   // flex-shrink distribution (row, single-line)
@@ -1952,6 +1993,7 @@ var
   lineStartA, lineEndA: array of Integer;
   lineHA: array of Single;
   crossAvail, freeCross, startY, lineGap: Single;
+  wrapH: Single;   // column-wrap: the definite height items wrap against
 begin
   st := TComputedStyle.ForTag(Tag, ParentStyle, FSheet);
   if LowerCase(st.Display) = 'none' then Exit(0);
@@ -1985,6 +2027,15 @@ begin
   flexGap := st.FlexGap; if flexGap < 0 then flexGap := 0;   // CSS gap between items
   jc := LowerCase(st.JustifyContent); if jc = '' then jc := 'flex-start';
   ai := LowerCase(st.AlignItems); if ai = '' then ai := 'stretch';
+  // A reverse main axis moves the main-start to the FAR edge, so justify-content
+  // flex-start packs the (already order-reversed) items there — Chrome right-
+  // aligns a default row-reverse. Swap the two edge keywords; centre/space-* are
+  // symmetric and unaffected.
+  if (dir = 'row-reverse') or (dir = 'column-reverse') then
+  begin
+    if (jc = 'flex-start') or (jc = 'start') then jc := 'flex-end'
+    else if (jc = 'flex-end') or (jc = 'end') then jc := 'flex-start';
+  end;
 
   // build flex items. For a row we resolve flex-basis + flex-grow first so
   // items share the free space (the common flex:1 layout); a column keeps
@@ -2065,6 +2116,15 @@ begin
         begin
           baseW[i] := 18; growF[i] := 0; shrinkF[i] := 0;
         end
+        else if (cs.FlexBasis <> -1) and (ResolveSize(cs.FlexBasis, contentW) >= 0) then
+        begin
+          // flex-basis is the item's base main size (content-box), taking
+          // precedence over width — px OR a percentage of the container (`25%`).
+          // auto (-1) falls through to width / content.
+          baseW[i] := ResolveSize(cs.FlexBasis, contentW);
+          if not SameText(cs.BoxSizing, 'border-box') then
+            baseW[i] := baseW[i] + cs.Padding.Horz + cs.BorderWidths.Horz;
+        end
         else if ew >= 0 then
         begin
           if not SameText(cs.BoxSizing, 'border-box') then
@@ -2072,7 +2132,7 @@ begin
           baseW[i] := ew;
         end
         else if growF[i] > 0 then
-          baseW[i] := 0                        // flex:1 → basis 0
+          baseW[i] := 0                        // flex-grow with basis:auto → 0 base
         else
         begin                                   // content width (single line)
           sb := TStringBuilder.Create;
@@ -2103,15 +2163,17 @@ begin
       begin
         cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
         targetW := baseW[i];
-        // grow only when NOT wrapping (wrapped items keep their base size)
-        if (growF[i] > 0) and (sumGrow > 0) and
-           not ((LowerCase(st.FlexWrap) = 'wrap') or (LowerCase(st.FlexWrap) = 'wrap-reverse')) then
-          targetW := targetW + freeMain * growF[i] / sumGrow
-        else if (overflowMain > 0) and (scaledShrink > 0) and (shrinkF[i] > 0) then
+        // shrink FIRST: on overflow, items shrink even when they also flex-grow
+        // (grow only ever adds positive free space, which overflow has none of).
+        if (overflowMain > 0) and (scaledShrink > 0) and (shrinkF[i] > 0) then
         begin
           targetW := baseW[i] - overflowMain * (shrinkF[i] * baseW[i]) / scaledShrink;
           if targetW < 0 then targetW := 0;
-        end;
+        end
+        // grow only when NOT wrapping (wrapped items keep their base size)
+        else if (growF[i] > 0) and (sumGrow > 0) and
+           not ((LowerCase(st.FlexWrap) = 'wrap') or (LowerCase(st.FlexWrap) = 'wrap-reverse')) then
+          targetW := targetW + freeMain * growF[i] / sumGrow;
         cs.ExplicitWidth := targetW;    // force the resolved main size
         cs.BoxSizing := 'border-box';
         cb := MakeReplacedBox(itemTags[i], cs, contentW);
@@ -2149,10 +2211,97 @@ begin
       contentH := 0;
       for i := 0 to items.Count - 1 do contentH := Max(contentH, items[i].H);
     end;
+    // the definite content-height a column wraps against (before contentH grows
+    // to the content sum below) — column-wrap needs it, and only works with one.
+    if eh >= 0 then
+    begin
+      if SameText(st.BoxSizing, 'border-box') then wrapH := Max(0, eh - edgeT - edgeB)
+      else wrapH := eh;
+    end
+    else wrapH := -1;
     if eh >= 0 then
     begin
       if SameText(st.BoxSizing, 'border-box') then contentH := Max(contentH, eh - edgeT - edgeB)
       else contentH := Max(contentH, eh);
+    end;
+
+    // flex-wrap (column): pack items down each column until the definite height
+    // is exceeded, then stack columns across the cross (horizontal) axis — the
+    // mirror of the row-wrap pass below (main=vertical, cross=horizontal). Needs
+    // a definite height; without one a column can't wrap.
+    fw := LowerCase(st.FlexWrap);
+    if isCol and (wrapH >= 0) and ((fw = 'wrap') or (fw = 'wrap-reverse')) then
+    begin
+      // pass 1: column boundaries; lineHA[] holds each column's WIDTH (max item W)
+      SetLength(lineStartA, 0); SetLength(lineEndA, 0); SetLength(lineHA, 0);
+      i := 0;
+      while i < items.Count do
+      begin
+        lineW := 0; lineEnd := i;            // lineW accumulates HEIGHT down the column
+        while (lineEnd < items.Count) and
+              ((lineEnd = i) or
+               (lineW + flexGap + items[lineEnd].H <= wrapH + 0.5)) do
+        begin
+          if lineEnd > i then lineW := lineW + flexGap;
+          lineW := lineW + items[lineEnd].H;
+          Inc(lineEnd);
+        end;
+        lineH := 0;
+        for k := i to lineEnd - 1 do lineH := Max(lineH, items[k].W);   // column width
+        nlines := Length(lineHA);
+        SetLength(lineStartA, nlines + 1); SetLength(lineEndA, nlines + 1); SetLength(lineHA, nlines + 1);
+        lineStartA[nlines] := i; lineEndA[nlines] := lineEnd; lineHA[nlines] := lineH;
+        i := lineEnd;
+      end;
+      nlines := Length(lineHA);
+      totalH := 0;                            // total WIDTH of all columns
+      for k := 0 to nlines - 1 do totalH := totalH + lineHA[k];
+      totalH := totalH + flexGap * Max(0, nlines - 1);
+      crossAvail := contentW; if crossAvail < totalH then crossAvail := totalH;
+      freeCross := crossAvail - totalH;
+      ac := LowerCase(st.AlignContent); if ac = '' then ac := 'stretch';
+      startY := contentX; lineGap := flexGap;   // startY = starting X (cross axis)
+      if freeCross > 0 then
+      begin
+        if ac = 'center' then startY := startY + freeCross / 2
+        else if (ac = 'flex-end') or (ac = 'end') then startY := startY + freeCross
+        else if (ac = 'space-between') and (nlines > 1) then lineGap := flexGap + freeCross / (nlines - 1)
+        else if (ac = 'space-around') and (nlines > 0) then
+        begin startY := startY + freeCross / (nlines * 2); lineGap := flexGap + freeCross / nlines; end;
+      end;
+      lineY := startY;                          // running X across columns
+      for li := 0 to nlines - 1 do
+      begin
+        if fw = 'wrap-reverse' then
+        begin
+          crossOff := startY;
+          for k := 0 to nlines - 1 do
+            if k > li then crossOff := crossOff + lineHA[k] + lineGap;
+        end
+        else crossOff := lineY;                 // this column's X
+        lineFree := wrapH; for k := lineStartA[li] to lineEndA[li] - 1 do lineFree := lineFree - items[k].H;
+        lineFree := lineFree - flexGap * Max(0, (lineEndA[li] - lineStartA[li]) - 1);
+        if lineFree < 0 then lineFree := 0;
+        lx := 0; lgap := 0;                      // running Y within the column
+        if jc = 'center' then lx := lineFree / 2
+        else if (jc = 'flex-end') or (jc = 'end') then lx := lineFree
+        else if (jc = 'space-between') and (lineEndA[li] - lineStartA[li] > 1) then lgap := lineFree / (lineEndA[li] - lineStartA[li] - 1)
+        else if (jc = 'space-around') and (lineEndA[li] - lineStartA[li] > 0) then
+        begin lx := lineFree / ((lineEndA[li] - lineStartA[li]) * 2); lgap := lineFree / (lineEndA[li] - lineStartA[li]); end;
+        for k := lineStartA[li] to lineEndA[li] - 1 do
+        begin
+          cb := items[k];
+          if (ai = 'stretch') and not crossFixed[k] and (cb.W < lineHA[li]) then cb.W := lineHA[li];
+          if ai = 'center' then ShiftBoxTree(cb, crossOff + (lineHA[li] - cb.W) / 2, contentY + lx)
+          else if (ai = 'flex-end') or (ai = 'end') then ShiftBoxTree(cb, crossOff + lineHA[li] - cb.W, contentY + lx)
+          else ShiftBoxTree(cb, crossOff, contentY + lx);
+          lx := lx + cb.H + lgap + flexGap;
+        end;
+        lineY := lineY + lineHA[li] + lineGap;
+      end;
+      box.H := wrapH + edgeT + edgeB;
+      Result := box.H + mT + mB;
+      Exit;   // finally frees items/itemTags
     end;
 
     // flex-wrap (row): pack items into lines (pass 1), then stack them on the
@@ -2212,6 +2361,17 @@ begin
         lineFree := contentW; for k := lineStartA[li] to lineEndA[li] - 1 do lineFree := lineFree - items[k].W;
         lineFree := lineFree - flexGap * Max(0, (lineEndA[li] - lineStartA[li]) - 1);
         if lineFree < 0 then lineFree := 0;
+        // per-line grow: within a wrapped line, flex-grow items still fill its
+        // free space (CSS resolves grow per flex line, not just single-line).
+        sumGrow := 0;
+        for k := lineStartA[li] to lineEndA[li] - 1 do sumGrow := sumGrow + items[k].Style.FlexGrow;
+        if (sumGrow > 0) and (lineFree > 0) then
+        begin
+          for k := lineStartA[li] to lineEndA[li] - 1 do
+            if items[k].Style.FlexGrow > 0 then
+              items[k].W := items[k].W + lineFree * items[k].Style.FlexGrow / sumGrow;
+          lineFree := 0;
+        end;
         lx := 0; lgap := 0;
         if jc = 'center' then lx := lineFree / 2
         else if (jc = 'flex-end') or (jc = 'end') then lx := lineFree
@@ -2235,6 +2395,12 @@ begin
       Exit;   // finally frees items/itemTags
     end;
 
+    // column main axis = height: flex-basis sets the base height (as width does
+    // for a row) before grow/shrink distribute the container's content height.
+    if isCol then
+      for i := 0 to items.Count - 1 do
+        if (items[i].Style.FlexBasis <> -1) and (ResolveSize(items[i].Style.FlexBasis, contentH) >= 0) then
+          items[i].H := ResolveSize(items[i].Style.FlexBasis, contentH);
     // main-axis packing (single line)
     sumMain := 0;
     for i := 0 to items.Count - 1 do
@@ -2244,6 +2410,50 @@ begin
     else freeMain := contentW - sumMain;
     freeMain := freeMain - flexGap * Max(0, items.Count - 1);   // reserve gaps
     if freeMain < 0 then freeMain := 0;
+    // column: grow (fill) / shrink (overflow) items along the vertical main axis
+    // — the row path already resolves this into baseW; do the height analogue.
+    if isCol and (contentH > 0) and (items.Count > 0) then
+    begin
+      sumGrow := 0; scaledShrink := 0;
+      for i := 0 to items.Count - 1 do
+      begin
+        sumGrow := sumGrow + items[i].Style.FlexGrow;
+        scaledShrink := scaledShrink + items[i].Style.FlexShrink * items[i].H;
+      end;
+      overflowMain := sumMain + flexGap * Max(0, items.Count - 1) - contentH;
+      if (freeMain > 0) and (sumGrow > 0) then
+      begin
+        for i := 0 to items.Count - 1 do
+          if items[i].Style.FlexGrow > 0 then
+            items[i].H := items[i].H + freeMain * items[i].Style.FlexGrow / sumGrow;
+        freeMain := 0;
+      end
+      else if (overflowMain > 0.5) and (scaledShrink > 0) then
+        for i := 0 to items.Count - 1 do
+          if items[i].Style.FlexShrink > 0 then
+          begin
+            items[i].H := items[i].H - overflowMain * (items[i].Style.FlexShrink * items[i].H) / scaledShrink;
+            if items[i].H < 0 then items[i].H := 0;
+          end;
+    end;
+
+    // auto margins on the main axis absorb the free space (margin-left:auto pushes
+    // an item to the end) and override justify-content's distribution.
+    autoCount := 0;
+    for i := 0 to items.Count - 1 do
+      if isCol then
+      begin
+        if items[i].Style.Margin.Top = -1 then Inc(autoCount);
+        if items[i].Style.Margin.Bottom = -1 then Inc(autoCount);
+      end
+      else
+      begin
+        if items[i].Style.Margin.Left = -1 then Inc(autoCount);
+        if items[i].Style.Margin.Right = -1 then Inc(autoCount);
+      end;
+    autoShare := 0;
+    if (autoCount > 0) and (freeMain > 0) then
+    begin autoShare := freeMain / autoCount; freeMain := 0; end;   // consumed; none left for jc
 
     curr := 0; gap := 0;
     if (jc = 'center') then curr := freeMain / 2
@@ -2262,6 +2472,7 @@ begin
       if (ia = '') or (ia = 'auto') then ia := ai;
       if isCol then
       begin
+        if cb.Style.Margin.Top = -1 then curr := curr + autoShare;   // leading auto margin
         // cross axis = horizontal
         if (ia = 'stretch') and not crossFixed[i] and (cb.W < contentW) then
           cb.W := contentW;                       // stretch: fill the cross axis
@@ -2270,9 +2481,11 @@ begin
         else crossOff := 0;
         ShiftBoxTree(cb, contentX + crossOff, contentY + curr);
         curr := curr + cb.H + gap + flexGap;
+        if cb.Style.Margin.Bottom = -1 then curr := curr + autoShare;   // trailing auto margin
       end
       else
       begin
+        if cb.Style.Margin.Left = -1 then curr := curr + autoShare;   // leading auto margin
         // cross axis = vertical
         if (ia = 'stretch') and not crossFixed[i] and (cb.H < contentH) then
           cb.H := contentH;                       // stretch: equal-height items
@@ -2281,6 +2494,7 @@ begin
         else crossOff := 0;
         ShiftBoxTree(cb, contentX + curr, contentY + crossOff);
         curr := curr + cb.W + gap + flexGap;
+        if cb.Style.Margin.Right = -1 then curr := curr + autoShare;   // trailing auto margin
       end;
     end;
 
@@ -2293,10 +2507,29 @@ begin
 end;
 
 { Expand repeat(n, tracklist) in a grid-template track spec into the flat list. }
-function ExpandGridRepeat(const Spec: string): string;
+{ The min track size of a repeat() list item, for auto-fit/auto-fill counting —
+  a minmax(min,…) floor or a plain length. 0 when it can't be sized here. }
+function GridTrackMin(const Spec: string): Single;
+var s: string; c: Integer;
+begin
+  s := Trim(Spec);
+  if LowerCase(s).StartsWith('minmax(') then
+  begin
+    s := Copy(s, 8, Length(s) - 8);
+    c := Pos(',', s); if c > 0 then s := Copy(s, 1, c - 1);
+    s := Trim(s);
+  end;
+  if s.EndsWith('px') then Result := StrToFloatDef(Copy(s, 1, Length(s) - 2), 0)
+  else if (s <> '') and CharInSet(s[1], ['0'..'9', '.']) and (not s.EndsWith('%')) and (not s.EndsWith('fr')) then
+    Result := StrToFloatDef(s, 0)
+  else Result := 0;   // %, fr, auto, content — not countable without more context
+end;
+
+function ExpandGridRepeat(const Spec: string; AvailW: Single = 0; Gap: Single = 0): string;
 var
   p, depth, comma, close, n, j: Integer;
   head, inner, cntStr, listStr, tail: string;
+  minSz: Single;
 begin
   Result := Spec;
   p := Pos('repeat(', LowerCase(Result));
@@ -2316,7 +2549,13 @@ begin
     cntStr := Trim(Copy(Result, p + 7, comma - (p + 7)));
     listStr := Trim(Copy(Result, comma + 1, close - comma - 1));
     tail := Copy(Result, close + 1, MaxInt);
-    n := StrToIntDef(cntStr, 1);
+    if LowerCase(cntStr).StartsWith('auto-f') and (AvailW > 0) then
+    begin
+      // auto-fit / auto-fill: as many tracks of the min size as fit the row
+      minSz := GridTrackMin(listStr);
+      if minSz > 0 then n := Max(1, Floor((AvailW + Gap) / (minSz + Gap))) else n := 1;
+    end
+    else n := StrToIntDef(cntStr, 1);
     inner := '';
     for j := 1 to n do inner := inner + ' ' + listStr;
     Result := head + inner + ' ' + tail;
@@ -2340,8 +2579,9 @@ var
   trackW, trackFr, colX, rowH, rowFr: array of Single;
   trackFixed: array of Boolean;
   rowIsFr: array of Boolean;
-  ncols, nrows, i, curRow, curCol, span, k, spanRows: Integer;
+  ncols, nrows, i, curRow, curCol, span, k, spanRows, tplRows: Integer;
   colStart, rowStart, rowSpan, autoRow, autoCol: Integer;
+  autoRowH: Single;
   toks: TStringArray;
   tk: string;
   iRow, iCol, iSpan, iRowSpan: array of Integer;
@@ -2351,18 +2591,48 @@ var
 
   procedure ParseColumns(const Spec: string);
   var s: string; t: string; v: Single;
+    inner, maxTok: string; mmParts: TArray<string>;
+    function TrackLen(const tk: string): Single;   // px / % / 0 for a track length
+    var q: string;
+    begin
+      q := Trim(tk);
+      if (q = '') or (q = 'auto') or q.Contains('content') then Exit(0);
+      if q.EndsWith('%') then Result := contentW * StrToFloatDef(Copy(q, 1, Length(q) - 1), 0) / 100
+      else Result := StrToFloatDef(StringReplace(q, 'px', '', [rfReplaceAll, rfIgnoreCase]), 0);
+    end;
   begin
     ncols := 0;
     SetLength(trackFixed, 0); SetLength(trackW, 0); SetLength(trackFr, 0);
-    s := Trim(ExpandGridRepeat(Spec));
+    s := Trim(ExpandGridRepeat(Spec, contentW, colGap));
     if s = '' then Exit;
+    s := StringReplace(s, ', ', ',', [rfReplaceAll]);   // keep minmax(0, 1fr) one token
     while Pos('  ', s) > 0 do s := StringReplace(s, '  ', ' ', [rfReplaceAll]);
     toks := s.Split([' ']);
     for t in toks do
     begin
       if Trim(t) = '' then Continue;
       SetLength(trackFixed, ncols + 1); SetLength(trackW, ncols + 1); SetLength(trackFr, ncols + 1);
-      if t.EndsWith('fr') then
+      if t.ToLower.StartsWith('minmax(') then
+      begin
+        // minmax(min, max): min is the track's floor; max drives sizing — an fr
+        // max makes it flexible (floored at min), a length max pins it.
+        inner := Copy(t, 8, Length(t) - 7);
+        if inner.EndsWith(')') then Delete(inner, Length(inner), 1);
+        mmParts := inner.Split([',']);
+        if Length(mmParts) >= 1 then trackW[ncols] := TrackLen(mmParts[0]) else trackW[ncols] := 0;
+        if Length(mmParts) >= 2 then maxTok := Trim(mmParts[1]) else maxTok := '1fr';
+        if maxTok.ToLower.EndsWith('fr') then
+        begin
+          trackFixed[ncols] := False;
+          trackFr[ncols] := StrToFloatDef(Copy(maxTok, 1, Length(maxTok) - 2), 1);
+        end
+        else
+        begin
+          trackFixed[ncols] := True; trackFr[ncols] := 0;
+          trackW[ncols] := Max(trackW[ncols], TrackLen(maxTok));
+        end;
+      end
+      else if t.EndsWith('fr') then
       begin
         trackFixed[ncols] := False;
         trackFr[ncols] := StrToFloatDef(Copy(t, 1, Length(t) - 2), 1);
@@ -2539,7 +2809,7 @@ begin
   if frSum > 0 then
     frUnit := Max(0, (contentW - fixedSum - colGap * (ncols - 1))) / frSum;
   for k := 0 to ncols - 1 do
-    if not trackFixed[k] then trackW[k] := trackFr[k] * frUnit;
+    if not trackFixed[k] then trackW[k] := Max(trackW[k], trackFr[k] * frUnit);  // minmax floor
 
   // column X positions
   SetLength(colX, ncols);
@@ -2680,6 +2950,20 @@ begin
         if frUnit < 0 then frUnit := 0;
         for k := 0 to nrows - 1 do
           if rowIsFr[k] then rowH[k] := frUnit * rowFr[k];
+      end;
+    end;
+
+    // grid-auto-rows: implicit rows (beyond the explicit template, or all rows
+    // when there is none) take this track size — a px length or a minmax floor.
+    if Trim(st.GridAutoRows) <> '' then
+    begin
+      autoRowH := GridTrackMin(st.GridAutoRows);
+      if autoRowH > 0 then
+      begin
+        if Trim(st.GridTemplateRows) <> '' then
+          tplRows := Length(Trim(st.GridTemplateRows).Split([' '], TStringSplitOptions.ExcludeEmpty))
+        else tplRows := 0;
+        for k := tplRows to nrows - 1 do rowH[k] := Max(rowH[k], autoRowH);
       end;
     end;
 
@@ -3378,9 +3662,10 @@ var
         it.Box.H := it.Box.H * (CW / it.Box.W);
         it.Box.W := CW;
       end;
-      it.W := it.Box.W; it.H := it.Box.H;
+      it.W := it.Box.W;
+      it.H := it.Box.H + Max(0, cs.Margin.Top) + Max(0, cs.Margin.Bottom);   // vertical margins join the line box
       it.FontSize := cs.FontSize; it.Styles := []; it.DecorLines := 0; it.DecorStyle := 0; it.DecorColor := 0;
-      it.Ascent := it.Box.H;  // baseline at the box bottom (default vertical-align)
+      it.Ascent := Max(0, cs.Margin.Top) + it.Box.H + Max(0, cs.Margin.Bottom);
       it.SpaceBefore := (items.Count > 0) and pendingSpace;
       pendingSpace := False;
       Box.Children.Add(it.Box);
@@ -3420,9 +3705,12 @@ var
         it.Box := MakeInlineContainer(T, cs, CW)
       else
         it.Box := MakeInlineBlock(T, cs);
-      it.W := it.Box.W; it.H := it.Box.H;
+      it.W := it.Box.W;
+      // vertical margins join the line box: they grow the line height (it.H) and
+      // sit above/below the baseline (bottom margin edge, the content-less case).
+      it.H := it.Box.H + Max(0, cs.Margin.Top) + Max(0, cs.Margin.Bottom);
       it.FontSize := cs.FontSize; it.Styles := []; it.DecorLines := 0; it.DecorStyle := 0; it.DecorColor := 0;
-      it.Ascent := it.Box.H;  // baseline at the box bottom (default vertical-align)
+      it.Ascent := Max(0, cs.Margin.Top) + it.Box.H + Max(0, cs.Margin.Bottom);
       it.SpaceBefore := (items.Count > 0) and pendingSpace;
       pendingSpace := False;
       Box.Children.Add(it.Box);
@@ -3547,7 +3835,7 @@ var
     lineTop, lineH: Single; justify: Boolean = False; isLast: Boolean = False);
   var
     idx, k: Integer;
-    lineW, xShift, x, maxAscent, gapExtra, flx0, flx1, availW: Single;
+    lineW, xShift, x, maxAscent, gapExtra, flx0, flx1, availW, mt: Single;
     gaps: Integer;
     it: TInlineItem;
     run: TTextRun;
@@ -3645,20 +3933,23 @@ var
         x := x + FCanvas.MeasureText(' ', it.FontSize, it.Styles).Width + gapExtra + ParentStyle.WordSpacing;
       if it.Box <> nil then
       begin
+        // the box's own top margin offsets it below the margin-box top that
+        // it.H / it.Ascent (which include the vertical margins) reserve for it.
+        mt := Max(0, it.Box.Style.Margin.Top);
         if SameText(it.Box.Style.VerticalAlign, 'top') or
            SameText(it.Box.Style.VerticalAlign, 'text-top') then
           // top / text-top: box top at the line's top (text-top ignores half-leading)
-          ShiftBoxTree(it.Box, x, lineTop)
+          ShiftBoxTree(it.Box, x, lineTop + mt)
         else if SameText(it.Box.Style.VerticalAlign, 'bottom') or
                 SameText(it.Box.Style.VerticalAlign, 'text-bottom') then
-          // bottom / text-bottom: box bottom at the line's bottom
-          ShiftBoxTree(it.Box, x, lineTop + Max(0, lineH - it.H))
+          // bottom / text-bottom: margin box bottom at the line's bottom
+          ShiftBoxTree(it.Box, x, lineTop + Max(0, lineH - it.H) + mt)
         else if SameText(it.Box.Style.VerticalAlign, 'middle') then
-          // centre the box within the line box (matches browsers for the
+          // centre the margin box within the line box (matches browsers for the
           // common case of same-height inline-blocks filling the line)
-          ShiftBoxTree(it.Box, x, lineTop + (lineH - it.H) / 2)
-        else // baseline: box bottom on the baseline
-          ShiftBoxTree(it.Box, x, lineTop + maxAscent - it.Ascent);
+          ShiftBoxTree(it.Box, x, lineTop + (lineH - it.H) / 2 + mt)
+        else // baseline: margin box bottom on the baseline
+          ShiftBoxTree(it.Box, x, lineTop + maxAscent - it.Ascent + mt);
       end
       else if (tfsSmallCaps in it.Styles) and (it.Text <> '') then
         // font-variant:small-caps — paint per-case sub-runs; x advances by it.W below
@@ -3809,13 +4100,24 @@ begin
           LayoutBlock(Box, c, ParentStyle, CX, CY, CW);
           absBox := Box.Children[Box.Children.Count - 1];
         end;
+        // left+right both pinned with no explicit width → stretch to fill the gap
+        // (CSS: the width resolves to containing-block − left − right). Same for
+        // top+bottom → stretch the height. This is what `inset:Npx` relies on.
+        if (ResolveSize(cs.ExplicitWidth, CW) < 0) and (cs.CSSLeft > -9998) and (cs.CSSRight > -9998) then
+          absBox.W := Max(0, CW - cs.CSSLeft - cs.CSSRight)
         // Shrink-to-fit: an out-of-flow box with no explicit width sizes to its
         // content (CSS "shrink-to-fit"), not the full container — e.g. a pill
         // pinned with `right` only should hug its text, not span the row.
-        if (ResolveSize(cs.ExplicitWidth, CW) < 0) and (absBox.NaturalW > 0) then
+        else if (ResolveSize(cs.ExplicitWidth, CW) < 0) and (absBox.NaturalW > 0) then
         begin
           absCH := absBox.NaturalW + cs.Padding.Horz + cs.BorderWidths.Horz;
           if absCH < absBox.W then absBox.W := absCH;
+        end;
+        if (ResolveSize(cs.ExplicitHeight, 0) < 0) and (cs.CSSTop > -9998) and (cs.CSSBottom > -9998) then
+        begin
+          absCH := ResolveSize(ParentStyle.ExplicitHeight, 0);
+          if absCH < 0 then absCH := Box.NaturalH;
+          absBox.H := Max(0, absCH - cs.CSSTop - cs.CSSBottom);
         end;
         // fixed is viewport-relative (origin 0,0); absolute is container-relative.
         // Paint (PaintBoxEx) drops the scroll offset for fixed so it stays put.
@@ -3824,7 +4126,9 @@ begin
           absX := 0; absY := 0;
           if cs.CSSLeft > -9998 then absX := cs.CSSLeft
           else if cs.CSSRight > -9998 then absX := CX + CW - absBox.W - cs.CSSRight;
-          if cs.CSSTop > -9998 then absY := cs.CSSTop;
+          if cs.CSSTop > -9998 then absY := cs.CSSTop
+          else if cs.CSSBottom > -9998 then          // pin to the viewport bottom
+            absY := FViewportH - absBox.H - cs.CSSBottom;
           ShiftBoxTree(absBox, absX - absBox.X, absY - absBox.Y);
           Continue;
         end;
@@ -4045,11 +4349,33 @@ begin
   box.VerticalRL := (eh >= 0)
     and ((Pos('vertical', st.WritingMode) > 0) or (Pos('sideways', st.WritingMode) > 0))
     and (Pos('lr', st.WritingMode) = 0);
-  if box.VerticalRL then contentW := Max(1, FContainingH);   // wrap against the content height
+  // vertical-lr shares the layout (against the height) and the CW rotation; only
+  // the column order differs, reversed after LayoutChildren so columns read L→R.
+  box.VerticalLR := (eh >= 0)
+    and ((Pos('vertical', st.WritingMode) > 0) or (Pos('sideways', st.WritingMode) > 0))
+    and (Pos('lr', st.WritingMode) > 0);
+  if box.VerticalRL or box.VerticalLR then contentW := Max(1, FContainingH);  // wrap against the content height
   LayoutChildren(box, Tag, st, contentX, contentY, contentW, usedH);
   FContainingH := savedCH;
-  if box.VerticalRL then
+  // width: fit-content / min-content / max-content (the -3 sentinel from
+  // ParseLength) → shrink the block to its content width (approximated by
+  // NaturalW, the widest laid-out line) instead of filling the container.
+  if (st.ExplicitWidth = -3) and (box.NaturalW > 0) then
+    box.W := Min(box.W, box.NaturalW + edgeL + edgeR);
+  // -webkit-line-clamp: cap the content to N lines and clip the rest — the box
+  // becomes a (non-scrolling) clip container. Ellipsis on the clamped line is
+  // not synthesised. Its own clip is needed since line-clamp has no explicit
+  // height, so the overflow-y block below (gated on eh>=0) doesn't run.
+  if (st.LineClamp > 0) and (usedH > st.LineClamp * LineHeightOf(st) + 0.5) then
   begin
+    box.MaxScroll := usedH - st.LineClamp * LineHeightOf(st);   // excess → clipped
+    box.Scrollable := False;
+    usedH := st.LineClamp * LineHeightOf(st);
+  end;
+  if box.VerticalRL or box.VerticalLR then
+  begin
+    if box.VerticalLR then
+      ReverseVColumns(box, contentY, usedH, LineHeightOf(st));
     box.W := usedH + edgeL + edgeR;   // physical width = content's inline extent (from usedH)
     box.H := eh;                      // physical height = the specified height
     usedH := Max(0, eh - edgeT - edgeB);  // keep the tail's box.H := usedH+edges == eh
@@ -4079,11 +4405,15 @@ begin
     box.MaxScrollX := box.NaturalW - contentW;
   end;
   box.H := usedH + edgeT + edgeB;
-  // aspect-ratio: with a known width and auto height, derive the height from the
-  // ratio (the common `width + aspect-ratio` media-box case). Content taller than
-  // this is handled by overflow, as in browsers.
+  // aspect-ratio: derive the auto axis from the definite one. Width + auto height
+  // → height from the ratio (the common media-box case); a definite height with
+  // auto width → width from the ratio (the block stops stretching to full width,
+  // matching Chrome). Content overflowing is handled as in browsers.
   if (st.AspectRatio > 0) and (ResolveSize(st.ExplicitHeight, 0) < 0) and (box.W > 0) then
-    box.H := box.W / st.AspectRatio;
+    box.H := box.W / st.AspectRatio
+  else if (st.AspectRatio > 0) and (ResolveSize(st.ExplicitWidth, contentW) < 0)
+       and (ResolveSize(st.ExplicitHeight, 0) >= 0) and (box.H > 0) then
+    box.W := box.H * st.AspectRatio;
   // min-height / max-height clamp (border-box; px resolved, % against 0)
   mnh := ResolveSize(st.MinHeight, 0);
   mxh := ResolveSize(st.MaxHeight, 0);
@@ -4539,6 +4869,7 @@ begin
   FViewportW := ViewportW;
   SetLength(FFloats, 0);   // fresh float context per layout
   if ViewportH <= 0 then ViewportH := ViewportW * 0.66;   // rough default when unknown
+  FViewportH := ViewportH;     // position:fixed bottom/right anchor (stays the viewport)
   FContainingH := ViewportH;   // the initial containing block (viewport) height for height:NN%
   FreeSynthTags;               // discard last layout's anonymous flex-item wrappers
   SetCalcContext(ViewportW, ViewportH);   // vw/vh + reset deferred calc() table
@@ -4936,6 +5267,35 @@ begin
         and SameValue(r0, ResolvedCornerR(st, 3, bw, bh));
 end;
 
+{ Resolve an explicit `background-size` ("W", "W H", "W auto", %s) to device
+  pixels. -1 from ValOf means `auto`, which takes the aspect ratio from the
+  other axis (both auto → natural size). }
+procedure ExplicitBgSize(const Sz: string; iw, ih, boxW, boxH: Single; var dw, dh: Single);
+var
+  toks: TArray<string>;
+  wv, hv: Single;
+  function ValOf(const t: string; ref: Single): Single;
+  var s: string;
+  begin
+    s := Trim(t);
+    if (s = '') or (s = 'auto') then Exit(-1);
+    if (s <> '') and (s[Length(s)] = '%') then
+      Result := StrToFloatDef(Copy(s, 1, Length(s) - 1), 0) / 100 * ref
+    else if s.EndsWith('px') then Result := StrToFloatDef(Copy(s, 1, Length(s) - 2), ref)
+    else Result := StrToFloatDef(s, ref);
+  end;
+begin
+  dw := iw; dh := ih;
+  toks := Sz.Split([' '], TStringSplitOptions.ExcludeEmpty);
+  if Length(toks) = 0 then Exit;
+  wv := ValOf(toks[0], boxW);
+  if Length(toks) >= 2 then hv := ValOf(toks[1], boxH) else hv := -1;
+  if (wv < 0) and (hv < 0) then Exit;
+  if wv < 0 then begin dh := hv; if ih > 0 then dw := iw * (hv / ih); end
+  else if hv < 0 then begin dw := wv; if iw > 0 then dh := ih * (wv / iw); end
+  else begin dw := wv; dh := hv; end;
+end;
+
 procedure PaintBackgroundImage(Canvas: TTina4Canvas; Box: TLayoutBox;
   const st: TComputedStyle; y: Single);
 var
@@ -4960,6 +5320,12 @@ begin
   begin
     scale := Min(Box.W / iw, Box.H / ih);
     dw := iw * scale; dh := ih * scale;
+  end
+  else if (sz <> '') and (sz <> 'auto') then
+  begin
+    // explicit `background-size: W [H]` — lengths absolute, % of the box, `auto`
+    // keeps the aspect ratio from the other axis. One value → height auto.
+    ExplicitBgSize(sz, iw, ih, Box.W, Box.H, dw, dh);
   end;
 
   // position: negative sentinel = percentage (center=-50, right/bottom=-100);
@@ -5087,7 +5453,7 @@ begin
   wmRot := 0;
   // vertical-rl with a definite height uses the real column layout (Box.VerticalRL);
   // any other vertical/sideways box keeps the flat single-line 90° rotation.
-  if (not Box.VerticalRL) and
+  if (not Box.VerticalRL) and (not Box.VerticalLR) and
      ((Pos('vertical', st.WritingMode) > 0) or (Pos('sideways', st.WritingMode) > 0)) then
     wmRot := 90;
   hasRS := (not use3D) and ((st.TransformRotate <> 0) or (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1)
@@ -5270,15 +5636,17 @@ begin
   // it (needs BOTH a colour and a gradient — the normal path skips the gradient
   // when a solid colour is present, so route through the blend-aware soft path).
   bgBlend := (st.BackgroundBlendMode <> '') and st.BgGradientActive and (st.GradStopCount >= 2) and ((bg shr 24) > 0);
-  if (not Hidden) and (not st.BackgroundClipText) and st.BgGradientActive and (st.GradStopCount >= 2)
-     and (((bg shr 24) = 0) or bgBlend) then
+  if (not Hidden) and (not st.BackgroundClipText) and st.BgGradientActive and (st.GradStopCount >= 2) then
   begin
-    if bgBlend then   // paint the backdrop colour first; the gradient blends onto it
+    // Multi-layer / blend: paint the bottom colour layer first, then the
+    // gradient over it — so `background: <gradient>, <colour>` shows the colour
+    // through a translucent gradient, and the blend-mode case has its backdrop.
+    if (bg shr 24) > 0 then
     begin
       if mcr <= 0 then Canvas.FillRect(Box.X, y, Box.W, Box.H, bg)
       else Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, mcr, bg);
-      bgBlendMode := st.BackgroundBlendMode;
-    end
+    end;
+    if bgBlend then bgBlendMode := st.BackgroundBlendMode
     else bgBlendMode := '';
     SetLength(gcol, st.GradStopCount); SetLength(gpos, st.GradStopCount);
     for gi := 0 to st.GradStopCount - 1 do
@@ -5495,7 +5863,7 @@ begin
   // 90° CW visual rotation about the content's top-right corner: a laid-out frame
   // point (fx,fy) maps to (A.x + Wc - fy, A.y + fx) — inline fx runs down, the
   // columns fy advance leftward.
-  if Box.VerticalRL then
+  if Box.VerticalRL or Box.VerticalLR then
   begin
     Canvas.SaveState; vRotSaved := True;
     vAx := Box.X + st.BorderWidths.Left + st.Padding.Left;

@@ -43,6 +43,12 @@ begin
   else begin WriteLn('  FAIL ', Msg); Inc(Fails); end;
 end;
 
+{ Captures the URL an <a href> click hands to the link hook (a headless stand-in
+  for the shell's OS opener), so the test can assert the exact scheme+href. }
+var LastLink: string = '';
+procedure LinkCap(const Href, Target: string);
+begin LastLink := Href; end;
+
 { Depth-first search of the box-tree JSON for a node carrying "id":Id. }
 function FindNode(N: TJSONData; const Id: string): TJSONObject;
 var o: TJSONObject; kids: TJSONArray; i: Integer; r: TJSONObject;
@@ -125,6 +131,8 @@ const PAGE =
   '  .note::before{content:"* "}' +
   '</style>' +
   '<h1 class="tag" style="height:40px;margin:0">Form</h1>' +
+  '<a href="tel:+27115551234" id="call" style="display:block;height:30px">Call us</a>' +
+  '<a href="mailto:hi@tina4.com?subject=Hi" id="mail" style="display:block;height:30px">Email us</a>' +
   '<label style="display:block;height:34px"><input type="checkbox" id="agree"> I agree</label>' +
   '<label class="note" style="display:block;height:34px"><input type="radio" name="plan" id="mo" checked> Monthly</label>' +
   '<label style="display:block;height:34px"><input type="radio" name="plan" id="yr"> Yearly</label>' +
@@ -147,8 +155,19 @@ begin
   Canvas := TTina4RasterCanvas.Create(VW, VH);
   try
     TinaInit(Canvas);
+    Tina4SetLinkHandler(@LinkCap);   // <a href> clicks land here (stands in for the OS opener)
     TinaSetHtml(PAGE);
     Frame;   // first Build injects the ::before/::after pseudo nodes
+
+    // ---- <a href> scheme links dispatch to the core link hook ------------
+    LastLink := '';
+    Check(TapId('call'), 'tel: anchor hittable');
+    Check(LastLink = 'tel:+27115551234',
+          'tel: anchor fires the link hook with the exact href (got "' + LastLink + '")');
+    LastLink := '';
+    Check(TapId('mail'), 'mailto: anchor hittable');
+    Check(LastLink = 'mailto:hi@tina4.com?subject=Hi',
+          'mailto: anchor fires the link hook, query preserved (got "' + LastLink + '")');
 
     // ---- checkbox: toggles across rebuilds -------------------------------
     Check(not TinaHasAttr('agree', 'checked'), 'checkbox starts unchecked');

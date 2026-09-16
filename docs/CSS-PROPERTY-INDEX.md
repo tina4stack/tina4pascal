@@ -32,7 +32,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | visibility | ✅ | hidden hides self+subtree, keeps space (was mislabelled 📦) |
 | display block/inline/inline-block/none/list-item/table | ✅ | |
 | display flex / inline-flex | ✅ | LayoutFlex (was mislabelled "no flex") |
-| display grid | ✅ | grid-template-columns + **grid-template-rows** (px/%/fr/auto/repeat), row/column gaps, row-major auto-placement **that skips occupied cells**, explicit line placement (`grid-column/row: N`, `N / M`, `N / span S`), column + **row span**, `grid-template-areas` |
+| display grid | ✅ | grid-template-columns + **grid-template-rows** (px/%/fr/auto/repeat/**minmax()**) + **`grid-auto-rows`** (implicit-row track size: px / minmax floor), **`repeat(auto-fit`/`auto-fill, minmax(min,1fr))`** (track count from the container width — the responsive-grid pattern, verified 0.0–0.4% vs Chrome), row/column gaps, row-major auto-placement **that skips occupied cells**, explicit line placement (`grid-column/row: N`, `N / M`, `N / span S`), column + **row span**, `grid-template-areas`. Reftests `grid-minmax`, `grid-auto-rows` |
 | aspect-ratio | ✅ | `<w>/<h>` or a bare number; with a known width and auto height the block's height is derived (width ÷ ratio). Width-from-height is the rarer case (not re-laid-out) |
 
 ## Positioning
@@ -50,10 +50,10 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 
 | Property | Status | Note |
 |---|---|---|
-| flex, flex-grow, flex-basis | ✅ | grow distributes free main space |
-| flex-shrink | ✅ | weighted shrink pass on overflowing non-wrapping rows |
-| flex-direction | ✅ | row/column + row-reverse/column-reverse (items reversed along the main axis) |
-| flex-wrap | ✅ | wrap + wrap-reverse (lines stacked in reverse cross order); grow disabled while wrapping |
+| flex, flex-grow, flex-basis | ✅ | **flex-basis is the item's base main size** (content-box), taking precedence over `width` — `flex: 0 0 60px` gives an exactly-60px item (was 0); grow distributes free main space. **Works on the column main axis too** (vertical `flex:1`/`flex:2` split the container height; basis, grow and shrink all applied). Reftests `flex-basis-fixed`, `flex-col-grow` |
+| flex-shrink | ✅ | weighted shrink pass on overflowing non-wrapping rows — **applies even when the item also flex-grows** (grow only adds positive free space; on overflow, shrink wins), verified 0.00% vs Chrome |
+| flex-direction | ✅ | row/column + row-reverse/column-reverse: items reverse order **and** pack from the far edge (a default `row-reverse` right-aligns, matching Chrome 0.00%) — the reverse flips `justify-content` flex-start↔flex-end. Reftest `css-flexreverse` |
+| flex-wrap | ✅ | wrap + wrap-reverse for **both** row and column directions (lines/columns stacked on the cross axis, reverse order for wrap-reverse, align-content honoured; grow disabled while wrapping). Column wrap packs down each column until the definite height is exceeded, then stacks columns across — verified matching Chrome (`flex-flow: column wrap` 0.25%). Reftest `flex-flow` |
 | flex-flow | ✅ | shorthand for `flex-direction` \|\| `flex-wrap` (either order, one or both) |
 | justify-content | ✅ | start/center/end/space-between/around/evenly |
 | align-items | ✅ | center/flex-end/stretch (the default, fills the cross axis); no baseline |
@@ -91,8 +91,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | list-style-type | ✅ | disc/circle/square/decimal/alpha/roman/none |
 | list-style shorthand, list-style-position | ✅ | shorthand tokenised (type · inside/outside · image url); `position:inside` draws the marker in the content flow |
 | list-style-image | ✅ | `url(...)` image marker (dedicated property + shorthand) loaded via the shell and drawn as a font-sized square outdented left of the content; falls back to the bullet glyph if the image fails to load |
-| writing-mode | ✅ | `vertical-rl` with a definite height does **real vertical block-flow**: the inline content is laid out against the height (so it wraps into columns), then painted 90° CW into right-to-left columns — text runs top-to-bottom, Latin glyphs rotated CW, the box background/border upright. Verified matching Chrome. Inherited. `vertical-lr` and a `vertical-rl` block without a definite height fall back to the flat single-line rotation; upright CJK orientation (`text-orientation`) not modelled. Reftest `writing-mode-vertical` |
-| direction | ✅ | `ltr`/`rtl`/`auto`, from the property, the `dir` attribute, or `dir="auto"` (first-strong detection). Mixed LTR/RTL lines are reordered logical→visual by the Unicode Bidi Algorithm L2 rule (Hebrew/Arabic classification, base level, simplified neutral resolution), verified pixel-matching Chrome. Mirrored punctuation (UBA L4: `(`↔`)`, `[`↔`]`, `<`↔`>`, guillemets…) is applied to RTL-level punctuation. Native text backends shape each run. Remaining: per-character UBA (mixed direction inside one word), explicit embeddings/overrides (`bdi`/`bdo`/`unicode-bidi`), RTL on the raster path. Reftest `bidi-rtl-ltr` |
+| writing-mode | ✅ | `vertical-rl` **and** `vertical-lr` with a definite height do **real vertical block-flow**: the inline content is laid out against the height (so it wraps into columns), then painted 90° CW — text runs top-to-bottom, Latin glyphs rotated CW, the box background/border upright. `vertical-rl` fills right-to-left columns; `vertical-lr` reverses the column order in layout (each line box reflected about the content centre, half-leading preserved) so the same rotation fills left-to-right columns. Both verified matching Chrome. Inherited. A vertical block without a definite height falls back to the flat single-line rotation; upright CJK orientation (`text-orientation`) not modelled. Reftests `writing-mode-vertical`, `writing-mode-vertical-lr` |
+| direction | ✅ | `ltr`/`rtl`/`auto`, from the property, the `dir` attribute, or `dir="auto"` (first-strong detection). Mixed LTR/RTL lines are reordered logical→visual by the Unicode Bidi Algorithm L2 rule (Hebrew/Arabic classification, base level, simplified neutral resolution), verified pixel-matching Chrome. Mirrored punctuation (UBA L4: `(`↔`)`, `[`↔`]`, `<`↔`>`, guillemets…) is applied to RTL-level punctuation. Native text backends shape each run, so **per-character direction inside one token** (e.g. `abc99שלום`) resolves via the shaper and pixel-matches Chrome. `bdi`/`bdo` handled. Remaining: the *embedding effect* of `unicode-bidi` control codes, RTL shaping on the pure-raster path. Reftest `bidi-rtl-ltr` |
 | unicode-bidi | ✅ | accepted (its effect is the bidi algorithm, which we don't run — no-op alongside the `direction` right-alignment) |
 | tab-size | ✅ | `-moz-tab-size` too; tabs in `white-space:pre`/`pre-wrap` expand to N space-widths (default 8) |
 | text-align-last | ✅ | left/right/center/start/end/justify on the block's last line (and the line before a `<br>`) |
@@ -105,7 +105,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | Property | Status | Note |
 |---|---|---|
 | background-color | ✅ | alpha-scaled by opacity |
-| background (shorthand) | 🟡 | colour + image (`url(...)` and every gradient) parse from the shorthand; position / size / repeat within the shorthand still need their longhands |
+| background (shorthand) | ✅ | colour + image (`url(...)` and every gradient) **plus position / `/ size` / repeat** parse from the shorthand (e.g. `#eee url(x) center / cover no-repeat`) — url stripped first so its path `/` doesn't split the size. A **`<gradient>, <colour>` layer list** works too: the trailing colour is the background-color and the gradient paints (composited) over it — the common translucent-overlay/hero pattern (reftests `bg-shorthand-possize`, `bg-gradient-over-color`, 0.00% vs Chrome). Remaining: multi-layer `url()` **image** stacks (one image painted) |
 | background-image: url() | ✅ | painted via the cached/async image path; size cover/contain/auto, position, repeat; clipped |
 | background: linear-gradient() | ✅ | real multi-stop gradient (up to 8 stops + positions), angle honored; backend NSGradient on Cocoa (base fallback = flat avg) |
 | background: radial-gradient() | ✅ | parsed + painted (center radial); shape/size keywords accepted, not yet modelled |
@@ -131,7 +131,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | mix-blend-mode | ✅ | all 16 separable + non-separable modes (multiply/screen/overlay/darken/lighten/color-dodge/color-burn/soft-light/hard-light/difference/exclusion/hue/saturation/color/luminosity) via `CGContextSetBlendMode` when the layer composites back |
 | backdrop-filter | ✅ | filters the already-painted pixels behind the element (captured via `initWithFocusedViewRect`) before its own background draws — same filter chain as `filter`. `-webkit-backdrop-filter` alias too |
 | mask-image, mask, -webkit-mask-image | 🟡 | `linear-gradient(...)` masks (alpha mode): the gradient alpha multiplies into the element's alpha in the offscreen buffer — the common fade-out. `url()` image masks, `mask-mode:luminance`, and mask position/size/repeat not yet done |
-| background-blend-mode | 🟡 | blends a **gradient** background with the background-color beneath it — software separable modes (multiply/screen/overlay/darken/lighten/color-dodge/-burn/hard-/soft-light/difference/exclusion) computed per-pixel in the soft-gradient path. `url()` image layers and the non-separable hue/sat/color/luminosity modes not yet |
+| background-blend-mode | 🟡 | blends a **gradient** background with the background-color beneath it — **every** mode: the separable set (multiply/screen/overlay/darken/lighten/color-dodge/-burn/hard-/soft-light/difference/exclusion) **and all four** non-separable ones (hue/saturation/color/luminosity), computed per-pixel through the shared `BlendRGB`. All **verified 0.00% vs Chrome** on macOS (the earlier "hue/color skew" was a retina-scaled pixel-sampling artifact in the test, not a render bug — the shared code and the Cocoa render agree). Only remaining gap: `url()` **image** layers (needs multi-layer backgrounds; gradient-over-colour is complete). macOS `--snapshot` emits sRGB, so saturated colours compare byte-exact to headless Chrome |
 | animation, @keyframes | ✅ | `@keyframes` parsed; `animation` shorthand + longhands (name/duration/delay/timing/iteration/direction). Per-frame interpolation at paint off the ticker: transform (translate/rotate/scale), opacity, background-color, color; timing linear/ease/ease-in/-out; iteration + alternate/reverse |
 | transition | ✅ | eases a property toward its computed value when it changes (hover/focus/DOM): background-color, color, opacity, transform (translate/rotate/scale). Per-element from/start tracked on the tag; duration/delay/timing/property from the shorthand + longhands. Mid-transition reversal supported |
 | will-change, contain | ✅ | accepted (performance hints with no visual effect — correct to no-op) |
@@ -206,7 +206,10 @@ mode renderer doesn't yet have):
     **background-blend-mode** (software per-background-layer blend compositing —
     the existing blend path is Cocoa CGBlendMode, not pure-Pascal).
 
-Coverage: **105 ✅ · 6 🟡 · 3 📦 · 0 ❌** — no property is entirely unhandled.
+Coverage: **106 ✅ · 5 🟡 · 3 📦 · 0 ❌** — no property is entirely unhandled.
+(An ours-vs-Chrome pass exposed two flex bugs the ours-vs-ours reftests missed —
+reverse-direction packing and column-direction `flex-wrap` — both now **fixed**
+and verified 0.0–0.25% vs Chrome.)
 Every 🟡/📦 that remains is the advanced tail of an otherwise-working feature and
 needs a dedicated subsystem to finish: a hyphenation dictionary + soft-hyphen
 line-breaking, the Unicode bidi algorithm, font synthesis (small-caps/stretch),

@@ -1347,7 +1347,7 @@ end;
 
 procedure TCocoaShell.Snapshot(const Path: string);
 var
-  rep: NSBitmapImageRep;
+  rep, srgb: NSBitmapImageRep;
   png: NSData;
   pool: NSAutoreleasePool;
 begin
@@ -1357,6 +1357,14 @@ begin
   // needs to be visible, so this works headless and never steals focus
   rep := FView.bitmapImageRepForCachingDisplayInRect(FView.bounds);
   FView.cacheDisplayInRect_toBitmapImageRep(FView.bounds, rep);
+  // On a wide-gamut (Display P3) screen the cached bitmap carries the display's
+  // colour space, so a saved PNG is P3-tagged and its raw bytes are P3-encoded
+  // (sRGB #ff0000 becomes ~#ea3323). Convert to sRGB so the PNG is portable and
+  // byte-comparable against sRGB references (headless Chrome, goldens). No-op on
+  // an sRGB screen. NSColorRenderingIntentDefault = 0.
+  srgb := rep.bitmapImageRepByConvertingToColorSpace_renderingIntent(
+    NSColorSpace.sRGBColorSpace, 0);
+  if srgb <> nil then rep := srgb;
   png := rep.representationUsingType_properties(NSPNGFileType, nil);
   png.writeToFile_atomically(NSSTR(PAnsiChar(UTF8Encode(Path))), True);
   pool.drain;

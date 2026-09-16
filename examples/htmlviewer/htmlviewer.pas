@@ -12,7 +12,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}   // SSE/WS worker threads (Tina4Live) need a thread driver
   SysUtils, StrUtils, Classes, Math, Generics.Collections,
   Tina4HTMLDom, Tina4RenderBackend, Tina4ShellCocoa, Tina4HTMLLayout, Tina4Canvas2D,
-  Tina4Lottie, Tina4Events, Tina4Builtins, Tina4Live, Tina4Elements;
+  Tina4Lottie, Tina4Events, Tina4Builtins, Tina4Live, Tina4Elements, Tina4LinkOpen;
 
 var
   GLottie: TTina4Lottie = nil;
@@ -1107,6 +1107,7 @@ begin
   if ElementsDefaultCSS <> '' then Viewer.Sheet.AddCSS(ElementsDefaultCSS);  // UA-like defaults first
   Viewer.Shell := TCocoaShell.Create;            // created early: fetches remote <link> CSS
   Tina4SetNotifyHandler(@NotifyBridge);          // notify.show(...) → native banner
+  Tina4InstallLinkOpener;                        // <a href=tel:/mailto:/http…> → the OS
   RegisterCanvasPainter('demo', @CanvasDemo);   // <canvas id="demo"> → the Pascal painter
   RegisterCanvasPainter('lottie', @LottiePainter);
 

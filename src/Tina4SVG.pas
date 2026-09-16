@@ -13,8 +13,16 @@ unit Tina4SVG;
   path (M L H V C S Q T A Z, absolute + relative), text (x/y, text-anchor,
   font-size), presentation attributes fill/stroke/stroke-width/opacity/
   fill-opacity/stroke-opacity/transform inherited down the tree, and a
-  style="" shorthand for those. Not yet: gradients, clip/mask, filters,
-  patterns, <use>, <tspan> positioning, dash arrays. }
+  style="" shorthand for those. Fill gradients: <linearGradient>/<radialGradient>
+  referenced by fill="url(#id)", with <stop> offset/stop-color/stop-opacity,
+  objectBoundingBox (default) and userSpaceOnUse units — painted through the
+  shared FillLinearGradient/FillRadialGradient, clipped to the shape. Not yet:
+  gradientTransform, spreadMethod, href stop-inheritance, gradient strokes.
+  clip-path="url(#id)" clips an element (or a <g> subtree) to a <clipPath>'s
+  first shape (userSpaceOnUse). <use href="#id" x y> re-paints a referenced
+  element (incl. from <defs>), translated, inheriting the use's presentation.
+  Not yet: multi-shape/objectBoundingBox clipPaths, mask, filters, patterns,
+  <use> width/height override, <tspan> positioning, dash arrays. }
 
 {$mode delphi}{$H+}
 
@@ -34,7 +42,7 @@ function SVGIntrinsicSize(Root: THTMLTag; out W, H: Single): Boolean;
 implementation
 
 uses
-  SysUtils, Math;
+  SysUtils, Math, Classes;
 
 type
   TSingleArray = array of Single;
@@ -84,6 +92,7 @@ type
     FontSize: Single;
     TextAnchor: string;
     CurrentColor: TTina4Color;
+    FillGrad: THTMLTag;   // resolved <linearGradient>/<radialGradient> for fill="url(#id)", nil = solid
   end;
 
 function DefaultState(const CTM: TMat): TSvgState;
@@ -96,6 +105,7 @@ begin
   Result.FontSize := 16;
   Result.TextAnchor := 'start';
   Result.CurrentColor := $FF000000;
+  Result.FillGrad := nil;
 end;
 
 { ---- small parse helpers ---------------------------------------------- }
@@ -218,6 +228,173 @@ begin
   Result := Tag.GetAttribute(Name);
 end;
 
+{ ---- gradient paint servers (fill="url(#id)") ------------------------- }
+
+{ Every <linearGradient>/<radialGradient> with an id in the current <svg>,
+  keyed by lowercased id. Built once per PaintSVG (the paint is single-threaded),
+  so a fill="url(#g)" resolves without re-walking the tree. }
+var
+  GDefs: TStringList = nil;
+  GUseDepth: Integer = 0;   // <use> recursion guard (cyclic / deep references)
+
+{ index every element carrying an id — gradients/clipPaths for url(#id), and any
+  element for a <use href="#id">. First id wins (document order). }
+procedure CollectGradients(Tag: THTMLTag);
+var c: THTMLTag; id: string;
+begin
+  if (Tag = nil) or (GDefs = nil) then Exit;
+  id := LowerCase(Tag.GetAttribute('id'));
+  if (id <> '') and (GDefs.IndexOf(id) < 0) then GDefs.AddObject(id, Tag);
+  for c in Tag.Children do CollectGradients(c);
+end;
+
+{ resolve fill="url(#id)" -> the gradient tag, or nil if unknown }
+function LookupGradient(const Val: string): THTMLTag;
+var s, id: string; p: Integer;
+begin
+  Result := nil;
+  if GDefs = nil then Exit;
+  s := Trim(Val);
+  if Copy(LowerCase(s), 1, 4) <> 'url(' then Exit;
+  id := Copy(s, 5, Length(s) - 4);           // inside url( ... )
+  p := Pos(')', id); if p > 0 then id := Copy(id, 1, p - 1);
+  id := Trim(id);
+  while (id <> '') and ((id[1] = '#') or (id[1] = '''') or (id[1] = '"')) do Delete(id, 1, 1);
+  while (id <> '') and ((id[Length(id)] = '''') or (id[Length(id)] = '"')) do Delete(id, Length(id), 1);
+  p := GDefs.IndexOf(LowerCase(Trim(id)));
+  if p >= 0 then Result := THTMLTag(GDefs.Objects[p]);
+end;
+
+{ resolve clip-path="url(#id)" -> the <clipPath> tag, or nil }
+function LookupClipPath(const Val: string): THTMLTag;
+begin
+  Result := LookupGradient(Val);   // same url(#id) resolver + shared id map
+  if (Result <> nil) and not SameText(Result.TagName, 'clippath') then Result := nil;
+end;
+
+{ resolve a <use> href/xlink:href ("#id") -> the referenced element, or nil }
+function LookupById(const Ref: string): THTMLTag;
+var id: string; p: Integer;
+begin
+  Result := nil;
+  if GDefs = nil then Exit;
+  id := Trim(Ref);
+  while (id <> '') and ((id[1] = '#') or (id[1] = '''') or (id[1] = '"')) do Delete(id, 1, 1);
+  while (id <> '') and ((id[Length(id)] = '''') or (id[Length(id)] = '"')) do Delete(id, Length(id), 1);
+  p := GDefs.IndexOf(LowerCase(Trim(id)));
+  if p >= 0 then Result := THTMLTag(GDefs.Objects[p]);
+end;
+
+{ a length as a fraction/coordinate: "50%" -> 0.5, else the plain number }
+function CoordFrac(const S: string; Def: Single): Single;
+var v: string;
+begin
+  v := Trim(S);
+  if v = '' then Exit(Def);
+  if v[Length(v)] = '%' then Result := ToF(Copy(v, 1, Length(v) - 1)) / 100
+  else Result := ToF(v);
+end;
+
+{ read <stop> children into fixed colour/position arrays; count returned.
+  stop-opacity and the shape's opacity/fill-opacity fold into each stop's alpha.
+  Offsets are clamped monotonic (SVG rule). }
+function ReadStops(Grad: THTMLTag; const St: TSvgState;
+  out Cols: array of TTina4Color; out Poss: array of Single): Integer;
+var c: THTMLTag; n: Integer; off, last, sop: Single; sc: string; col: TTina4Color;
+begin
+  n := 0; last := 0;
+  for c in Grad.Children do
+  begin
+    if not SameText(c.TagName, 'stop') then Continue;
+    if n > High(Cols) then Break;
+    off := CoordFrac(PresAttr(c, 'offset'), 0);
+    if off < 0 then off := 0; if off > 1 then off := 1;
+    if off < last then off := last;
+    last := off;
+    sc := Trim(PresAttr(c, 'stop-color'));
+    if sc = '' then col := $FF000000
+    else if LowerCase(sc) = 'currentcolor' then col := St.CurrentColor
+    else begin col := TComputedStyle.ParseColor(sc); if col = 0 then col := $FF000000; end;
+    sop := ToF(PresAttr(c, 'stop-opacity'), 1);
+    Cols[n] := WithAlpha(col, sop * St.Opacity * St.FillOpacity);
+    Poss[n] := off;
+    Inc(n);
+  end;
+  Result := n;
+end;
+
+{ fill one device-space contour with St.FillGrad. objectBoundingBox (the SVG
+  default) maps the gradient vector onto the contour's device bounding box;
+  userSpaceOnUse maps its endpoints through the CTM. The existing
+  FillLinearGradient / FillRadialGradient primitive paints it, clipped to the
+  contour so it never spills past the shape (real polygon clip on Cocoa/iOS;
+  a rect clip degrades to the bbox elsewhere). }
+procedure FillGradientContour(Canvas: TTina4Canvas; const Pts: TTina4PointArray;
+  const St: TSvgState);
+var
+  Grad: THTMLTag;
+  Cols: array[0..31] of TTina4Color;
+  Poss: array[0..31] of Single;
+  ns, i: Integer;
+  minX, minY, maxX, maxY, bw, bh: Single;
+  x1, y1, x2, y2, p1x, p1y, p2x, p2y, dvx, dvy, ang: Single;
+  one: array[0..0] of TTina4PointArray;
+begin
+  Grad := St.FillGrad;
+  if (Grad = nil) or (Length(Pts) < 3) then Exit;
+  ns := ReadStops(Grad, St, Cols, Poss);
+  if ns = 0 then Exit;
+  if ns = 1 then begin one[0] := Pts; Canvas.FillPolygon(one, Cols[0], False); Exit; end;
+  minX := Pts[0].X; maxX := minX; minY := Pts[0].Y; maxY := minY;
+  for i := 1 to High(Pts) do
+  begin
+    if Pts[i].X < minX then minX := Pts[i].X;
+    if Pts[i].X > maxX then maxX := Pts[i].X;
+    if Pts[i].Y < minY then minY := Pts[i].Y;
+    if Pts[i].Y > maxY then maxY := Pts[i].Y;
+  end;
+  bw := maxX - minX; bh := maxY - minY;
+  if (bw <= 0) or (bh <= 0) then Exit;
+  Canvas.SaveState;
+  Canvas.ClipPolygon(Pts);
+  if SameText(Grad.TagName, 'radialgradient') then
+    Canvas.FillRadialGradient(minX, minY, bw, bh, 0, Slice(Cols, ns), Slice(Poss, ns))
+  else
+  begin
+    if SameText(Trim(Grad.GetAttribute('gradientUnits')), 'userSpaceOnUse') then
+    begin
+      x1 := ToF(PresAttr(Grad, 'x1'), 0); y1 := ToF(PresAttr(Grad, 'y1'), 0);
+      x2 := ToF(PresAttr(Grad, 'x2'), 0); y2 := ToF(PresAttr(Grad, 'y2'), 0);
+      MatApply(St.CTM, x1, y1, p1x, p1y);
+      MatApply(St.CTM, x2, y2, p2x, p2y);
+      dvx := p2x - p1x; dvy := p2y - p1y;
+    end
+    else
+    begin
+      // objectBoundingBox: x1..x2 default 0..1 (horizontal, left-to-right)
+      x1 := CoordFrac(PresAttr(Grad, 'x1'), 0); y1 := CoordFrac(PresAttr(Grad, 'y1'), 0);
+      x2 := CoordFrac(PresAttr(Grad, 'x2'), 1); y2 := CoordFrac(PresAttr(Grad, 'y2'), 0);
+      dvx := (x2 - x1) * bw; dvy := (y2 - y1) * bh;
+    end;
+    if (dvx = 0) and (dvy = 0) then ang := 90
+    else ang := RadToDeg(ArcTan2(dvx, -dvy));   // CSS angle: 0=up, 90=right
+    Canvas.FillLinearGradient(minX, minY, bw, bh, 0, ang, Slice(Cols, ns), Slice(Poss, ns));
+  end;
+  Canvas.RestoreState;
+end;
+
+{ representative solid for a gradient that can't be contour-clipped (a
+  multi-subpath path, where a single-contour clip would drop the holes) — the
+  mid-gradient colour reads closer than any one endpoint. }
+function GradFallbackColor(Grad: THTMLTag; const St: TSvgState): TTina4Color;
+var Cols: array[0..31] of TTina4Color; Poss: array[0..31] of Single; ns: Integer;
+begin
+  ns := ReadStops(Grad, St, Cols, Poss);
+  if ns = 0 then Exit($FF000000);
+  if ns = 1 then Exit(Cols[0]);
+  Result := GradSample(0.5, Slice(Cols, ns), Slice(Poss, ns));
+end;
+
 { resolve a paint value (fill/stroke); returns whether it paints and colour }
 procedure ResolvePaint(const Val: string; const St: TSvgState;
   out Has: Boolean; out Color: TTina4Color; InheritHas: Boolean; InheritColor: TTina4Color);
@@ -240,8 +417,21 @@ begin
   s := PresAttr(Tag, 'transform');
   if s <> '' then Result.CTM := MatMul(Parent.CTM, ParseTransform(s));
   s := PresAttr(Tag, 'fill');
-  if s <> '' then ResolvePaint(s, Parent, Result.HasFill, Result.FillColor,
-    Parent.HasFill, Parent.FillColor);
+  if s <> '' then
+  begin
+    if Copy(LowerCase(Trim(s)), 1, 4) = 'url(' then
+    begin
+      // a gradient paint server; unknown ref paints nothing (no fallback given)
+      Result.FillGrad := LookupGradient(s);
+      Result.HasFill := Result.FillGrad <> nil;
+    end
+    else
+    begin
+      Result.FillGrad := nil;   // a solid fill overrides any inherited gradient
+      ResolvePaint(s, Parent, Result.HasFill, Result.FillColor,
+        Parent.HasFill, Parent.FillColor);
+    end;
+  end;
   s := PresAttr(Tag, 'stroke');
   if s <> '' then ResolvePaint(s, Parent, Result.HasStroke, Result.StrokeColor,
     Parent.HasStroke, Parent.StrokeColor);
@@ -334,7 +524,10 @@ procedure PaintFillStroke(Canvas: TTina4Canvas; const Pts: TTina4PointArray;
   const St: TSvgState; Closed, EvenOdd: Boolean);
 begin
   if St.HasFill and Closed then
-    FillContour(Canvas, Pts, WithAlpha(St.FillColor, St.Opacity * St.FillOpacity), EvenOdd);
+  begin
+    if St.FillGrad <> nil then FillGradientContour(Canvas, Pts, St)
+    else FillContour(Canvas, Pts, WithAlpha(St.FillColor, St.Opacity * St.FillOpacity), EvenOdd);
+  end;
   if St.HasStroke then
     StrokePath(Canvas, Pts, WithAlpha(St.StrokeColor, St.Opacity * St.StrokeOpacity),
       St.StrokeW * MatScale(St.CTM), Closed);
@@ -696,6 +889,54 @@ begin
   NContours := contourCount;
 end;
 
+{ Flatten the first shape child of a <clipPath> to a device-space contour, in
+  the user space of the clipped element (clipPathUnits=userSpaceOnUse, the
+  default). One shape covers virtually every clip path; extra shapes and
+  objectBoundingBox units are not modelled. }
+function ClipContourOf(ClipTag: THTMLTag; const St: TSvgState): TTina4PointArray;
+var
+  sh, c: THTMLTag; tn: string; i, nc: Integer; a, x, y, w, h, cx, cy, rx, ry: Single;
+  nums: TSingleArray;
+  contours: array of TTina4PointArray;
+begin
+  SetLength(Result, 0);
+  sh := nil;
+  for c in ClipTag.Children do
+  begin
+    tn := LowerCase(c.TagName);
+    if (tn = 'rect') or (tn = 'circle') or (tn = 'ellipse')
+       or (tn = 'polygon') or (tn = 'path') then begin sh := c; Break; end;
+  end;
+  if sh = nil then Exit;
+  tn := LowerCase(sh.TagName);
+  if tn = 'rect' then
+  begin
+    x := ToF(PresAttr(sh, 'x')); y := ToF(PresAttr(sh, 'y'));
+    w := ToF(PresAttr(sh, 'width')); h := ToF(PresAttr(sh, 'height'));
+    AddPt(Result, St.CTM, x, y); AddPt(Result, St.CTM, x + w, y);
+    AddPt(Result, St.CTM, x + w, y + h); AddPt(Result, St.CTM, x, y + h);
+  end
+  else if (tn = 'circle') or (tn = 'ellipse') then
+  begin
+    cx := ToF(PresAttr(sh, 'cx')); cy := ToF(PresAttr(sh, 'cy'));
+    if tn = 'circle' then begin rx := ToF(PresAttr(sh, 'r')); ry := rx; end
+    else begin rx := ToF(PresAttr(sh, 'rx')); ry := ToF(PresAttr(sh, 'ry')); end;
+    for i := 0 to 63 do
+    begin a := i / 64 * 2 * Pi; AddPt(Result, St.CTM, cx + rx * Cos(a), cy + ry * Sin(a)); end;
+  end
+  else if tn = 'polygon' then
+  begin
+    nums := NumList(PresAttr(sh, 'points')); i := 0;
+    while i + 1 < Length(nums) do begin AddPt(Result, St.CTM, nums[i], nums[i + 1]); Inc(i, 2); end;
+  end
+  else if tn = 'path' then
+  begin
+    SetLength(contours, 64);
+    ParsePath(sh.GetAttribute('d'), St.CTM, contours, nc);
+    if nc > 0 then Result := contours[0];   // first subpath
+  end;
+end;
+
 { ---- node walk -------------------------------------------------------- }
 
 procedure PaintNode(Canvas: TTina4Canvas; Tag: THTMLTag; const Parent: TSvgState);
@@ -707,9 +948,28 @@ var
   nc, i: Integer;
   fillCol, strokeCol: TTina4Color;
   sw: Single;
+  clipTag: THTMLTag;
+  clipPts: TTina4PointArray;
+  clipped: Boolean;
+  useTarget: THTMLTag;
+  us: TSvgState;
+  um: TMat;
+  href: string;
 begin
   st := MergeState(Tag, Parent);
   tn := LowerCase(Tag.TagName);
+  // clip-path="url(#id)" — clip this element (and, for <g>, its whole subtree)
+  // to the referenced <clipPath>'s first shape. userSpaceOnUse (the default).
+  clipped := False;
+  clipTag := LookupClipPath(PresAttr(Tag, 'clip-path'));
+  if clipTag <> nil then
+  begin
+    clipPts := ClipContourOf(clipTag, st);
+    if Length(clipPts) >= 3 then
+    begin
+      Canvas.SaveState; Canvas.ClipPolygon(clipPts); clipped := True;
+    end;
+  end;
   if (tn = 'g') or (tn = 'svg') or (tn = 'a') then
   begin
     for c in Tag.Children do PaintNode(Canvas, c, st);
@@ -721,6 +981,22 @@ begin
   else if tn = 'polyline' then PaintPoly(Canvas, Tag, st, False)
   else if tn = 'polygon' then PaintPoly(Canvas, Tag, st, True)
   else if tn = 'text' then PaintText(Canvas, Tag, st)
+  else if tn = 'use' then
+  begin
+    // <use href="#id" x y> — re-paint the referenced element, translated by x/y,
+    // inheriting this <use>'s presentation (fill etc.). Guarded against cycles.
+    href := PresAttr(Tag, 'href');
+    if href = '' then href := Tag.GetAttribute('xlink:href');
+    useTarget := LookupById(href);
+    if (useTarget <> nil) and (useTarget <> Tag) and (GUseDepth < 8) then
+    begin
+      um := MatId;
+      um.e := ToF(PresAttr(Tag, 'x')); um.f := ToF(PresAttr(Tag, 'y'));
+      us := st; us.CTM := MatMul(st.CTM, um);
+      Inc(GUseDepth);
+      try PaintNode(Canvas, useTarget, us); finally Dec(GUseDepth); end;
+    end;
+  end
   else if tn = 'path' then
   begin
     SetLength(contours, 64);
@@ -731,8 +1007,16 @@ begin
       // fill all subpaths together (holes via nonzero winding)
       if st.HasFill then
       begin
-        fillCol := WithAlpha(st.FillColor, st.Opacity * st.FillOpacity);
-        Canvas.FillPolygon(contours, fillCol, False);
+        if (st.FillGrad <> nil) and (nc = 1) then
+          FillGradientContour(Canvas, contours[0], st)   // single subpath: clip + gradient
+        else
+        begin
+          if st.FillGrad <> nil then       // multi-subpath: keep the holes, approximate the gradient
+            fillCol := GradFallbackColor(st.FillGrad, st)
+          else
+            fillCol := WithAlpha(st.FillColor, st.Opacity * st.FillOpacity);
+          Canvas.FillPolygon(contours, fillCol, False);
+        end;
       end;
       if st.HasStroke then
       begin
@@ -743,6 +1027,7 @@ begin
       end;
     end;
   end;
+  if clipped then Canvas.RestoreState;
 end;
 
 { ---- viewBox setup + entry points ------------------------------------- }
@@ -798,8 +1083,15 @@ begin
   begin
     ctm.e := X; ctm.f := Y;    // 1:1 user units at the box origin
   end;
-  st := DefaultState(ctm);
-  for c in Root.Children do PaintNode(Canvas, c, st);
+  GDefs := TStringList.Create;
+  try
+    GDefs.CaseSensitive := True;   // ids already lowercased on insert/lookup
+    CollectGradients(Root);
+    st := DefaultState(ctm);
+    for c in Root.Children do PaintNode(Canvas, c, st);
+  finally
+    FreeAndNil(GDefs);
+  end;
 end;
 
 end.

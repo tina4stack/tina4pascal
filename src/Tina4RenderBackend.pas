@@ -296,6 +296,17 @@ type
 procedure Tina4SetNotifyHandler(P: TTina4NotifyProc);
 procedure Tina4Notify(const Title, Body, Tag: string);
 
+  { A decoupled link hook: the host wires this to its shell's URL opener, and the
+    core calls Tina4InvokeLink when an <a href> is activated (tel:/mailto:/sms:/
+    http(s):/geo: — the dialer, mail app, browser…). The core never opens a URL
+    itself (stays OS-free); Tina4InvokeLink returns True only when a handler ran,
+    so an unhandled anchor falls through to the app's own onclick logic. }
+type
+  TTina4LinkProc = procedure(const Href, Target: string);
+
+procedure Tina4SetLinkHandler(P: TTina4LinkProc);
+function Tina4InvokeLink(const Href, Target: string): Boolean;
+
 { Remote-push registration: the shell hands the OS device token (APNs on iOS,
   Firebase Cloud Messaging (FCM) on Android) to the core, which forwards it to
   whatever the app wired - typically a POST to the Tina4 backend so the server
@@ -368,6 +379,7 @@ end;
 
 var GNotifyHook: TTina4NotifyProc = nil;
     GPushHook: TTina4PushProc = nil;
+    GLinkHook: TTina4LinkProc = nil;
 
 procedure Tina4SetNotifyHandler(P: TTina4NotifyProc);
 begin
@@ -377,6 +389,17 @@ end;
 procedure Tina4Notify(const Title, Body, Tag: string);
 begin
   if Assigned(GNotifyHook) then GNotifyHook(Title, Body, Tag);
+end;
+
+procedure Tina4SetLinkHandler(P: TTina4LinkProc);
+begin
+  GLinkHook := P;
+end;
+
+function Tina4InvokeLink(const Href, Target: string): Boolean;
+begin
+  Result := Assigned(GLinkHook) and (Trim(Href) <> '');
+  if Result then GLinkHook(Href, Target);
 end;
 
 procedure Tina4SetPushTokenHandler(P: TTina4PushProc);
