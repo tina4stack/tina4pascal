@@ -37,7 +37,7 @@ while [ $# -gt 0 ]; do case "$1" in
 
 # expected divergences (custom elements, synthetic fonts, approximations) — shown
 # but never counted as failures. Extend as features are explained.
-EXPECT="camera-view|barcode|font-smallcaps|font-stretch|fontface|svg-radial-gradient|text-uppercase|text-lowercase|text-capitalize|bg-blend|css-blend|lottie|qrcode|video|audio|recorder"
+EXPECT="camera-view|barcode|font-smallcaps|font-stretch|fontface|svg-radial-gradient|text-uppercase|text-lowercase|text-capitalize|lottie|qrcode|video|audio|recorder"
 
 setopt NULL_GLOB 2>/dev/null || true    # empty globs expand to nothing, not an error
 mkdir -p "$ROWS"; rm -f "$ROWS"/*.png 2>/dev/null || true
