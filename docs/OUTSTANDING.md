@@ -125,7 +125,13 @@ low-quality hack.
   `href` stop-inheritance, gradient *strokes*, clip/mask, filters, patterns,
   `<use>`.
 - **[S] Lottie** — no gradient support.
-- **[S] Canvas2D** — image draw axis-aligned only (rotate/scale TODO).
+- ~~**[S] Canvas2D image transforms**~~ — **DONE.** `drawImage` now honours the
+  2D context matrix: an axis-aligned matrix (translate + scale, incl. flip) maps
+  both corners through the CTM so the drawn size follows `ctx.scale` on every
+  backend; rotation/skew draw through the full user→device matrix
+  (`TransformMatrix`, honoured on Cocoa/iOS — degrades to axis-aligned where the
+  shell has no device transform, same as CSS transforms there). Verified via a
+  runtime Cocoa snapshot (natural / 1.5× scaled / 35°-rotated all correct).
 - **[S] `<video>` (macOS)** — `AVPlayerView` loop TODO + GUI-run verify pending.
 
 ## D. Capture stack (per-shell)

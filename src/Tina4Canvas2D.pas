@@ -615,12 +615,28 @@ begin
 end;
 
 procedure TTina4Canvas2D.DrawImage(const Src: string; DX, DY, DW, DH: Single);
-var h: Integer; p: TTina4Point;
+var h: Integer; p, q: TTina4Point;
 begin
   h := FCanvas.LoadImage(Src);
   if h < 0 then Exit;
-  p := Dev(DX, DY);   // axis-aligned placement (rotation/scale of images: TODO)
-  FCanvas.DrawImage(h, p.X, p.Y, DW, DH);
+  if (Abs(S.M.B) < 1e-6) and (Abs(S.M.C) < 1e-6) then
+  begin
+    // axis-aligned matrix (translate + scale, incl. flip): map both corners to
+    // device space so the drawn size follows the CTM scale — works on every
+    // backend, no transform support needed.
+    p := Dev(DX, DY); q := Dev(DX + DW, DY + DH);
+    FCanvas.DrawImage(h, Min(p.X, q.X), Min(p.Y, q.Y), Abs(q.X - p.X), Abs(q.Y - p.Y));
+  end
+  else
+  begin
+    // rotation / skew: draw through the full user→device CTM so the image
+    // rotates with the paths (honoured on Cocoa/iOS; degrades to axis-aligned
+    // on backends without a device transform, same as CSS transforms there).
+    FCanvas.SaveState;
+    FCanvas.TransformMatrix(S.M.A, S.M.B, S.M.C, S.M.D, S.M.E, S.M.F);
+    FCanvas.DrawImage(h, DX, DY, DW, DH);
+    FCanvas.RestoreState;
+  end;
 end;
 
 end.
