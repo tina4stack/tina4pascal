@@ -68,6 +68,9 @@ type
                                    // height, painted rotated 90° CW into right-to-left columns
     VerticalLR: Boolean;           // writing-mode:vertical-lr — same CW rotation, but the
                                    // column order is reversed in layout so columns read L→R
+    ColRuleGaps: Integer;          // multicol: number of column gaps (ncols-1); 0 = no rule
+    ColRuleColW, ColRuleGap: Single;   // column width and gap, for placing column-rules
+    ColRuleX0, ColRuleY0, ColRuleH: Single;  // content origin + tallest column height
     constructor Create;
     destructor Destroy; override;
   end;
@@ -4653,6 +4656,14 @@ begin
     cp := slotBottom[k] - colStartTop[col];   // this child's bottom within its column
     if cp > maxColH then maxColH := cp;
   end;
+
+  // record geometry so PaintBoxEx can draw column-rules in the gaps
+  if (st.ColumnRuleWidth > 0) and (LowerCase(st.ColumnRuleStyle) <> 'none') then
+  begin
+    box.ColRuleGaps := ncols - 1;
+    box.ColRuleColW := colW; box.ColRuleGap := gap;
+    box.ColRuleX0 := contentX; box.ColRuleY0 := contentY; box.ColRuleH := maxColH;
+  end;
   Result := maxColH;
 end;
 
@@ -5885,6 +5896,7 @@ var
   ofIW, ofIH: Single;                  // intrinsic image size for object-fit
   ofDX, ofDY, ofDW, ofDH: Single;      // object-fit destination rect
   ofClipped: Boolean;                  // did we set a clip for the fitted image?
+  crI: Integer; crX, crTop: Single; crCol: TTina4Color;   // column-rule painting
 begin
   st := Box.Style;
   vRotSaved := False;
@@ -6523,6 +6535,29 @@ begin
         Dec(zj);
       end;
     end;
+  // multicol column-rule: a vertical line centred in each column gap
+  if Box.ColRuleGaps > 0 then
+  begin
+    crCol := st.ColumnRuleColor;
+    if (crCol and $FF000000) = 0 then crCol := st.Color;   // unset → currentColor
+    for crI := 0 to Box.ColRuleGaps - 1 do
+    begin
+      crX := Box.ColRuleX0 + (crI + 1) * Box.ColRuleColW
+             + crI * Box.ColRuleGap + Box.ColRuleGap / 2;
+      crTop := Box.ColRuleY0 - innerOfs;
+      if LowerCase(st.ColumnRuleStyle) = 'double' then
+      begin
+        Canvas.FillRect(crX - st.ColumnRuleWidth / 2, crTop,
+          Max(1, st.ColumnRuleWidth / 3), Box.ColRuleH, crCol);
+        Canvas.FillRect(crX + st.ColumnRuleWidth / 2 - Max(1, st.ColumnRuleWidth / 3), crTop,
+          Max(1, st.ColumnRuleWidth / 3), Box.ColRuleH, crCol);
+      end
+      else
+        Canvas.FillRect(crX - st.ColumnRuleWidth / 2, crTop,
+          Max(1, st.ColumnRuleWidth), Box.ColRuleH, crCol);
+    end;
+  end;
+
   for zi := 0 to High(zorder) do
   begin
     i := zorder[zi];

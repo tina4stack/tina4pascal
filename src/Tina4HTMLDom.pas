@@ -396,6 +396,9 @@ type
     ColGap: Single;
     ColumnCount: Integer;         // CSS multicol: 0 = auto/none, else N columns
     ColumnWidth: Single;          // multicol ideal column width, -1 = auto
+    ColumnRuleWidth: Single;      // rule between columns: 0 = none
+    ColumnRuleColor: TAlphaColor;
+    ColumnRuleStyle: string;      // 'none' (default) / solid / dashed / dotted / double
     // text-shadow: offsetX offsetY [blur] color
     TextShadowOffsetX: Single;
     TextShadowOffsetY: Single;
@@ -2726,6 +2729,7 @@ begin
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
   Result.ColumnCount := 0; Result.ColumnWidth := -1;
+  Result.ColumnRuleWidth := 0; Result.ColumnRuleColor := TAlphaColors.Null; Result.ColumnRuleStyle := 'none';
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
   Result.BgPosY := 0;
@@ -3295,6 +3299,7 @@ begin
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
   Result.ColumnCount := 0; Result.ColumnWidth := -1;
+  Result.ColumnRuleWidth := 0; Result.ColumnRuleColor := TAlphaColors.Null; Result.ColumnRuleStyle := 'none';
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
   Result.BgPosY := 0;
@@ -4940,6 +4945,31 @@ begin
         Style.ColumnWidth := ParseLength(OvPart, Style.FontSize);  // a length = width
     end;
   end;
+  // column-rule (width || style || color), like the outline shorthand
+  if Decls.TryGetValue('column-rule', Temp) and not ShouldSkip(Temp) then
+  begin
+    Style.ColumnRuleStyle := 'solid';
+    Style.ColumnRuleColor := Style.Color;
+    Style.ColumnRuleWidth := 3;   // 'medium'
+    for OP in Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+    begin
+      OT := OP.Trim;
+      if (OT = 'none') or (OT = 'hidden') then Style.ColumnRuleStyle := 'none'
+      else if (OT = 'solid') or (OT = 'dashed') or (OT = 'dotted') or (OT = 'double') then
+        Style.ColumnRuleStyle := OT
+      else if OT.EndsWith('px') or OT.EndsWith('em') or OT.EndsWith('rem') or (OT = '0') or
+              (StrToFloatDef(OT, Single.MaxValue) <> Single.MaxValue) then
+        Style.ColumnRuleWidth := ParseLength(OT, Style.FontSize)
+      else
+        Style.ColumnRuleColor := ParseColor(OT);
+    end;
+  end;
+  if Decls.TryGetValue('column-rule-width', Temp) and not ShouldSkip(Temp) then
+    Style.ColumnRuleWidth := ParseLength(Temp, Style.FontSize);
+  if Decls.TryGetValue('column-rule-style', Temp) and not ShouldSkip(Temp) then
+    Style.ColumnRuleStyle := Temp.Trim.ToLower;
+  if Decls.TryGetValue('column-rule-color', Temp) and not ShouldSkip(Temp) then
+    Style.ColumnRuleColor := ParseColor(Temp);
   // CSS Grid templates + item placement
   if Decls.TryGetValue('grid-template-columns', Temp) and not ShouldSkip(Temp) then
     Style.GridTemplateColumns := Temp.Trim.ToLower;
