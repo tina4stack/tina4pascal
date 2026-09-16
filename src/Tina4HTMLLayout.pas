@@ -2114,6 +2114,14 @@ begin
         begin
           baseW[i] := 18; growF[i] := 0; shrinkF[i] := 0;
         end
+        else if cs.FlexBasis >= 0 then
+        begin
+          // flex-basis is the item's base main size (content-box), taking
+          // precedence over width — e.g. `flex: 0 0 60px`. auto (-1) falls through.
+          baseW[i] := cs.FlexBasis;
+          if not SameText(cs.BoxSizing, 'border-box') then
+            baseW[i] := baseW[i] + cs.Padding.Horz + cs.BorderWidths.Horz;
+        end
         else if ew >= 0 then
         begin
           if not SameText(cs.BoxSizing, 'border-box') then
@@ -2121,7 +2129,7 @@ begin
           baseW[i] := ew;
         end
         else if growF[i] > 0 then
-          baseW[i] := 0                        // flex:1 → basis 0
+          baseW[i] := 0                        // flex-grow with basis:auto → 0 base
         else
         begin                                   // content width (single line)
           sb := TStringBuilder.Create;
@@ -2152,15 +2160,17 @@ begin
       begin
         cs := TComputedStyle.ForTag(itemTags[i], st, FSheet);
         targetW := baseW[i];
-        // grow only when NOT wrapping (wrapped items keep their base size)
-        if (growF[i] > 0) and (sumGrow > 0) and
-           not ((LowerCase(st.FlexWrap) = 'wrap') or (LowerCase(st.FlexWrap) = 'wrap-reverse')) then
-          targetW := targetW + freeMain * growF[i] / sumGrow
-        else if (overflowMain > 0) and (scaledShrink > 0) and (shrinkF[i] > 0) then
+        // shrink FIRST: on overflow, items shrink even when they also flex-grow
+        // (grow only ever adds positive free space, which overflow has none of).
+        if (overflowMain > 0) and (scaledShrink > 0) and (shrinkF[i] > 0) then
         begin
           targetW := baseW[i] - overflowMain * (shrinkF[i] * baseW[i]) / scaledShrink;
           if targetW < 0 then targetW := 0;
-        end;
+        end
+        // grow only when NOT wrapping (wrapped items keep their base size)
+        else if (growF[i] > 0) and (sumGrow > 0) and
+           not ((LowerCase(st.FlexWrap) = 'wrap') or (LowerCase(st.FlexWrap) = 'wrap-reverse')) then
+          targetW := targetW + freeMain * growF[i] / sumGrow;
         cs.ExplicitWidth := targetW;    // force the resolved main size
         cs.BoxSizing := 'border-box';
         cb := MakeReplacedBox(itemTags[i], cs, contentW);

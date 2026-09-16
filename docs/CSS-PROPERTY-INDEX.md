@@ -50,8 +50,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 
 | Property | Status | Note |
 |---|---|---|
-| flex, flex-grow, flex-basis | ✅ | grow distributes free main space |
-| flex-shrink | ✅ | weighted shrink pass on overflowing non-wrapping rows |
+| flex, flex-grow, flex-basis | ✅ | **flex-basis is the item's base main size** (content-box), taking precedence over `width` — `flex: 0 0 60px` gives an exactly-60px item (was 0); grow distributes free main space. Reftest `flex-basis-fixed` |
+| flex-shrink | ✅ | weighted shrink pass on overflowing non-wrapping rows — **applies even when the item also flex-grows** (grow only adds positive free space; on overflow, shrink wins), verified 0.00% vs Chrome |
 | flex-direction | ✅ | row/column + row-reverse/column-reverse: items reverse order **and** pack from the far edge (a default `row-reverse` right-aligns, matching Chrome 0.00%) — the reverse flips `justify-content` flex-start↔flex-end. Reftest `css-flexreverse` |
 | flex-wrap | ✅ | wrap + wrap-reverse for **both** row and column directions (lines/columns stacked on the cross axis, reverse order for wrap-reverse, align-content honoured; grow disabled while wrapping). Column wrap packs down each column until the definite height is exceeded, then stacks columns across — verified matching Chrome (`flex-flow: column wrap` 0.25%). Reftest `flex-flow` |
 | flex-flow | ✅ | shorthand for `flex-direction` \|\| `flex-wrap` (either order, one or both) |
