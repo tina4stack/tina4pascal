@@ -53,7 +53,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | flex, flex-grow, flex-basis | ✅ | grow distributes free main space |
 | flex-shrink | ✅ | weighted shrink pass on overflowing non-wrapping rows |
 | flex-direction | ✅ | row/column + row-reverse/column-reverse: items reverse order **and** pack from the far edge (a default `row-reverse` right-aligns, matching Chrome 0.00%) — the reverse flips `justify-content` flex-start↔flex-end. Reftest `css-flexreverse` |
-| flex-wrap | 🟡 | wrap + wrap-reverse for **row** direction (lines stacked in reverse cross order; grow disabled while wrapping). **Column-direction wrap is not implemented** (`flex-flow: column wrap` keeps every item in one column, overflowing) — gated on `not isCol` in `LayoutFlex` |
+| flex-wrap | ✅ | wrap + wrap-reverse for **both** row and column directions (lines/columns stacked on the cross axis, reverse order for wrap-reverse, align-content honoured; grow disabled while wrapping). Column wrap packs down each column until the definite height is exceeded, then stacks columns across — verified matching Chrome (`flex-flow: column wrap` 0.25%). Reftest `flex-flow` |
 | flex-flow | ✅ | shorthand for `flex-direction` \|\| `flex-wrap` (either order, one or both) |
 | justify-content | ✅ | start/center/end/space-between/around/evenly |
 | align-items | ✅ | center/flex-end/stretch (the default, fills the cross axis); no baseline |
@@ -206,10 +206,10 @@ mode renderer doesn't yet have):
     **background-blend-mode** (software per-background-layer blend compositing —
     the existing blend path is Cocoa CGBlendMode, not pure-Pascal).
 
-Coverage: **104 ✅ · 7 🟡 · 3 📦 · 0 ❌** — no property is entirely unhandled.
-(An ours-vs-Chrome pass exposed two flex bugs the ours-vs-ours reftests missed:
-reverse-direction packing — now **fixed** and back to ✅ — and column-direction
-`flex-wrap`, still 🟡.)
+Coverage: **105 ✅ · 6 🟡 · 3 📦 · 0 ❌** — no property is entirely unhandled.
+(An ours-vs-Chrome pass exposed two flex bugs the ours-vs-ours reftests missed —
+reverse-direction packing and column-direction `flex-wrap` — both now **fixed**
+and verified 0.0–0.25% vs Chrome.)
 Every 🟡/📦 that remains is the advanced tail of an otherwise-working feature and
 needs a dedicated subsystem to finish: a hyphenation dictionary + soft-hyphen
 line-breaking, the Unicode bidi algorithm, font synthesis (small-caps/stretch),

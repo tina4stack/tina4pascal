@@ -1991,6 +1991,7 @@ var
   lineStartA, lineEndA: array of Integer;
   lineHA: array of Single;
   crossAvail, freeCross, startY, lineGap: Single;
+  wrapH: Single;   // column-wrap: the definite height items wrap against
 begin
   st := TComputedStyle.ForTag(Tag, ParentStyle, FSheet);
   if LowerCase(st.Display) = 'none' then Exit(0);
@@ -2197,10 +2198,97 @@ begin
       contentH := 0;
       for i := 0 to items.Count - 1 do contentH := Max(contentH, items[i].H);
     end;
+    // the definite content-height a column wraps against (before contentH grows
+    // to the content sum below) — column-wrap needs it, and only works with one.
+    if eh >= 0 then
+    begin
+      if SameText(st.BoxSizing, 'border-box') then wrapH := Max(0, eh - edgeT - edgeB)
+      else wrapH := eh;
+    end
+    else wrapH := -1;
     if eh >= 0 then
     begin
       if SameText(st.BoxSizing, 'border-box') then contentH := Max(contentH, eh - edgeT - edgeB)
       else contentH := Max(contentH, eh);
+    end;
+
+    // flex-wrap (column): pack items down each column until the definite height
+    // is exceeded, then stack columns across the cross (horizontal) axis — the
+    // mirror of the row-wrap pass below (main=vertical, cross=horizontal). Needs
+    // a definite height; without one a column can't wrap.
+    fw := LowerCase(st.FlexWrap);
+    if isCol and (wrapH >= 0) and ((fw = 'wrap') or (fw = 'wrap-reverse')) then
+    begin
+      // pass 1: column boundaries; lineHA[] holds each column's WIDTH (max item W)
+      SetLength(lineStartA, 0); SetLength(lineEndA, 0); SetLength(lineHA, 0);
+      i := 0;
+      while i < items.Count do
+      begin
+        lineW := 0; lineEnd := i;            // lineW accumulates HEIGHT down the column
+        while (lineEnd < items.Count) and
+              ((lineEnd = i) or
+               (lineW + flexGap + items[lineEnd].H <= wrapH + 0.5)) do
+        begin
+          if lineEnd > i then lineW := lineW + flexGap;
+          lineW := lineW + items[lineEnd].H;
+          Inc(lineEnd);
+        end;
+        lineH := 0;
+        for k := i to lineEnd - 1 do lineH := Max(lineH, items[k].W);   // column width
+        nlines := Length(lineHA);
+        SetLength(lineStartA, nlines + 1); SetLength(lineEndA, nlines + 1); SetLength(lineHA, nlines + 1);
+        lineStartA[nlines] := i; lineEndA[nlines] := lineEnd; lineHA[nlines] := lineH;
+        i := lineEnd;
+      end;
+      nlines := Length(lineHA);
+      totalH := 0;                            // total WIDTH of all columns
+      for k := 0 to nlines - 1 do totalH := totalH + lineHA[k];
+      totalH := totalH + flexGap * Max(0, nlines - 1);
+      crossAvail := contentW; if crossAvail < totalH then crossAvail := totalH;
+      freeCross := crossAvail - totalH;
+      ac := LowerCase(st.AlignContent); if ac = '' then ac := 'stretch';
+      startY := contentX; lineGap := flexGap;   // startY = starting X (cross axis)
+      if freeCross > 0 then
+      begin
+        if ac = 'center' then startY := startY + freeCross / 2
+        else if (ac = 'flex-end') or (ac = 'end') then startY := startY + freeCross
+        else if (ac = 'space-between') and (nlines > 1) then lineGap := flexGap + freeCross / (nlines - 1)
+        else if (ac = 'space-around') and (nlines > 0) then
+        begin startY := startY + freeCross / (nlines * 2); lineGap := flexGap + freeCross / nlines; end;
+      end;
+      lineY := startY;                          // running X across columns
+      for li := 0 to nlines - 1 do
+      begin
+        if fw = 'wrap-reverse' then
+        begin
+          crossOff := startY;
+          for k := 0 to nlines - 1 do
+            if k > li then crossOff := crossOff + lineHA[k] + lineGap;
+        end
+        else crossOff := lineY;                 // this column's X
+        lineFree := wrapH; for k := lineStartA[li] to lineEndA[li] - 1 do lineFree := lineFree - items[k].H;
+        lineFree := lineFree - flexGap * Max(0, (lineEndA[li] - lineStartA[li]) - 1);
+        if lineFree < 0 then lineFree := 0;
+        lx := 0; lgap := 0;                      // running Y within the column
+        if jc = 'center' then lx := lineFree / 2
+        else if (jc = 'flex-end') or (jc = 'end') then lx := lineFree
+        else if (jc = 'space-between') and (lineEndA[li] - lineStartA[li] > 1) then lgap := lineFree / (lineEndA[li] - lineStartA[li] - 1)
+        else if (jc = 'space-around') and (lineEndA[li] - lineStartA[li] > 0) then
+        begin lx := lineFree / ((lineEndA[li] - lineStartA[li]) * 2); lgap := lineFree / (lineEndA[li] - lineStartA[li]); end;
+        for k := lineStartA[li] to lineEndA[li] - 1 do
+        begin
+          cb := items[k];
+          if (ai = 'stretch') and not crossFixed[k] and (cb.W < lineHA[li]) then cb.W := lineHA[li];
+          if ai = 'center' then ShiftBoxTree(cb, crossOff + (lineHA[li] - cb.W) / 2, contentY + lx)
+          else if (ai = 'flex-end') or (ai = 'end') then ShiftBoxTree(cb, crossOff + lineHA[li] - cb.W, contentY + lx)
+          else ShiftBoxTree(cb, crossOff, contentY + lx);
+          lx := lx + cb.H + lgap + flexGap;
+        end;
+        lineY := lineY + lineHA[li] + lineGap;
+      end;
+      box.H := wrapH + edgeT + edgeB;
+      Result := box.H + mT + mB;
+      Exit;   // finally frees items/itemTags
     end;
 
     // flex-wrap (row): pack items into lines (pass 1), then stack them on the
