@@ -2429,10 +2429,29 @@ begin
 end;
 
 { Expand repeat(n, tracklist) in a grid-template track spec into the flat list. }
-function ExpandGridRepeat(const Spec: string): string;
+{ The min track size of a repeat() list item, for auto-fit/auto-fill counting —
+  a minmax(min,…) floor or a plain length. 0 when it can't be sized here. }
+function GridTrackMin(const Spec: string): Single;
+var s: string; c: Integer;
+begin
+  s := Trim(Spec);
+  if LowerCase(s).StartsWith('minmax(') then
+  begin
+    s := Copy(s, 8, Length(s) - 8);
+    c := Pos(',', s); if c > 0 then s := Copy(s, 1, c - 1);
+    s := Trim(s);
+  end;
+  if s.EndsWith('px') then Result := StrToFloatDef(Copy(s, 1, Length(s) - 2), 0)
+  else if (s <> '') and CharInSet(s[1], ['0'..'9', '.']) and (not s.EndsWith('%')) and (not s.EndsWith('fr')) then
+    Result := StrToFloatDef(s, 0)
+  else Result := 0;   // %, fr, auto, content — not countable without more context
+end;
+
+function ExpandGridRepeat(const Spec: string; AvailW: Single = 0; Gap: Single = 0): string;
 var
   p, depth, comma, close, n, j: Integer;
   head, inner, cntStr, listStr, tail: string;
+  minSz: Single;
 begin
   Result := Spec;
   p := Pos('repeat(', LowerCase(Result));
@@ -2452,7 +2471,13 @@ begin
     cntStr := Trim(Copy(Result, p + 7, comma - (p + 7)));
     listStr := Trim(Copy(Result, comma + 1, close - comma - 1));
     tail := Copy(Result, close + 1, MaxInt);
-    n := StrToIntDef(cntStr, 1);
+    if LowerCase(cntStr).StartsWith('auto-f') and (AvailW > 0) then
+    begin
+      // auto-fit / auto-fill: as many tracks of the min size as fit the row
+      minSz := GridTrackMin(listStr);
+      if minSz > 0 then n := Max(1, Floor((AvailW + Gap) / (minSz + Gap))) else n := 1;
+    end
+    else n := StrToIntDef(cntStr, 1);
     inner := '';
     for j := 1 to n do inner := inner + ' ' + listStr;
     Result := head + inner + ' ' + tail;
@@ -2487,18 +2512,48 @@ var
 
   procedure ParseColumns(const Spec: string);
   var s: string; t: string; v: Single;
+    inner, maxTok: string; mmParts: TArray<string>;
+    function TrackLen(const tk: string): Single;   // px / % / 0 for a track length
+    var q: string;
+    begin
+      q := Trim(tk);
+      if (q = '') or (q = 'auto') or q.Contains('content') then Exit(0);
+      if q.EndsWith('%') then Result := contentW * StrToFloatDef(Copy(q, 1, Length(q) - 1), 0) / 100
+      else Result := StrToFloatDef(StringReplace(q, 'px', '', [rfReplaceAll, rfIgnoreCase]), 0);
+    end;
   begin
     ncols := 0;
     SetLength(trackFixed, 0); SetLength(trackW, 0); SetLength(trackFr, 0);
-    s := Trim(ExpandGridRepeat(Spec));
+    s := Trim(ExpandGridRepeat(Spec, contentW, colGap));
     if s = '' then Exit;
+    s := StringReplace(s, ', ', ',', [rfReplaceAll]);   // keep minmax(0, 1fr) one token
     while Pos('  ', s) > 0 do s := StringReplace(s, '  ', ' ', [rfReplaceAll]);
     toks := s.Split([' ']);
     for t in toks do
     begin
       if Trim(t) = '' then Continue;
       SetLength(trackFixed, ncols + 1); SetLength(trackW, ncols + 1); SetLength(trackFr, ncols + 1);
-      if t.EndsWith('fr') then
+      if t.ToLower.StartsWith('minmax(') then
+      begin
+        // minmax(min, max): min is the track's floor; max drives sizing — an fr
+        // max makes it flexible (floored at min), a length max pins it.
+        inner := Copy(t, 8, Length(t) - 7);
+        if inner.EndsWith(')') then Delete(inner, Length(inner), 1);
+        mmParts := inner.Split([',']);
+        if Length(mmParts) >= 1 then trackW[ncols] := TrackLen(mmParts[0]) else trackW[ncols] := 0;
+        if Length(mmParts) >= 2 then maxTok := Trim(mmParts[1]) else maxTok := '1fr';
+        if maxTok.ToLower.EndsWith('fr') then
+        begin
+          trackFixed[ncols] := False;
+          trackFr[ncols] := StrToFloatDef(Copy(maxTok, 1, Length(maxTok) - 2), 1);
+        end
+        else
+        begin
+          trackFixed[ncols] := True; trackFr[ncols] := 0;
+          trackW[ncols] := Max(trackW[ncols], TrackLen(maxTok));
+        end;
+      end
+      else if t.EndsWith('fr') then
       begin
         trackFixed[ncols] := False;
         trackFr[ncols] := StrToFloatDef(Copy(t, 1, Length(t) - 2), 1);
@@ -2675,7 +2730,7 @@ begin
   if frSum > 0 then
     frUnit := Max(0, (contentW - fixedSum - colGap * (ncols - 1))) / frSum;
   for k := 0 to ncols - 1 do
-    if not trackFixed[k] then trackW[k] := trackFr[k] * frUnit;
+    if not trackFixed[k] then trackW[k] := Max(trackW[k], trackFr[k] * frUnit);  // minmax floor
 
   // column X positions
   SetLength(colX, ncols);
