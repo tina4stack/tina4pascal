@@ -3773,9 +3773,40 @@ begin
   if Length(nums) >= 4 then Result.SpreadRadius := nums[3];
 end;
 
+{ Substitute var(--name[, fallback]) in a value against Props (recursively). A
+  standalone twin of TCSSStyleSheet.ResolveVarWith for the inline-style path. }
+function ResolveVarStr(const Value: string; Props: TDictionary<string, string>): string;
+var VarStart, VarEnd, CommaPos: Integer; VarExpr, VarName, Fallback, Resolved: string;
+begin
+  Result := Value;
+  VarStart := Result.IndexOf('var(');
+  while VarStart >= 0 do
+  begin
+    VarEnd := Result.IndexOf(')', VarStart + 4);
+    if VarEnd < 0 then Break;
+    VarExpr := Result.Substring(VarStart + 4, VarEnd - VarStart - 4).Trim;
+    CommaPos := VarExpr.IndexOf(',');
+    if CommaPos >= 0 then
+    begin VarName := VarExpr.Substring(0, CommaPos).Trim; Fallback := VarExpr.Substring(CommaPos + 1).Trim; end
+    else begin VarName := VarExpr; Fallback := ''; end;
+    if Props.TryGetValue(VarName, Resolved) then
+    begin
+      if Resolved.Contains('var(') then Resolved := ResolveVarStr(Resolved, Props);
+      Result := Result.Substring(0, VarStart) + Resolved + Result.Substring(VarEnd + 1);
+    end
+    else if Fallback <> '' then
+      Result := Result.Substring(0, VarStart) + Fallback + Result.Substring(VarEnd + 1)
+    else Break;
+    VarStart := Result.IndexOf('var(');
+  end;
+end;
+
 class procedure TComputedStyle.ApplyDeclarations(Decls: TCSSDeclarations; var Style: TComputedStyle; const ParentStyle: TComputedStyle);
 var
   Temp: string;
+  VarProps, ResolvedDecls: TDictionary<string, string>;
+  DKV: TPair<string, string>;
+  HadVar: Boolean;
   BgVal, ColorPart: string;
   UrlPos: Integer;
   BgRest: string;
@@ -3809,6 +3840,27 @@ var
   end;
 
 begin
+  // Inline var(): resolve var(--x) against the element's own custom properties
+  // before applying (stylesheet/:root-scoped vars are already resolved upstream).
+  // Covers `style="--c:red; background:var(--c)"`.
+  HadVar := False;
+  for DKV in Decls do
+    if DKV.Value.Contains('var(') then begin HadVar := True; Break; end;
+  if HadVar then
+  begin
+    VarProps := TDictionary<string, string>.Create;
+    ResolvedDecls := TDictionary<string, string>.Create;
+    try
+      for DKV in Decls do
+        if DKV.Key.StartsWith('--') then VarProps.AddOrSetValue(DKV.Key, DKV.Value);
+      for DKV in Decls do
+        if DKV.Value.Contains('var(') then
+          ResolvedDecls.AddOrSetValue(DKV.Key, ResolveVarStr(DKV.Value, VarProps));
+      for DKV in ResolvedDecls do Decls.AddOrSetValue(DKV.Key, DKV.Value);   // mutate after iterating
+    finally
+      ResolvedDecls.Free; VarProps.Free;
+    end;
+  end;
   if Decls.TryGetValue('color', Temp) and not ShouldSkip(Temp) then
     Style.Color := ParseColor(Temp);
   if Decls.TryGetValue('background-color', Temp) and not ShouldSkip(Temp) then
