@@ -61,6 +61,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | align-self, order | ✅ | `align-self` overrides `align-items` per item (stretch/center/start/end); `order` reorders items (stable) before layout |
 | align-content | ✅ | distributes wrapped lines on the cross axis (center/flex-end/space-between/space-around); stretch = default packing |
 | gap, row-gap, column-gap | ✅ | per-axis: `gap: <row> <col>`; flex uses column-gap on a row / row-gap on a column |
+| column-count, column-width, columns | 🟡 | CSS multi-column: block children are laid out at the reduced column width, then balanced across N columns (count given, or derived from `column-width` and the available width) honouring `column-gap`. `columns` shorthand parses width and/or count. Reftests `css-columns-count`, `css-columns-width`. Caveats: balances whole children (a single tall block/paragraph is not fragmented across columns), no `column-span`/`column-rule` |
 | grid-column, grid-row | ✅ | explicit start line + span, or `N / M`; occupancy-aware auto-placement around them |
 | grid-template-rows | ✅ | px / % / fr / auto row tracks. fr and % resolve against a definite container height and distribute the leftover; with an indefinite height they fall back to content size (matches Chrome) |
 | grid-template-areas, grid-area | ✅ | `"a a b" "a a c"` named-area template; an item's `grid-area: name` is placed at that area's bounding cell rect (row/col start + span). Single or double quotes |

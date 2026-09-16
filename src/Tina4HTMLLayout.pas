@@ -117,6 +117,10 @@ type
       const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
     function LayoutGrid(Parent: TLayoutBox; Tag: THTMLTag;
       const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
+    { CSS multi-column: lay children into one narrow column, then balance them
+      across N columns. Returns the used height (the tallest column). }
+    function LayoutColumns(box: TLayoutBox; Tag: THTMLTag;
+      const st: TComputedStyle; contentX, contentY, contentW: Single): Single;
     procedure CollectInlineText(Tag: THTMLTag; SB: TStringBuilder);
     procedure FreeSynthTags;
     function MakeAnonTextItem(Parent: THTMLTag; const S: string): THTMLTag;
@@ -4582,6 +4586,76 @@ begin
   UsedH := y - CY;
 end;
 
+function TLayoutEngine.LayoutColumns(box: TLayoutBox; Tag: THTMLTag;
+  const st: TComputedStyle; contentX, contentY, contentW: Single): Single;
+var
+  ncols, i, k, col, fcount: Integer;
+  colW, gap, usedH, target, colH, dx, dy, maxColH, cp: Single;
+  flow: array of TLayoutBox;
+  outerTop, slotBottom: array of Single;
+  colStartTop: array of Single;
+  colOf: array of Integer;
+  pos: string;
+begin
+  gap := st.ColGap; if gap < 0 then gap := 0;
+  if st.ColumnCount > 0 then ncols := st.ColumnCount
+  else if st.ColumnWidth > 0 then
+    ncols := Max(1, Floor((contentW + gap) / (st.ColumnWidth + gap)))
+  else ncols := 1;
+  if ncols < 1 then ncols := 1;
+  colW := (contentW - gap * (ncols - 1)) / ncols;
+  if colW < 1 then colW := 1;
+
+  // lay every child into a single column of the reduced width
+  usedH := 0;
+  LayoutChildren(box, Tag, st, contentX, contentY, colW, usedH);
+  if (ncols = 1) or (box.Children.Count = 0) then Exit(usedH);
+
+  // collect in-flow children (absolutely-positioned / fixed ones stay put)
+  SetLength(flow, box.Children.Count);
+  fcount := 0;
+  for i := 0 to box.Children.Count - 1 do
+  begin
+    pos := LowerCase(box.Children[i].Style.CSSPosition);
+    if (pos = 'absolute') or (pos = 'fixed') then Continue;
+    flow[fcount] := box.Children[i]; Inc(fcount);
+  end;
+  if fcount = 0 then Exit(usedH);
+  SetLength(flow, fcount);
+
+  // outer top of each flow child and the bottom of its vertical slot
+  SetLength(outerTop, fcount); SetLength(slotBottom, fcount);
+  for k := 0 to fcount - 1 do
+    outerTop[k] := flow[k].Y - Max(0, flow[k].Style.Margin.Top);
+  for k := 0 to fcount - 2 do slotBottom[k] := outerTop[k + 1];
+  slotBottom[fcount - 1] := contentY + usedH;
+
+  // greedily fill columns up to the balanced target height
+  SetLength(colStartTop, ncols); SetLength(colOf, fcount);
+  target := usedH / ncols;
+  col := 0; colStartTop[0] := outerTop[0];
+  for k := 0 to fcount - 1 do
+  begin
+    colOf[k] := col;
+    colH := slotBottom[k] - colStartTop[col];
+    if (col < ncols - 1) and (colH >= target) and (k < fcount - 1) then
+    begin Inc(col); colStartTop[col] := outerTop[k + 1]; end;
+  end;
+
+  // shift each column into place and measure the tallest
+  maxColH := 0;
+  for k := 0 to fcount - 1 do
+  begin
+    col := colOf[k];
+    dx := col * (colW + gap);
+    dy := contentY - colStartTop[col];
+    ShiftBoxTree(flow[k], dx, dy);
+    cp := slotBottom[k] - colStartTop[col];   // this child's bottom within its column
+    if cp > maxColH then maxColH := cp;
+  end;
+  Result := maxColH;
+end;
+
 function TLayoutEngine.LayoutBlock(Parent: TLayoutBox; Tag: THTMLTag;
   const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
 var
@@ -4694,7 +4768,13 @@ begin
     and ((Pos('vertical', st.WritingMode) > 0) or (Pos('sideways', st.WritingMode) > 0))
     and (Pos('lr', st.WritingMode) > 0);
   if box.VerticalRL or box.VerticalLR then contentW := Max(1, FContainingH);  // wrap against the content height
-  LayoutChildren(box, Tag, st, contentX, contentY, contentW, usedH);
+  // CSS multi-column: balance block children across N columns (column-count /
+  // column-width / columns). Falls back to normal flow for a single column.
+  if ((st.ColumnCount > 0) or (st.ColumnWidth > 0)) and
+     not (box.VerticalRL or box.VerticalLR) then
+    usedH := LayoutColumns(box, Tag, st, contentX, contentY, contentW)
+  else
+    LayoutChildren(box, Tag, st, contentX, contentY, contentW, usedH);
   FContainingH := savedCH;
   // width: fit-content / min-content / max-content (the -3 sentinel from
   // ParseLength) → shrink the block to its content width (approximated by

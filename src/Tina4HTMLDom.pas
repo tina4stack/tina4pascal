@@ -394,6 +394,8 @@ type
     GridArea: string;             // item's named area (or line shorthand)
     RowGap: Single;               // grid row / column gaps (independent)
     ColGap: Single;
+    ColumnCount: Integer;         // CSS multicol: 0 = auto/none, else N columns
+    ColumnWidth: Single;          // multicol ideal column width, -1 = auto
     // text-shadow: offsetX offsetY [blur] color
     TextShadowOffsetX: Single;
     TextShadowOffsetY: Single;
@@ -2723,6 +2725,7 @@ begin
   Result.GridTemplateColumns := ''; Result.GridTemplateRows := ''; Result.GridAutoRows := '';
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
+  Result.ColumnCount := 0; Result.ColumnWidth := -1;
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
   Result.BgPosY := 0;
@@ -3291,6 +3294,7 @@ begin
   Result.GridTemplateColumns := ''; Result.GridTemplateRows := ''; Result.GridAutoRows := '';
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
+  Result.ColumnCount := 0; Result.ColumnWidth := -1;
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
   Result.BgPosY := 0;
@@ -4912,6 +4916,30 @@ begin
   begin Style.FlexGap := ParseLength(Temp, Style.FontSize); Style.ColGap := Style.FlexGap; end;
   if Decls.TryGetValue('row-gap', Temp) and not ShouldSkip(Temp) then
   begin Style.FlexGap := ParseLength(Temp, Style.FontSize); Style.RowGap := Style.FlexGap; end;
+  // CSS multi-column: column-count / column-width, and the `columns` shorthand
+  // ("<width> || <count>", either order; a unitless number is the count).
+  if Decls.TryGetValue('column-count', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'auto') then Style.ColumnCount := 0
+    else Style.ColumnCount := StrToIntDef(Trim(Temp), 0);
+  end;
+  if Decls.TryGetValue('column-width', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'auto') then Style.ColumnWidth := -1
+    else Style.ColumnWidth := ParseLength(Temp, Style.FontSize);
+  end;
+  if Decls.TryGetValue('columns', Temp) and not ShouldSkip(Temp) then
+  begin
+    Style.ColumnCount := 0; Style.ColumnWidth := -1;
+    for OvPart in Trim(Temp).Split([' '], TStringSplitOptions.ExcludeEmpty) do
+    begin
+      if SameText(OvPart, 'auto') then Continue;
+      if (Pos('n', LowerCase(OvPart)) = 0) and (StrToIntDef(OvPart, -999) <> -999) then
+        Style.ColumnCount := StrToIntDef(OvPart, 0)      // unitless integer = count
+      else
+        Style.ColumnWidth := ParseLength(OvPart, Style.FontSize);  // a length = width
+    end;
+  end;
   // CSS Grid templates + item placement
   if Decls.TryGetValue('grid-template-columns', Temp) and not ShouldSkip(Temp) then
     Style.GridTemplateColumns := Temp.Trim.ToLower;
