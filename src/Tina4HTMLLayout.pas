@@ -2360,6 +2360,17 @@ begin
         lineFree := contentW; for k := lineStartA[li] to lineEndA[li] - 1 do lineFree := lineFree - items[k].W;
         lineFree := lineFree - flexGap * Max(0, (lineEndA[li] - lineStartA[li]) - 1);
         if lineFree < 0 then lineFree := 0;
+        // per-line grow: within a wrapped line, flex-grow items still fill its
+        // free space (CSS resolves grow per flex line, not just single-line).
+        sumGrow := 0;
+        for k := lineStartA[li] to lineEndA[li] - 1 do sumGrow := sumGrow + items[k].Style.FlexGrow;
+        if (sumGrow > 0) and (lineFree > 0) then
+        begin
+          for k := lineStartA[li] to lineEndA[li] - 1 do
+            if items[k].Style.FlexGrow > 0 then
+              items[k].W := items[k].W + lineFree * items[k].Style.FlexGrow / sumGrow;
+          lineFree := 0;
+        end;
         lx := 0; lgap := 0;
         if jc = 'center' then lx := lineFree / 2
         else if (jc = 'flex-end') or (jc = 'end') then lx := lineFree
