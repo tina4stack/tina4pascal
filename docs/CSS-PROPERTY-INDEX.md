@@ -160,6 +160,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | :nth-child(), :nth-last-child() | ✅ | full An+B micro-syntax: `odd`/`even`, `2n`, `2n+1`, `3`, `n`, `-n+3`. Reftest `css-nth-child` |
 | :first-of-type, :last-of-type, :only-of-type, :nth-of-type(), :nth-last-of-type() | ✅ | same as the -child variants but counted only among same-tag siblings. Reftest `css-nth-of-type` |
 | combinators: descendant, `>`, `+`, `~` | ✅ | selectors tokenise into simple selectors + combinators (`TokenizeSelector`); the matcher walks leftward from the subject honouring each — child = direct parent, adjacent = immediately-preceding element sibling, general = any preceding sibling (greedy). Rule routing keys off the tokenized subject so `div>p` (no spaces) still indexes correctly. Reftests `css-child-combinator`, `css-adjacent-sibling`, `css-general-sibling` |
+| :not() | ✅ | negation of a simple inner selector, extracted paren-aware so `:not(:last-child)` (nested colon) parses; the inner may be a tag, class, id, `[attr]` or structural pseudo. Multiple `:not()` on one selector combine. Reftests `css-not-class`, `css-not-lastchild` |
 | appearance: none | ✅ | radios/checkboxes render as styled boxes |
 | cursor | ✅ | desktop shells set the native OS pointer (pointer/text/move/grab/resize/crosshair/not-allowed/none…); inherits down the DOM. Touch shells ignore it |
 | pointer-events | ✅ | `none` makes the box + subtree transparent to hit-testing (clicks pass through) |

@@ -1448,6 +1448,9 @@ var
   SPair: TPair<string, string>;
   PName, PArg: string;
   ParenPos: Integer;
+  NotChecks: array of string;
+  NotInner, NC: string;
+  NotStart, NotJ, NotDepth: Integer;
   Classes: TStringArray;
   Found: Boolean;
 begin
@@ -1455,6 +1458,7 @@ begin
   if not Assigned(Tag) or (Tag.TagName = '#text') or (Tag.TagName = 'root') then
     Exit;
   SetLength(StructChecks, 0);
+  SetLength(NotChecks, 0);
 
   // Parse selector into tag, class, id parts
   // e.g., "div.container#main" -> tag=div, class=container, id=main
@@ -1468,6 +1472,33 @@ begin
   SetLength(AttrChecks, 0);
 
   S := Sel;
+
+  // Extract :not(...) segments first, paren-aware — the inner selector may
+  // carry its own ':' (e.g. :not(:last-child)) that would derail the suffix
+  // scanner below. Each becomes a negation: the tag must NOT match the inner.
+  if S.ToLower.IndexOf(':not(') >= 0 then
+  begin
+    while True do
+    begin
+      NotStart := S.ToLower.IndexOf(':not(');
+      if NotStart < 0 then Break;
+      NotDepth := 1; NotJ := NotStart + 5;   // first char after '('
+      while (NotJ < Length(S)) and (NotDepth > 0) do
+      begin
+        if S.Chars[NotJ] = '(' then Inc(NotDepth)
+        else if S.Chars[NotJ] = ')' then Dec(NotDepth);
+        if NotDepth = 0 then Break;
+        Inc(NotJ);
+      end;
+      NotInner := S.Substring(NotStart + 5, NotJ - (NotStart + 5)).Trim;
+      if NotInner <> '' then
+      begin
+        SetLength(NotChecks, Length(NotChecks) + 1);
+        NotChecks[High(NotChecks)] := NotInner;
+      end;
+      S := S.Remove(NotStart, NotJ - NotStart + 1);   // drop the ':not(...)'
+    end;
+  end;
 
   // Fast path: most CSS selectors are pure tag/class/id and contain
   // neither `:` nor `[`. Skip the pseudo-class suffix scan and the
@@ -1615,7 +1646,8 @@ begin
   // pseudo-class flags is required or an attribute check is in play.
   if (SelTag = '') and (SelClass = '') and (SelId = '') and
      (not (RequireHover or RequireActive or RequireFocus or RequireChecked)) and
-     (Length(AttrChecks) = 0) and (Length(StructChecks) = 0) then Exit;
+     (Length(AttrChecks) = 0) and (Length(StructChecks) = 0) and
+     (Length(NotChecks) = 0) then Exit;
 
   // Pseudo-class state checks. All required flags must currently be set
   // on the tag for the selector to match.
@@ -1637,6 +1669,10 @@ begin
   // among its element siblings, which the tag/class/id filters don't touch).
   for SPair in StructChecks do
     if not MatchesStructural(SPair.Key, SPair.Value, Tag) then Exit;
+
+  // :not(...) — the tag must match none of the negated inner selectors.
+  for NC in NotChecks do
+    if MatchesSingleSelector(NC, Tag) then Exit;
 
   Result := True;
 end;
