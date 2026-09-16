@@ -1275,6 +1275,90 @@ begin
     Result := A.SourceOrder - B.SourceOrder;
 end;
 
+{ 1-based position of Tag among its element siblings (skipping #text and
+  injected tina4:: pseudo nodes). SameType restricts the count/position to
+  siblings sharing Tag's tag name (for :*-of-type). Total returns the sibling
+  count under the same filter. A parentless tag counts as the only child. }
+function StructuralChildPos(Tag: THTMLTag; SameType: Boolean; out Total: Integer): Integer;
+var p, c: THTMLTag; i: Integer;
+begin
+  Total := 0; Result := 0;
+  p := Tag.Parent;
+  if p = nil then begin Total := 1; Exit(1); end;
+  for i := 0 to p.Children.Count - 1 do
+  begin
+    c := p.Children[i];
+    if (c.TagName = '#text') or c.TagName.StartsWith('tina4::') then Continue;
+    if SameType and not SameText(c.TagName, Tag.TagName) then Continue;
+    Inc(Total);
+    if c = Tag then Result := Total;
+  end;
+  if Result = 0 then Result := 1;   // defensive (Tag not found under parent)
+end;
+
+{ Match a 1-based index against an An+B expression (`2n+1`, `odd`, `even`,
+  `3`, `n`, `-n+3`). Matches when some k>=0 gives Idx = a*k + b. }
+function MatchNthExpr(Idx: Integer; const Arg: string): Boolean;
+var s, nn: string; a, b, np, k: Integer;
+begin
+  s := StringReplace(LowerCase(Trim(Arg)), ' ', '', [rfReplaceAll]);
+  if s = 'odd' then begin a := 2; b := 1; end
+  else if s = 'even' then begin a := 2; b := 0; end
+  else
+  begin
+    np := Pos('n', s);
+    if np = 0 then
+    begin
+      a := 0;
+      nn := s; if (nn <> '') and (nn[1] = '+') then Delete(nn, 1, 1);
+      b := StrToIntDef(nn, 0);
+    end
+    else
+    begin
+      nn := Copy(s, 1, np - 1);
+      if (nn = '') or (nn = '+') then a := 1
+      else if nn = '-' then a := -1
+      else a := StrToIntDef(nn, 0);
+      nn := Copy(s, np + 1, Length(s));
+      if (nn <> '') and (nn[1] = '+') then Delete(nn, 1, 1);
+      b := StrToIntDef(nn, 0);
+    end;
+  end;
+  if a = 0 then Exit(Idx = b);
+  if ((Idx - b) mod a) <> 0 then Exit(False);
+  k := (Idx - b) div a;
+  Result := k >= 0;
+end;
+
+{ Evaluate one structural pseudo-class (name like ':nth-child', arg like
+  '2n+1') against Tag. Unknown names return True (already filtered earlier). }
+function MatchesStructural(const Name, Arg: string; Tag: THTMLTag): Boolean;
+var pos, total: Integer;
+begin
+  if Name = ':first-child' then
+    begin StructuralChildPos(Tag, False, total); Result := StructuralChildPos(Tag, False, total) = 1; end
+  else if Name = ':last-child' then
+    begin pos := StructuralChildPos(Tag, False, total); Result := pos = total; end
+  else if Name = ':only-child' then
+    begin StructuralChildPos(Tag, False, total); Result := total = 1; end
+  else if Name = ':first-of-type' then
+    begin Result := StructuralChildPos(Tag, True, total) = 1; end
+  else if Name = ':last-of-type' then
+    begin pos := StructuralChildPos(Tag, True, total); Result := pos = total; end
+  else if Name = ':only-of-type' then
+    begin StructuralChildPos(Tag, True, total); Result := total = 1; end
+  else if Name = ':nth-child' then
+    begin pos := StructuralChildPos(Tag, False, total); Result := MatchNthExpr(pos, Arg); end
+  else if Name = ':nth-last-child' then
+    begin pos := StructuralChildPos(Tag, False, total); Result := MatchNthExpr(total - pos + 1, Arg); end
+  else if Name = ':nth-of-type' then
+    begin pos := StructuralChildPos(Tag, True, total); Result := MatchNthExpr(pos, Arg); end
+  else if Name = ':nth-last-of-type' then
+    begin pos := StructuralChildPos(Tag, True, total); Result := MatchNthExpr(total - pos + 1, Arg); end
+  else
+    Result := True;
+end;
+
 function MatchesSingleSelector(const Sel: string; Tag: THTMLTag): Boolean;
 var
   SelTag, SelClass, SelId: string;
@@ -1284,12 +1368,17 @@ var
   ColonIdx, BracketStart, BracketEnd, EqIdx: Integer;
   AttrChecks: array of TPair<string, string>;
   APair, Check: TPair<string, string>;
+  StructChecks: array of TPair<string, string>;
+  SPair: TPair<string, string>;
+  PName, PArg: string;
+  ParenPos: Integer;
   Classes: TStringArray;
   Found: Boolean;
 begin
   Result := False;
   if not Assigned(Tag) or (Tag.TagName = '#text') or (Tag.TagName = 'root') then
     Exit;
+  SetLength(StructChecks, 0);
 
   // Parse selector into tag, class, id parts
   // e.g., "div.container#main" -> tag=div, class=container, id=main
@@ -1323,7 +1412,32 @@ begin
       else if Suffix = ':active' then begin RequireActive := True; S := S.Substring(0, ColonIdx); end
       else if Suffix = ':focus' then begin RequireFocus := True; S := S.Substring(0, ColonIdx); end
       else if Suffix = ':checked' then begin RequireChecked := True; S := S.Substring(0, ColonIdx); end
-      else Break;
+      else
+      begin
+        // Structural pseudo-classes: :first-child, :last-child, :only-child,
+        // :nth-child(An+B), :nth-last-child, and the *-of-type variants. Split
+        // an optional (arg); an unrecognised name breaks (left embedded => no
+        // match, as before), keeping an unknown pseudo from matching wrongly.
+        PName := Suffix; PArg := '';
+        ParenPos := PName.IndexOf('(');
+        if ParenPos >= 0 then
+        begin
+          PArg := PName.Substring(ParenPos + 1);
+          if PArg.EndsWith(')') then PArg := PArg.Substring(0, PArg.Length - 1);
+          PName := PName.Substring(0, ParenPos);
+        end;
+        if (PName = ':first-child') or (PName = ':last-child') or (PName = ':only-child') or
+           (PName = ':first-of-type') or (PName = ':last-of-type') or (PName = ':only-of-type') or
+           (PName = ':nth-child') or (PName = ':nth-last-child') or
+           (PName = ':nth-of-type') or (PName = ':nth-last-of-type') then
+        begin
+          SPair.Key := PName; SPair.Value := PArg;
+          SetLength(StructChecks, Length(StructChecks) + 1);
+          StructChecks[High(StructChecks)] := SPair;
+          S := S.Substring(0, ColonIdx);
+        end
+        else Break;
+      end;
     end;
   end;
 
@@ -1425,7 +1539,7 @@ begin
   // pseudo-class flags is required or an attribute check is in play.
   if (SelTag = '') and (SelClass = '') and (SelId = '') and
      (not (RequireHover or RequireActive or RequireFocus or RequireChecked)) and
-     (Length(AttrChecks) = 0) then Exit;
+     (Length(AttrChecks) = 0) and (Length(StructChecks) = 0) then Exit;
 
   // Pseudo-class state checks. All required flags must currently be set
   // on the tag for the selector to match.
@@ -1442,6 +1556,11 @@ begin
     if Check.Value <> #1#1 then
       if Tag.GetAttribute(Check.Key, '') <> Check.Value then Exit;
   end;
+
+  // Structural pseudo-classes (evaluated last: they need the tag's position
+  // among its element siblings, which the tag/class/id filters don't touch).
+  for SPair in StructChecks do
+    if not MatchesStructural(SPair.Key, SPair.Value, Tag) then Exit;
 
   Result := True;
 end;

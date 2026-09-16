@@ -156,6 +156,9 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | Property | Status | Note |
 |---|---|---|
 | :hover / :active / :focus / :checked | ✅ | matcher + runtime state, end-to-end |
+| :first-child, :last-child, :only-child | ✅ | position among element siblings (#text and injected pseudo nodes skipped). Reftest `css-first-last-child` |
+| :nth-child(), :nth-last-child() | ✅ | full An+B micro-syntax: `odd`/`even`, `2n`, `2n+1`, `3`, `n`, `-n+3`. Reftest `css-nth-child` |
+| :first-of-type, :last-of-type, :only-of-type, :nth-of-type(), :nth-last-of-type() | ✅ | same as the -child variants but counted only among same-tag siblings. Reftest `css-nth-of-type` |
 | appearance: none | ✅ | radios/checkboxes render as styled boxes |
 | cursor | ✅ | desktop shells set the native OS pointer (pointer/text/move/grab/resize/crosshair/not-allowed/none…); inherits down the DOM. Touch shells ignore it |
 | pointer-events | ✅ | `none` makes the box + subtree transparent to hit-testing (clicks pass through) |
