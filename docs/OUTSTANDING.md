@@ -13,7 +13,10 @@ Effort key: **S** small · **M** medium · **L** large.
 
 ## A. Rendering fidelity — software / raster path
 macOS + iOS (CoreGraphics) are complete here; these are the software compositor
-(Windows/Linux) and pure-raster (Android/watch) gaps.
+(Windows/Linux) and pure-raster (Android/watch) gaps. These can't be proven from
+a macOS `--snapshot` (it always takes the Cocoa path) — **`docs/CATEGORY-A-LINUX-TESTING.md`**
+is the concrete plan to verify the three remaining items on Linux/Xlib (build,
+`Xvfb` snapshot via `LinSaveBmp`, per-item diff-vs-Chrome, gate integration).
 
 - ~~**[M] Advanced blend modes**~~ — **DONE (raster + shared).** The shared
   `BlendRGB` (`Tina4RenderBackend`) now covers all separable modes (dodge/burn
@@ -166,6 +169,7 @@ low-quality hack.
 - **[L] Shadow DOM / `<slot>`** — passthrough only.
 
 ## Testing gaps
-- The three fidelity items in **A** (blend modes, HiDPI, clip-path/transform) have
-  no tests.
+- The remaining fidelity items in **A** (desktop blend modes → shared `BlendRGB`,
+  HiDPI, clip-path/transform) have no tests on the Linux/Windows path — the plan
+  to close that is `docs/CATEGORY-A-LINUX-TESTING.md`.
 - All shell code (Swift / Objective-C / Java) is device- and build-verified only.
