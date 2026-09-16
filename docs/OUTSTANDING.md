@@ -50,11 +50,14 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
 ## B. Text & internationalization
 Nearly all of B is done: `hyphens: manual`, `font-variant: small-caps`, `ruby`,
 `font-stretch`, **bidi** (line-level UBA reorder, mirrored punctuation,
-`<bdo>`/`<bdi>`), and **`writing-mode: vertical-rl`** (real column block-flow).
-What remains is data-dependent or niche — `hyphens: auto` (needs a hyphenation
-dictionary), `writing-mode: vertical-lr` + upright CJK orientation, per-character
-bidi + `unicode-bidi` control codes, and accents/CJK on the pure-raster stroke
-font — left honestly open rather than shipped as a low-quality hack.
+`<bdo>`/`<bdi>`, **per-character direction within a token** via the shaping
+backend), and **`writing-mode: vertical-rl` *and* `vertical-lr`** (real column
+block-flow, both directions). What remains is data-dependent or niche —
+`hyphens: auto` (needs a hyphenation dictionary), upright CJK orientation
+(`text-orientation: upright`), a vertical block without a definite height, the
+*embedding effect* of the `unicode-bidi` control codes, and accents/CJK on the
+pure-raster stroke font — left honestly open rather than shipped as a
+low-quality hack.
 
 - **[L → mostly done] Bidi / RTL** — **line-level UBA reordering DONE.** Mixed
   LTR/RTL lines are reordered logical→visual by the Unicode Bidi Algorithm L2 rule
@@ -67,17 +70,24 @@ font — left honestly open rather than shipped as a low-quality hack.
   mirroring). Native backends shape each run. Reftest `bidi-rtl-ltr`. The invisible
   `unicode-bidi` control characters (LRM/RLM/ALM, LRE/RLE/PDF/LRO/RLO,
   LRI/RLI/FSI/PDI) are stripped so they never tofu (`StripBidiControls`).
-  **Remaining:** per-character levels (mixed direction *within* one word/token),
+  **Per-character direction within one token DONE on the native path** — a token
+  that mixes scripts (e.g. `abc99שלום`) is one shaped run, so Core Text / the
+  native backend resolves its internal bidi and it pixel-matches Chrome. **Remaining:**
   the *embedding effect* of those control codes (not just their glyphs), and RTL
-  shaping on the pure-raster path. (`<bdi>`/`<bdo>` elements DONE.)
-- ~~**[L] `writing-mode` (full vertical block-flow)**~~ — **DONE for `vertical-rl`**
-  with a definite height: the inline content lays out against the height (wrapping
-  into columns) and paints 90° CW into right-to-left columns — top-to-bottom runs,
-  CW-rotated Latin glyphs, upright box background/border. Verified matching Chrome
-  (1.83%); gated so horizontal layout is untouched (155/155). **Remaining:**
-  `vertical-lr` (columns left-to-right), a `vertical-rl` block without a definite
-  height (still the flat single-line fallback), and upright CJK glyph orientation
-  (`text-orientation: upright`).
+  shaping on the pure-raster path (no shaper — the watch/Android stroke font).
+  (`<bdi>`/`<bdo>` elements DONE.)
+- ~~**[L] `writing-mode` (full vertical block-flow)**~~ — **DONE for `vertical-rl`
+  *and* `vertical-lr`** with a definite height: the inline content lays out against
+  the height (wrapping into columns) and paints 90° CW — top-to-bottom runs,
+  CW-rotated Latin glyphs, upright box background/border. `vertical-rl` fills
+  right-to-left columns; `vertical-lr` reverses the column order in layout
+  (`ReverseVColumns` reflects each line box about the content centre, half-leading
+  preserved) so the same rotation fills left-to-right columns. Both verified
+  matching Chrome (`vertical-rl` 1.83%, `vertical-lr` 5.16% raw / sub-pixel once
+  aligned); gated so horizontal layout is untouched (156/156, reftests
+  `writing-mode-vertical` + `writing-mode-vertical-lr`). **Remaining:** a vertical
+  block without a definite height (still the flat single-line fallback), and
+  upright CJK glyph orientation (`text-orientation: upright`).
 - **[S] `font-stretch`** — **DONE (synthetic).** Keywords + `<percentage>` parse to
   a factor; the run advance is scaled to match and the glyphs paint through a
   horizontal `Scale`. Carried as a `Styles` marker (no per-run field) and bucketed

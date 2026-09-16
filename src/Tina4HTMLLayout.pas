@@ -66,6 +66,8 @@ type
     RubyBaseline: Single;          // <ruby> atom: base baseline offset from box top (0 = not ruby)
     VerticalRL: Boolean;           // writing-mode:vertical-rl — content laid out against the
                                    // height, painted rotated 90° CW into right-to-left columns
+    VerticalLR: Boolean;           // writing-mode:vertical-lr — same CW rotation, but the
+                                   // column order is reversed in layout so columns read L→R
     constructor Create;
     destructor Destroy; override;
   end;
@@ -1790,6 +1792,43 @@ begin
   end;
   for i := 0 to B.Children.Count - 1 do
     ShiftBoxTree(B.Children[i], DX, DY);
+end;
+
+{ Reverse the column (block-progression) order of a vertical writing-mode box's
+  content in place. The vertical-rl paint rotates content 90° CW, so the first
+  laid-out column (fy=0) lands rightmost — that is `vertical-rl`. For
+  `vertical-lr` the columns must read left-to-right, so each line is reflected
+  about the content's vertical centre before that same rotation runs: line k
+  (top-to-bottom) trades places with line N-1-k, its glyphs untouched. A run's
+  Y is the text top — line top plus the half-leading — so the line box is
+  reflected and the half-leading (derived from the first line, so glyphs keep
+  their place inside the line box) is re-added; reflecting the raw Y instead
+  would flip the half-leading to the wrong side and shift every column. A child
+  box reflects by its own height and its whole subtree moves with it. CTop is
+  the content top, Extent the column-axis span (the block extent the lines used). }
+procedure ReverseVColumns(B: TLayoutBox; CTop, Extent, LineH: Single);
+var
+  i: Integer;
+  r: TTextRun;
+  ch: TLayoutBox;
+  halfLead, lineTop: Single;
+begin
+  halfLead := 1.0e30;                       // offset of text within its line box
+  for i := 0 to B.Runs.Count - 1 do
+    if B.Runs[i].Y - CTop < halfLead then halfLead := B.Runs[i].Y - CTop;
+  if halfLead > 1.0e29 then halfLead := 0;  // no runs
+  for i := 0 to B.Runs.Count - 1 do
+  begin
+    r := B.Runs[i];
+    lineTop := r.Y - halfLead;
+    r.Y := (CTop + (Extent - LineH) - (lineTop - CTop)) + halfLead;
+    B.Runs[i] := r;
+  end;
+  for i := 0 to B.Children.Count - 1 do
+  begin
+    ch := B.Children[i];
+    ShiftBoxTree(ch, 0, (CTop + (Extent - ch.H) - (ch.Y - CTop)) - ch.Y);
+  end;
 end;
 
 { Full inner layout for an inline-block CONTAINER (block children, explicit
@@ -4045,11 +4084,18 @@ begin
   box.VerticalRL := (eh >= 0)
     and ((Pos('vertical', st.WritingMode) > 0) or (Pos('sideways', st.WritingMode) > 0))
     and (Pos('lr', st.WritingMode) = 0);
-  if box.VerticalRL then contentW := Max(1, FContainingH);   // wrap against the content height
+  // vertical-lr shares the layout (against the height) and the CW rotation; only
+  // the column order differs, reversed after LayoutChildren so columns read L→R.
+  box.VerticalLR := (eh >= 0)
+    and ((Pos('vertical', st.WritingMode) > 0) or (Pos('sideways', st.WritingMode) > 0))
+    and (Pos('lr', st.WritingMode) > 0);
+  if box.VerticalRL or box.VerticalLR then contentW := Max(1, FContainingH);  // wrap against the content height
   LayoutChildren(box, Tag, st, contentX, contentY, contentW, usedH);
   FContainingH := savedCH;
-  if box.VerticalRL then
+  if box.VerticalRL or box.VerticalLR then
   begin
+    if box.VerticalLR then
+      ReverseVColumns(box, contentY, usedH, LineHeightOf(st));
     box.W := usedH + edgeL + edgeR;   // physical width = content's inline extent (from usedH)
     box.H := eh;                      // physical height = the specified height
     usedH := Max(0, eh - edgeT - edgeB);  // keep the tail's box.H := usedH+edges == eh
@@ -5087,7 +5133,7 @@ begin
   wmRot := 0;
   // vertical-rl with a definite height uses the real column layout (Box.VerticalRL);
   // any other vertical/sideways box keeps the flat single-line 90° rotation.
-  if (not Box.VerticalRL) and
+  if (not Box.VerticalRL) and (not Box.VerticalLR) and
      ((Pos('vertical', st.WritingMode) > 0) or (Pos('sideways', st.WritingMode) > 0)) then
     wmRot := 90;
   hasRS := (not use3D) and ((st.TransformRotate <> 0) or (st.TransformScaleX <> 1) or (st.TransformScaleY <> 1)
@@ -5495,7 +5541,7 @@ begin
   // 90° CW visual rotation about the content's top-right corner: a laid-out frame
   // point (fx,fy) maps to (A.x + Wc - fy, A.y + fx) — inline fx runs down, the
   // columns fy advance leftward.
-  if Box.VerticalRL then
+  if Box.VerticalRL or Box.VerticalLR then
   begin
     Canvas.SaveState; vRotSaved := True;
     vAx := Box.X + st.BorderWidths.Left + st.Padding.Left;
