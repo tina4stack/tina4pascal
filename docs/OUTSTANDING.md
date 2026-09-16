@@ -115,7 +115,15 @@ low-quality hack.
   for WebP still TODO.
 - **[L] PNG/JPEG on the raster path** — not decoded (needs a native shell or a
   pure-Pascal decoder) — the watch/headless gap.
-- **[M] SVG** — basic shapes/paths only; gradients, clip/mask, filters not done.
+- **[M mostly done] SVG** — shapes/paths **and fill gradients** now:
+  `<linearGradient>`/`<radialGradient>` via `fill="url(#id)"`, `<stop>`
+  offset/stop-color/stop-opacity, objectBoundingBox (default) + userSpaceOnUse,
+  painted through the shared `FillLinearGradient`/`FillRadialGradient` clipped to
+  the shape (real polygon clip on Cocoa/iOS). Reftests `svg-linear-gradient` +
+  `svg-radial-gradient` (both delta 0.00% vs the CSS-gradient ref), verified
+  matching Chrome (3.34%). Remaining: `gradientTransform`, `spreadMethod`,
+  `href` stop-inheritance, gradient *strokes*, clip/mask, filters, patterns,
+  `<use>`.
 - **[S] Lottie** — no gradient support.
 - **[S] Canvas2D** — image draw axis-aligned only (rotate/scale TODO).
 - **[S] `<video>` (macOS)** — `AVPlayerView` loop TODO + GUI-run verify pending.
