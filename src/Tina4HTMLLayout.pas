@@ -2024,6 +2024,15 @@ begin
   flexGap := st.FlexGap; if flexGap < 0 then flexGap := 0;   // CSS gap between items
   jc := LowerCase(st.JustifyContent); if jc = '' then jc := 'flex-start';
   ai := LowerCase(st.AlignItems); if ai = '' then ai := 'stretch';
+  // A reverse main axis moves the main-start to the FAR edge, so justify-content
+  // flex-start packs the (already order-reversed) items there — Chrome right-
+  // aligns a default row-reverse. Swap the two edge keywords; centre/space-* are
+  // symmetric and unaffected.
+  if (dir = 'row-reverse') or (dir = 'column-reverse') then
+  begin
+    if (jc = 'flex-start') or (jc = 'start') then jc := 'flex-end'
+    else if (jc = 'flex-end') or (jc = 'end') then jc := 'flex-start';
+  end;
 
   // build flex items. For a row we resolve flex-basis + flex-grow first so
   // items share the free space (the common flex:1 layout); a column keeps
