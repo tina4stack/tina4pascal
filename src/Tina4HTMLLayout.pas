@@ -2381,6 +2381,11 @@ begin
       Exit;   // finally frees items/itemTags
     end;
 
+    // column main axis = height: flex-basis sets the base height (as width does
+    // for a row) before grow/shrink distribute the container's content height.
+    if isCol then
+      for i := 0 to items.Count - 1 do
+        if items[i].Style.FlexBasis >= 0 then items[i].H := items[i].Style.FlexBasis;
     // main-axis packing (single line)
     sumMain := 0;
     for i := 0 to items.Count - 1 do
@@ -2390,6 +2395,32 @@ begin
     else freeMain := contentW - sumMain;
     freeMain := freeMain - flexGap * Max(0, items.Count - 1);   // reserve gaps
     if freeMain < 0 then freeMain := 0;
+    // column: grow (fill) / shrink (overflow) items along the vertical main axis
+    // — the row path already resolves this into baseW; do the height analogue.
+    if isCol and (contentH > 0) and (items.Count > 0) then
+    begin
+      sumGrow := 0; scaledShrink := 0;
+      for i := 0 to items.Count - 1 do
+      begin
+        sumGrow := sumGrow + items[i].Style.FlexGrow;
+        scaledShrink := scaledShrink + items[i].Style.FlexShrink * items[i].H;
+      end;
+      overflowMain := sumMain + flexGap * Max(0, items.Count - 1) - contentH;
+      if (freeMain > 0) and (sumGrow > 0) then
+      begin
+        for i := 0 to items.Count - 1 do
+          if items[i].Style.FlexGrow > 0 then
+            items[i].H := items[i].H + freeMain * items[i].Style.FlexGrow / sumGrow;
+        freeMain := 0;
+      end
+      else if (overflowMain > 0.5) and (scaledShrink > 0) then
+        for i := 0 to items.Count - 1 do
+          if items[i].Style.FlexShrink > 0 then
+          begin
+            items[i].H := items[i].H - overflowMain * (items[i].Style.FlexShrink * items[i].H) / scaledShrink;
+            if items[i].H < 0 then items[i].H := 0;
+          end;
+    end;
 
     curr := 0; gap := 0;
     if (jc = 'center') then curr := freeMain / 2
