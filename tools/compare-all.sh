@@ -92,7 +92,7 @@ try: font=ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial Bold.ttf"
 except: font=fsm=ImageFont.load_default()
 rowh=lblh+H+gap; im=Image.new("RGB",(pad*2+W*2+mid, pad+34+rowh*len(rows)),(248,248,250)); d=ImageDraw.Draw(im)
 d.text((pad,pad),f"Tina4Pascal vs Chrome — {len(rows)} pages (ours | chrome)",fill=(20,20,30),font=font)
-d.text((pad,pad+18),"green <=2%  amber <=%g%%  red over; sRGB snapshots, matched viewport"%THRESH,fill=(90,90,110),font=fsm)
+d.text((pad,pad+18),f"green <=2%  amber <={THRESH:g}%  red over; sRGB snapshots, matched viewport",fill=(90,90,110),font=fsm)
 y=pad+34
 for n,o,c,p in rows:
     ex=bool(EXPECT.search(n))
