@@ -105,7 +105,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | Property | Status | Note |
 |---|---|---|
 | background-color | ✅ | alpha-scaled by opacity |
-| background (shorthand) | ✅ | colour + image (`url(...)` and every gradient) **plus position / `/ size` / repeat** now parse from the shorthand (e.g. `#eee url(x) center / cover no-repeat`) — url stripped first so its path `/` doesn't split the size. Verified 0.00% vs Chrome + the longhand ref (reftest `bg-shorthand-possize`). Multi-layer `url()` image lists still take one image |
+| background (shorthand) | ✅ | colour + image (`url(...)` and every gradient) **plus position / `/ size` / repeat** parse from the shorthand (e.g. `#eee url(x) center / cover no-repeat`) — url stripped first so its path `/` doesn't split the size. A **`<gradient>, <colour>` layer list** works too: the trailing colour is the background-color and the gradient paints (composited) over it — the common translucent-overlay/hero pattern (reftests `bg-shorthand-possize`, `bg-gradient-over-color`, 0.00% vs Chrome). Remaining: multi-layer `url()` **image** stacks (one image painted) |
 | background-image: url() | ✅ | painted via the cached/async image path; size cover/contain/auto, position, repeat; clipped |
 | background: linear-gradient() | ✅ | real multi-stop gradient (up to 8 stops + positions), angle honored; backend NSGradient on Cocoa (base fallback = flat avg) |
 | background: radial-gradient() | ✅ | parsed + painted (center radial); shape/size keywords accepted, not yet modelled |

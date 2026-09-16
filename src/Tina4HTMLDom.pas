@@ -3778,6 +3778,7 @@ var
   BgVal, ColorPart: string;
   UrlPos: Integer;
   BgRest: string;
+  BgLayers: TArray<string>;
   i: Integer;
   LH: Single;
   BParts, RParts, OvParts, SParts, OParts, FlexParts, TsParts, BgParts, GArgs, InsetParts, TfArgs: TStringArray;
@@ -3837,9 +3838,21 @@ begin
       end;
       ApplyBgShorthandParts(BgRest, Style.FontSize, Style);
     end
-    else if not BgVal.ToLower.Contains('gradient(') then
-      // a gradient value is handled by the gradient parser below; don't let
-      // ParseColor turn it into a bogus solid colour
+    else if BgVal.ToLower.Contains('gradient(') then
+    begin
+      // a `<gradient>, <colour>` layer list: the trailing solid colour is the
+      // background-color (bottom layer); the gradient (parsed below) paints on
+      // top. Split at top level so the gradient's own commas don't interfere.
+      BgLayers := SplitTopLevelCommas(BgVal);
+      if Length(BgLayers) >= 2 then
+      begin
+        BgRest := BgLayers[High(BgLayers)].Trim;
+        if (not BgRest.ToLower.Contains('gradient(')) and (not BgRest.ToLower.Contains('url(')) then
+          Style.BackgroundColor := ParseColor(BgRest);
+      end;
+    end
+    else
+      // a plain solid colour
       Style.BackgroundColor := ParseColor(BgVal);
   end;
   if Decls.TryGetValue('font-family', Temp) and not ShouldSkip(Temp) then

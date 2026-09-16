@@ -5455,15 +5455,17 @@ begin
   // it (needs BOTH a colour and a gradient — the normal path skips the gradient
   // when a solid colour is present, so route through the blend-aware soft path).
   bgBlend := (st.BackgroundBlendMode <> '') and st.BgGradientActive and (st.GradStopCount >= 2) and ((bg shr 24) > 0);
-  if (not Hidden) and (not st.BackgroundClipText) and st.BgGradientActive and (st.GradStopCount >= 2)
-     and (((bg shr 24) = 0) or bgBlend) then
+  if (not Hidden) and (not st.BackgroundClipText) and st.BgGradientActive and (st.GradStopCount >= 2) then
   begin
-    if bgBlend then   // paint the backdrop colour first; the gradient blends onto it
+    // Multi-layer / blend: paint the bottom colour layer first, then the
+    // gradient over it — so `background: <gradient>, <colour>` shows the colour
+    // through a translucent gradient, and the blend-mode case has its backdrop.
+    if (bg shr 24) > 0 then
     begin
       if mcr <= 0 then Canvas.FillRect(Box.X, y, Box.W, Box.H, bg)
       else Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, mcr, bg);
-      bgBlendMode := st.BackgroundBlendMode;
-    end
+    end;
+    if bgBlend then bgBlendMode := st.BackgroundBlendMode
     else bgBlendMode := '';
     SetLength(gcol, st.GradStopCount); SetLength(gpos, st.GradStopCount);
     for gi := 0 to st.GradStopCount - 1 do
