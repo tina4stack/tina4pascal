@@ -27,7 +27,7 @@ unit Tina4RasterCanvas;
 interface
 
 uses
-  Classes, SysUtils, Math, Tina4RenderBackend;
+  Classes, SysUtils, Math, Tina4RenderBackend, Tina4Compositor;
 
 type
   { one active clip region (device px). Rad = 0 is a plain rect; Rad > 0 rounds
@@ -724,6 +724,7 @@ var
   layPix: array of Cardinal;
   lw, lh, lox, loy, n, bx, by, dpx, dpy, dbx, dby: Integer;
   c, dst: Cardinal; srcA: Single; blended: TTina4Color; useBlend: Boolean;
+  fbuf: array of Single; i, rr, gg, bb: Integer; fa: Single;
 begin
   n := Length(FLayers);
   if n = 0 then Exit;
@@ -736,7 +737,35 @@ begin
   FClip := FLayers[n].Clip; FClipSave := FLayers[n].ClipSave;
   SetLength(FLayers, n);
   SetLength(FCov, FW);
-  // (FilterSpec / MaskSpec not applied on the raster path yet — safe degrade.)
+  // CSS filter / mask: run the shared compositor filter chain (blur, brightness,
+  // contrast, grayscale, sepia, invert, saturate, hue-rotate, opacity, drop-shadow)
+  // over the layer's PREMULTIPLIED float pixels, then unpremultiply back.
+  if (FilterSpec <> '') or (MaskSpec <> '') then
+  begin
+    SetLength(fbuf, lw * lh * 4);
+    for i := 0 to lw * lh - 1 do
+    begin
+      c := layPix[i]; fa := ((c shr 24) and $FF) / 255;
+      fbuf[i*4]   := ((c shr 16) and $FF) / 255 * fa;   // premultiplied RGBA
+      fbuf[i*4+1] := ((c shr 8)  and $FF) / 255 * fa;
+      fbuf[i*4+2] := ( c         and $FF) / 255 * fa;
+      fbuf[i*4+3] := fa;
+    end;
+    ApplyFilterChainF(PSingleBuf(@fbuf[0]), lw, lh, FilterSpec, MaskSpec, 1);
+    for i := 0 to lw * lh - 1 do
+    begin
+      fa := fbuf[i*4+3];
+      if fa > 0 then
+      begin
+        rr := Round(Min(1, fbuf[i*4]   / fa) * 255);
+        gg := Round(Min(1, fbuf[i*4+1] / fa) * 255);
+        bb := Round(Min(1, fbuf[i*4+2] / fa) * 255);
+      end
+      else begin rr := 0; gg := 0; bb := 0; end;
+      layPix[i] := (Cardinal(Round(Min(1, fa) * 255)) shl 24)
+                or (Cardinal(rr) shl 16) or (Cardinal(gg) shl 8) or Cardinal(bb);
+    end;
+  end;
   useBlend := (BlendMode <> '') and (BlendMode <> 'normal');
   // composite the layer back onto the parent at (lox,loy), doc coords
   for by := 0 to lh - 1 do

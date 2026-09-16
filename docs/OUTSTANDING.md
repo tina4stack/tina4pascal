@@ -36,10 +36,14 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   `overflow:hidden` + `border-radius` clips round on watch/Android. Near-zero cost
   when unclipped (empty stack). Guarded by `tests/raster/clip.html` (golden) and
   the `clip-roundrect` reftest pair.
-- **[M] CSS filters / `backdrop-filter` / 3D on raster** — `BeginLayer` /
-  `EndLayerFiltered` now composite for `mix-blend-mode`, but the `filter` chain,
-  `backdrop-filter` and 3D-quad mapping on the layer are still skipped (safe
-  degrade) on the raster canvas.
+- **[M mostly done] CSS filters / `backdrop-filter` / 3D on raster** — the CSS
+  **`filter` chain now runs on the raster path**: `Tina4RasterCanvas.EndLayerFiltered`
+  converts the layer to premultiplied floats, runs the shared
+  `Tina4Compositor.ApplyFilterChainF` (blur, brightness, contrast, grayscale, sepia,
+  invert, saturate, hue-rotate, opacity, drop-shadow) and unpremultiplies back —
+  the same code the native shells use. Guarded by `tests/raster/filter.html`.
+  *Remaining on raster:* `backdrop-filter` (needs read-back of already-painted
+  pixels) and 3D-quad mapping (`EndLayer3D`).
 
 ## B. Text & internationalization
 Nearly all of B is done: `hyphens: manual`, `font-variant: small-caps`, `ruby`,
