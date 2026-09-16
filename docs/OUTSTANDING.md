@@ -42,8 +42,10 @@ macOS + iOS (CoreGraphics) are complete here; these are the software compositor
   `Tina4Compositor.ApplyFilterChainF` (blur, brightness, contrast, grayscale, sepia,
   invert, saturate, hue-rotate, opacity, drop-shadow) and unpremultiplies back —
   the same code the native shells use. Guarded by `tests/raster/filter.html`.
-  *Remaining on raster:* `backdrop-filter` (needs read-back of already-painted
-  pixels) and 3D-quad mapping (`EndLayer3D`).
+  **`backdrop-filter` also done on raster** — the canvas reads its own painted
+  pixels under the rect, filters them and writes them back
+  (`tests/raster/backdrop.html`). *Remaining on raster:* only 3D-quad mapping
+  (`EndLayer3D`), which is niche.
 
 ## B. Text & internationalization
 Nearly all of B is done: `hyphens: manual`, `font-variant: small-caps`, `ruby`,

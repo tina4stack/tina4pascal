@@ -92,6 +92,9 @@ type
       applied here yet — a safe degrade; see docs/OUTSTANDING.md A.) }
     function  BeginLayer(X, Y, W, H, Pad: Single): Integer; override;
     procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); override;
+    { CSS backdrop-filter: filter the already-painted pixels under the rect (the
+      raster canvas can read its own buffer, so this is a real read-back). }
+    procedure BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); override;
     function  SupportsRGBA: Boolean; override;
     procedure DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single); override;
   end;
@@ -786,6 +789,47 @@ begin
       end
       else
         BlendPixel(dpx, dpy, (c shr 16) and $FF, (c shr 8) and $FF, c and $FF, srcA);
+    end;
+end;
+
+procedure TTina4RasterCanvas.BackdropFilter(X, Y, W, H: Single; const FilterSpec: string);
+var
+  ix, iy, iw, ih, px, py, i: Integer;
+  fbuf: array of Single; c: Cardinal; fa: Single; rr, gg, bb: Integer;
+begin
+  if (W <= 0) or (H <= 0) or (FilterSpec = '') then Exit;
+  ix := Floor(X - FTgtOX); iy := Floor(Y - FTgtOY);
+  iw := Ceil(X + W - FTgtOX) - ix; ih := Ceil(Y + H - FTgtOY) - iy;
+  if ix < 0 then begin iw := iw + ix; ix := 0; end;
+  if iy < 0 then begin ih := ih + iy; iy := 0; end;
+  if ix + iw > FW then iw := FW - ix;
+  if iy + ih > FH then ih := FH - iy;
+  if (iw <= 0) or (ih <= 0) then Exit;
+  SetLength(fbuf, iw * ih * 4);
+  for py := 0 to ih - 1 do
+    for px := 0 to iw - 1 do
+    begin
+      c := FPix[(iy + py) * FW + (ix + px)]; i := (py * iw + px) * 4;
+      fa := ((c shr 24) and $FF) / 255;
+      fbuf[i]   := ((c shr 16) and $FF) / 255 * fa;
+      fbuf[i+1] := ((c shr 8)  and $FF) / 255 * fa;
+      fbuf[i+2] := ( c         and $FF) / 255 * fa;
+      fbuf[i+3] := fa;
+    end;
+  ApplyFilterChainF(PSingleBuf(@fbuf[0]), iw, ih, FilterSpec, '', 1);
+  for py := 0 to ih - 1 do
+    for px := 0 to iw - 1 do
+    begin
+      i := (py * iw + px) * 4; fa := fbuf[i+3];
+      if fa > 0 then
+      begin
+        rr := Round(Min(1, fbuf[i]   / fa) * 255);
+        gg := Round(Min(1, fbuf[i+1] / fa) * 255);
+        bb := Round(Min(1, fbuf[i+2] / fa) * 255);
+      end
+      else begin rr := 0; gg := 0; bb := 0; end;
+      FPix[(iy + py) * FW + (ix + px)] := (Cardinal(Round(Min(1, fa) * 255)) shl 24)
+        or (Cardinal(rr) shl 16) or (Cardinal(gg) shl 8) or Cardinal(bb);
     end;
 end;
 
