@@ -121,9 +121,12 @@ low-quality hack.
   painted through the shared `FillLinearGradient`/`FillRadialGradient` clipped to
   the shape (real polygon clip on Cocoa/iOS). Reftests `svg-linear-gradient` +
   `svg-radial-gradient` (both delta 0.00% vs the CSS-gradient ref), verified
-  matching Chrome (3.34%). Remaining: `gradientTransform`, `spreadMethod`,
-  `href` stop-inheritance, gradient *strokes*, clip/mask, filters, patterns,
-  `<use>`.
+  matching Chrome (3.34%). **`clip-path="url(#id)"` also done** — clips an element
+  or a `<g>` subtree to a `<clipPath>`'s first shape (userSpaceOnUse) via the
+  polygon clip; reftest `svg-clip-path` (delta 0.00%), verified 0.00% vs Chrome
+  on a circle-clipped rect + a rect-clipped group. Remaining: `gradientTransform`,
+  `spreadMethod`, `href` stop-inheritance, gradient *strokes*, multi-shape/
+  objectBoundingBox clipPaths, mask, filters, patterns, `<use>`.
 - **[S] Lottie** — no gradient support.
 - ~~**[S] Canvas2D image transforms**~~ — **DONE.** `drawImage` now honours the
   2D context matrix: an axis-aligned matrix (translate + scale, incl. flip) maps

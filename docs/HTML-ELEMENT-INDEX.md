@@ -66,7 +66,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | Element | Status | Note |
 |---|---|---|
 | img | ✅ | remote fetch + decode + cache + aspect (all platforms) |
-| svg | ✅ | pure-Pascal vector painter (`Tina4SVG`) — shapes, paths, text, transforms, **fill gradients** (`<linearGradient>`/`<radialGradient>` via `url(#id)`, clipped to the shape); no clip/mask/filters/`<use>` yet |
+| svg | ✅ | pure-Pascal vector painter (`Tina4SVG`) — shapes, paths, text, transforms, **fill gradients** (`<linearGradient>`/`<radialGradient>` via `url(#id)`) and **`clip-path`** (`<clipPath>` first shape, incl. on a `<g>` subtree); no mask/filters/`<use>` yet |
 | qrcode | ✅ | **Tina4 custom** — pure-Pascal QR encoder |
 | camera | ✅ | **Tina4 custom** — "Take Photo" → shell capture |
 | recorder | ✅ macOS · 🟡 iOS/Android degrade | **Tina4 custom** — mic capture, the stateful audio analogue of `<camera>`. Classified `ckFile`; a tap toggles a `recording` attribute that drives the chrome (🎙 Record → ⏹ Stop → 🎙 filename) and the start/stop path. `TinaTouch` returns `TINA_RECORD_START`/`TINA_RECORD_STOP`; the shell contract adds `StartAudioCapture`/`StopAudioCapture` (safe defaults → a shell with no mic just never arms). On stop the host calls `TinaSetRecording(path)`, which stamps the control value, routes the clip into an `<audio id="rec">` player if present, and fires the element's `onrecord` action. **macOS** ✅ real `AVAudioRecorder` → AAC .m4a in the temp dir (bundled app needs `NSMicrophoneUsageDescription`). **iOS/Android** degrade like `<camera>` there (no shell override yet — iOS `AVAudioRecorder`+`AVAudioSession`, Android `MediaRecorder`+`RECORD_AUDIO` are the follow-up). State machine covered by `tests/test_interact.pas` |

@@ -17,8 +17,10 @@ unit Tina4SVG;
   referenced by fill="url(#id)", with <stop> offset/stop-color/stop-opacity,
   objectBoundingBox (default) and userSpaceOnUse units — painted through the
   shared FillLinearGradient/FillRadialGradient, clipped to the shape. Not yet:
-  gradientTransform, spreadMethod, href stop-inheritance, gradient strokes,
-  clip/mask, filters, patterns, <use>, <tspan> positioning, dash arrays. }
+  gradientTransform, spreadMethod, href stop-inheritance, gradient strokes.
+  clip-path="url(#id)" clips an element (or a <g> subtree) to a <clipPath>'s
+  first shape (userSpaceOnUse). Not yet: multi-shape/objectBoundingBox clipPaths,
+  mask, filters, patterns, <use>, <tspan> positioning, dash arrays. }
 
 {$mode delphi}{$H+}
 
@@ -236,7 +238,8 @@ procedure CollectGradients(Tag: THTMLTag);
 var c: THTMLTag; id: string;
 begin
   if (Tag = nil) or (GDefs = nil) then Exit;
-  if SameText(Tag.TagName, 'lineargradient') or SameText(Tag.TagName, 'radialgradient') then
+  if SameText(Tag.TagName, 'lineargradient') or SameText(Tag.TagName, 'radialgradient')
+     or SameText(Tag.TagName, 'clippath') then
   begin
     id := LowerCase(Tag.GetAttribute('id'));
     if (id <> '') and (GDefs.IndexOf(id) < 0) then GDefs.AddObject(id, Tag);
@@ -259,6 +262,13 @@ begin
   while (id <> '') and ((id[Length(id)] = '''') or (id[Length(id)] = '"')) do Delete(id, Length(id), 1);
   p := GDefs.IndexOf(LowerCase(Trim(id)));
   if p >= 0 then Result := THTMLTag(GDefs.Objects[p]);
+end;
+
+{ resolve clip-path="url(#id)" -> the <clipPath> tag, or nil }
+function LookupClipPath(const Val: string): THTMLTag;
+begin
+  Result := LookupGradient(Val);   // same url(#id) resolver + shared id map
+  if (Result <> nil) and not SameText(Result.TagName, 'clippath') then Result := nil;
 end;
 
 { a length as a fraction/coordinate: "50%" -> 0.5, else the plain number }
@@ -865,6 +875,54 @@ begin
   NContours := contourCount;
 end;
 
+{ Flatten the first shape child of a <clipPath> to a device-space contour, in
+  the user space of the clipped element (clipPathUnits=userSpaceOnUse, the
+  default). One shape covers virtually every clip path; extra shapes and
+  objectBoundingBox units are not modelled. }
+function ClipContourOf(ClipTag: THTMLTag; const St: TSvgState): TTina4PointArray;
+var
+  sh, c: THTMLTag; tn: string; i, nc: Integer; a, x, y, w, h, cx, cy, rx, ry: Single;
+  nums: TSingleArray;
+  contours: array of TTina4PointArray;
+begin
+  SetLength(Result, 0);
+  sh := nil;
+  for c in ClipTag.Children do
+  begin
+    tn := LowerCase(c.TagName);
+    if (tn = 'rect') or (tn = 'circle') or (tn = 'ellipse')
+       or (tn = 'polygon') or (tn = 'path') then begin sh := c; Break; end;
+  end;
+  if sh = nil then Exit;
+  tn := LowerCase(sh.TagName);
+  if tn = 'rect' then
+  begin
+    x := ToF(PresAttr(sh, 'x')); y := ToF(PresAttr(sh, 'y'));
+    w := ToF(PresAttr(sh, 'width')); h := ToF(PresAttr(sh, 'height'));
+    AddPt(Result, St.CTM, x, y); AddPt(Result, St.CTM, x + w, y);
+    AddPt(Result, St.CTM, x + w, y + h); AddPt(Result, St.CTM, x, y + h);
+  end
+  else if (tn = 'circle') or (tn = 'ellipse') then
+  begin
+    cx := ToF(PresAttr(sh, 'cx')); cy := ToF(PresAttr(sh, 'cy'));
+    if tn = 'circle' then begin rx := ToF(PresAttr(sh, 'r')); ry := rx; end
+    else begin rx := ToF(PresAttr(sh, 'rx')); ry := ToF(PresAttr(sh, 'ry')); end;
+    for i := 0 to 63 do
+    begin a := i / 64 * 2 * Pi; AddPt(Result, St.CTM, cx + rx * Cos(a), cy + ry * Sin(a)); end;
+  end
+  else if tn = 'polygon' then
+  begin
+    nums := NumList(PresAttr(sh, 'points')); i := 0;
+    while i + 1 < Length(nums) do begin AddPt(Result, St.CTM, nums[i], nums[i + 1]); Inc(i, 2); end;
+  end
+  else if tn = 'path' then
+  begin
+    SetLength(contours, 64);
+    ParsePath(sh.GetAttribute('d'), St.CTM, contours, nc);
+    if nc > 0 then Result := contours[0];   // first subpath
+  end;
+end;
+
 { ---- node walk -------------------------------------------------------- }
 
 procedure PaintNode(Canvas: TTina4Canvas; Tag: THTMLTag; const Parent: TSvgState);
@@ -876,9 +934,24 @@ var
   nc, i: Integer;
   fillCol, strokeCol: TTina4Color;
   sw: Single;
+  clipTag: THTMLTag;
+  clipPts: TTina4PointArray;
+  clipped: Boolean;
 begin
   st := MergeState(Tag, Parent);
   tn := LowerCase(Tag.TagName);
+  // clip-path="url(#id)" — clip this element (and, for <g>, its whole subtree)
+  // to the referenced <clipPath>'s first shape. userSpaceOnUse (the default).
+  clipped := False;
+  clipTag := LookupClipPath(PresAttr(Tag, 'clip-path'));
+  if clipTag <> nil then
+  begin
+    clipPts := ClipContourOf(clipTag, st);
+    if Length(clipPts) >= 3 then
+    begin
+      Canvas.SaveState; Canvas.ClipPolygon(clipPts); clipped := True;
+    end;
+  end;
   if (tn = 'g') or (tn = 'svg') or (tn = 'a') then
   begin
     for c in Tag.Children do PaintNode(Canvas, c, st);
@@ -920,6 +993,7 @@ begin
       end;
     end;
   end;
+  if clipped then Canvas.RestoreState;
 end;
 
 { ---- viewBox setup + entry points ------------------------------------- }
