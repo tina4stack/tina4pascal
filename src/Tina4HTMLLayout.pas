@@ -2501,8 +2501,9 @@ var
   trackW, trackFr, colX, rowH, rowFr: array of Single;
   trackFixed: array of Boolean;
   rowIsFr: array of Boolean;
-  ncols, nrows, i, curRow, curCol, span, k, spanRows: Integer;
+  ncols, nrows, i, curRow, curCol, span, k, spanRows, tplRows: Integer;
   colStart, rowStart, rowSpan, autoRow, autoCol: Integer;
+  autoRowH: Single;
   toks: TStringArray;
   tk: string;
   iRow, iCol, iSpan, iRowSpan: array of Integer;
@@ -2871,6 +2872,20 @@ begin
         if frUnit < 0 then frUnit := 0;
         for k := 0 to nrows - 1 do
           if rowIsFr[k] then rowH[k] := frUnit * rowFr[k];
+      end;
+    end;
+
+    // grid-auto-rows: implicit rows (beyond the explicit template, or all rows
+    // when there is none) take this track size — a px length or a minmax floor.
+    if Trim(st.GridAutoRows) <> '' then
+    begin
+      autoRowH := GridTrackMin(st.GridAutoRows);
+      if autoRowH > 0 then
+      begin
+        if Trim(st.GridTemplateRows) <> '' then
+          tplRows := Length(Trim(st.GridTemplateRows).Split([' '], TStringSplitOptions.ExcludeEmpty))
+        else tplRows := 0;
+        for k := tplRows to nrows - 1 do rowH[k] := Max(rowH[k], autoRowH);
       end;
     end;
 

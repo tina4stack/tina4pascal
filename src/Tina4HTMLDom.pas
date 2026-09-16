@@ -378,6 +378,7 @@ type
     // CSS Grid (subset)
     GridTemplateColumns: string;  // track list: px / % / fr / repeat(n, size) / auto
     GridTemplateRows: string;
+    GridAutoRows: string;    // implicit-row track size (grid-auto-rows)
     GridColumn: string;           // item placement: 'span N' (start/end lines TBD)
     GridRow: string;
     GridTemplateAreas: string;    // raw "…" "…" rows on the container
@@ -2444,7 +2445,7 @@ begin
   Result.FlexBasis := -1;
   Result.FlexGap := 0;
   Result.AlignSelf := ''; Result.CSSOrder := 0;
-  Result.GridTemplateColumns := ''; Result.GridTemplateRows := '';
+  Result.GridTemplateColumns := ''; Result.GridTemplateRows := ''; Result.GridAutoRows := '';
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
   Result.TextShadowActive := False;
@@ -3002,7 +3003,7 @@ begin
   Result.FlexBasis := -1;
   Result.FlexGap := 0;
   Result.AlignSelf := ''; Result.CSSOrder := 0;
-  Result.GridTemplateColumns := ''; Result.GridTemplateRows := '';
+  Result.GridTemplateColumns := ''; Result.GridTemplateRows := ''; Result.GridAutoRows := '';
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
   Result.TextShadowActive := False;
@@ -4540,6 +4541,8 @@ begin
     Style.GridTemplateColumns := Temp.Trim.ToLower;
   if Decls.TryGetValue('grid-template-rows', Temp) and not ShouldSkip(Temp) then
     Style.GridTemplateRows := Temp.Trim.ToLower;
+  if Decls.TryGetValue('grid-auto-rows', Temp) and not ShouldSkip(Temp) then
+    Style.GridAutoRows := Temp.Trim.ToLower;
   if Decls.TryGetValue('grid-column', Temp) and not ShouldSkip(Temp) then
     Style.GridColumn := Temp.Trim.ToLower;
   if Decls.TryGetValue('grid-row', Temp) and not ShouldSkip(Temp) then

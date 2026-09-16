@@ -32,7 +32,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | visibility | ✅ | hidden hides self+subtree, keeps space (was mislabelled 📦) |
 | display block/inline/inline-block/none/list-item/table | ✅ | |
 | display flex / inline-flex | ✅ | LayoutFlex (was mislabelled "no flex") |
-| display grid | ✅ | grid-template-columns + **grid-template-rows** (px/%/fr/auto/repeat/**minmax()**), **`repeat(auto-fit`/`auto-fill, minmax(min,1fr))`** (track count from the container width — the responsive-grid pattern, verified 0.0–0.4% vs Chrome), row/column gaps, row-major auto-placement **that skips occupied cells**, explicit line placement (`grid-column/row: N`, `N / M`, `N / span S`), column + **row span**, `grid-template-areas`. Reftest `grid-minmax` |
+| display grid | ✅ | grid-template-columns + **grid-template-rows** (px/%/fr/auto/repeat/**minmax()**) + **`grid-auto-rows`** (implicit-row track size: px / minmax floor), **`repeat(auto-fit`/`auto-fill, minmax(min,1fr))`** (track count from the container width — the responsive-grid pattern, verified 0.0–0.4% vs Chrome), row/column gaps, row-major auto-placement **that skips occupied cells**, explicit line placement (`grid-column/row: N`, `N / M`, `N / span S`), column + **row span**, `grid-template-areas`. Reftests `grid-minmax`, `grid-auto-rows` |
 | aspect-ratio | ✅ | `<w>/<h>` or a bare number; with a known width and auto height the block's height is derived (width ÷ ratio). Width-from-height is the rarer case (not re-laid-out) |
 
 ## Positioning
