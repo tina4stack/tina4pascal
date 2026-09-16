@@ -162,9 +162,12 @@ type
     RoutingKey: string;
     // Selector pre-tokenized at parse time:
     //   SelectorLower    — Selector.Trim.ToLower (cached)
-    //   SelectorParts    — descendant-split parts of SelectorLower
+    //   SelectorParts    — the simple selectors left-to-right (subject last)
+    //   SelectorCombs    — combinator joining part[k] to part[k+1]:
+    //                      'desc' | 'child' | 'adj' | 'sib' (len = parts-1)
     SelectorLower: string;
     SelectorParts: TStringArray;
+    SelectorCombs: TStringArray;
     constructor Create;
     destructor Destroy; override;
   end;
@@ -607,6 +610,59 @@ begin
   FUniversalRules.Clear;
 end;
 
+{ Split a selector into its simple selectors and the combinators between them.
+  Combinators: descendant (whitespace), child '>', adjacent-sibling '+',
+  general-sibling '~'. Combs[k] joins Parts[k] to Parts[k+1]; a symbol
+  combinator overrides a tentative descendant from surrounding whitespace. }
+procedure TokenizeSelector(const Sel: string; out Parts, Combs: TStringArray);
+var
+  i, L: Integer; ch: Char; cur, pending: string; needComb: Boolean;
+begin
+  SetLength(Parts, 0); SetLength(Combs, 0);
+  cur := ''; pending := ''; needComb := False;
+  L := Length(Sel); i := 1;
+  while i <= L do
+  begin
+    ch := Sel[i];
+    if (ch = ' ') or (ch = #9) then
+    begin
+      if cur <> '' then
+      begin
+        SetLength(Parts, Length(Parts) + 1); Parts[High(Parts)] := cur;
+        cur := ''; needComb := True; pending := '';
+      end;
+      Inc(i); Continue;
+    end;
+    if (ch = '>') or (ch = '+') or (ch = '~') then
+    begin
+      if cur <> '' then
+      begin
+        SetLength(Parts, Length(Parts) + 1); Parts[High(Parts)] := cur;
+        cur := ''; needComb := True; pending := '';
+      end;
+      case ch of
+        '>': pending := 'child';
+        '+': pending := 'adj';
+        '~': pending := 'sib';
+      end;
+      Inc(i); Continue;
+    end;
+    // first char of a new part: emit the combinator that precedes it
+    if (cur = '') and needComb then
+    begin
+      SetLength(Combs, Length(Combs) + 1);
+      if pending = '' then Combs[High(Combs)] := 'desc' else Combs[High(Combs)] := pending;
+      needComb := False; pending := '';
+    end;
+    cur := cur + ch;
+    Inc(i);
+  end;
+  if cur <> '' then
+  begin
+    SetLength(Parts, Length(Parts) + 1); Parts[High(Parts)] := cur;
+  end;
+end;
+
 procedure TCSSStyleSheet.ClassifyRule(Rule: TCSSRule);
 // Compute the routing key for a rule based on its LAST selector part
 // (the one that selects the tag itself; preceding parts are descendant
@@ -614,13 +670,14 @@ procedure TCSSStyleSheet.ClassifyRule(Rule: TCSSRule);
 // Also pre-tokenize the selector so SelectorMatches doesn't repeat the
 // Trim/ToLower/Split work on every call.
 var
-  Sel, LastPart, Rest: string;
-  I, DotPos, HashPos, BracketPos, ColonPos, EndPos: Integer;
+  LastPart, Rest: string;
+  DotPos, HashPos, BracketPos, ColonPos, EndPos: Integer;
   List: TList<TCSSRule>;
 begin
-  // Pre-tokenize the selector. Lowercase once, split-by-space once.
+  // Pre-tokenize the selector into simple selectors + combinators (handles
+  // descendant ' ', child '>', adjacent '+', general-sibling '~').
   Rule.SelectorLower := Rule.Selector.Trim.ToLower;
-  Rule.SelectorParts := Rule.SelectorLower.Split([' '], TStringSplitOptions.ExcludeEmpty);
+  TokenizeSelector(Rule.SelectorLower, Rule.SelectorParts, Rule.SelectorCombs);
   if Rule.SelectorLower.EndsWith(':before') or Rule.SelectorLower.EndsWith(':after') then
     FHasPseudo := True;   // covers ::before/::after too (they end with :before/:after)
   if (Rule.Declarations <> nil) and
@@ -628,11 +685,11 @@ begin
       Rule.Declarations.ContainsKey('counter-increment')) then
     FHasCounters := True;
 
-  Sel := Rule.Selector.Trim;
-  // Find the last descendant-separated part. Trim trailing combinators.
-  I := Sel.LastIndexOf(' ');
-  if I >= 0 then LastPart := Sel.Substring(I + 1).Trim
-  else LastPart := Sel;
+  // Routing key comes from the subject (last simple selector). Deriving it from
+  // the tokenized subject means a symbol combinator without spaces (`div>p`)
+  // still routes under its real target tag/class/id, not a bogus 'div>p' key.
+  if Length(Rule.SelectorParts) = 0 then Exit;
+  LastPart := Rule.SelectorParts[High(Rule.SelectorParts)];
   if LastPart = '' then Exit;
 
   // Strip any trailing pseudo-class / attribute selector for routing
@@ -1275,6 +1332,25 @@ begin
     Result := A.SourceOrder - B.SourceOrder;
 end;
 
+{ The previous element sibling of Tag (skipping #text and injected pseudo
+  nodes), or nil. Used by the +/~ combinators. }
+function PrevElementSibling(Tag: THTMLTag): THTMLTag;
+var p, c: THTMLTag; i, idx: Integer;
+begin
+  Result := nil;
+  p := Tag.Parent;
+  if p = nil then Exit;
+  idx := -1;
+  for i := 0 to p.Children.Count - 1 do
+    if p.Children[i] = Tag then begin idx := i; Break; end;
+  if idx < 0 then Exit;
+  for i := idx - 1 downto 0 do
+  begin
+    c := p.Children[i];
+    if (c.TagName <> '#text') and not c.TagName.StartsWith('tina4::') then Exit(c);
+  end;
+end;
+
 { 1-based position of Tag among its element siblings (skipping #text and
   injected tina4:: pseudo nodes). SameType restricts the count/position to
   siblings sharing Tag's tag name (for :*-of-type). Total returns the sibling
@@ -1583,7 +1659,7 @@ begin
     temp := TCSSRule.Create;
     try
       temp.SelectorLower := baseSel;
-      temp.SelectorParts := baseSel.Split([' '], TStringSplitOptions.ExcludeEmpty);
+      TokenizeSelector(baseSel, temp.SelectorParts, temp.SelectorCombs);
       if SelectorMatches(temp, Tag) then
       begin
         for k in rule.Declarations.Keys do
@@ -1597,35 +1673,67 @@ begin
 end;
 
 function TCSSStyleSheet.SelectorMatches(Rule: TCSSRule; Tag: THTMLTag): Boolean;
-// Uses Rule.SelectorParts cached at parse time so we don't pay
-// Trim+ToLower+Split per match: match the last simple selector against
-// the tag, then walk ancestors for descendant parts.
+// Uses Rule.SelectorParts / SelectorCombs cached at parse time. Matches the
+// subject (last simple selector) against the tag, then walks leftward honouring
+// each combinator: descendant (any ancestor, greedy), child (direct parent),
+// adjacent-sibling (immediately preceding element), general-sibling (any
+// preceding element). Greedy — sufficient for the selectors real pages use.
 var
-  Current: THTMLTag;
-  PartIdx: Integer;
+  Current, Cand: THTMLTag;
+  k: Integer;
+  comb: string;
+  matched: Boolean;
 begin
   Result := False;
   if not Assigned(Tag) or (Tag.TagName = '#text') or (Tag.TagName = 'root') then
     Exit;
   if Length(Rule.SelectorParts) = 0 then Exit;
 
-  // Match the last simple selector against the tag
+  // Match the subject (last simple selector) against the tag
   if not MatchesSingleSelector(Rule.SelectorParts[High(Rule.SelectorParts)], Tag) then
     Exit;
 
   if Length(Rule.SelectorParts) = 1 then
     Exit(True);
 
-  // Walk ancestors greedy-matching descendant parts in reverse
-  Current := Tag.Parent;
-  PartIdx := Length(Rule.SelectorParts) - 2;
-  while (PartIdx >= 0) and Assigned(Current) do
+  Current := Tag;
+  for k := Length(Rule.SelectorParts) - 2 downto 0 do
   begin
-    if MatchesSingleSelector(Rule.SelectorParts[PartIdx], Current) then
-      Dec(PartIdx);
-    Current := Current.Parent;
+    if k < Length(Rule.SelectorCombs) then comb := Rule.SelectorCombs[k] else comb := 'desc';
+    if comb = 'child' then
+    begin
+      Current := Current.Parent;
+      if not Assigned(Current) or not MatchesSingleSelector(Rule.SelectorParts[k], Current) then Exit;
+    end
+    else if comb = 'adj' then
+    begin
+      Cand := PrevElementSibling(Current);
+      if not Assigned(Cand) or not MatchesSingleSelector(Rule.SelectorParts[k], Cand) then Exit;
+      Current := Cand;
+    end
+    else if comb = 'sib' then
+    begin
+      Cand := PrevElementSibling(Current); matched := False;
+      while Assigned(Cand) do
+      begin
+        if MatchesSingleSelector(Rule.SelectorParts[k], Cand) then begin matched := True; Break; end;
+        Cand := PrevElementSibling(Cand);
+      end;
+      if not matched then Exit;
+      Current := Cand;
+    end
+    else  // descendant: greedy walk up ancestors
+    begin
+      Current := Current.Parent; matched := False;
+      while Assigned(Current) do
+      begin
+        if MatchesSingleSelector(Rule.SelectorParts[k], Current) then begin matched := True; Break; end;
+        Current := Current.Parent;
+      end;
+      if not matched then Exit;
+    end;
   end;
-  Result := PartIdx < 0;
+  Result := True;
 end;
 
 procedure TCSSStyleSheet.ApplyTo(Tag: THTMLTag; Declarations: TCSSDeclarations);
