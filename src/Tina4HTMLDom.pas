@@ -2749,6 +2749,15 @@ begin
   begin
     Result := StrToFloatDef(Str.Replace('em', ''), 0) * EmSize;
   end
+  // viewport units — resolve against the ICB set by SetCalcContext (0 before then)
+  else if Str.EndsWith('vmin') then
+    Result := StrToFloatDef(Str.Replace('vmin', ''), 0) * Min(GCalcVpW, GCalcVpH) / 100
+  else if Str.EndsWith('vmax') then
+    Result := StrToFloatDef(Str.Replace('vmax', ''), 0) * Max(GCalcVpW, GCalcVpH) / 100
+  else if Str.EndsWith('vh') then
+    Result := StrToFloatDef(Str.Replace('vh', ''), 0) * GCalcVpH / 100
+  else if Str.EndsWith('vw') then
+    Result := StrToFloatDef(Str.Replace('vw', ''), 0) * GCalcVpW / 100
   else if Str.EndsWith('px') then
   begin
     Result := StrToFloatDef(Str.Replace('px', ''), 0);
