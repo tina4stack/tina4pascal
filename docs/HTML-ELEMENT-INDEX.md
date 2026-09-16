@@ -49,7 +49,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 
 | Element | Status | Note |
 |---|---|---|
-| a, span | ✅ | inline; a emits link events |
+| a, span | ✅ | inline. A click on `<a href>` with no `onclick`/control fires the core link hook (`Tina4InvokeLink`) with the href + target; the shell's registered opener (`Tina4LinkOpen` — `open`/`ShellExecute`/`xdg-open`) hands it to the OS by scheme: `tel:`→dialer, `mailto:`→mail, `sms:`→messages, `http(s):`→browser, `geo:`/`maps:`→maps. Verified all four schemes dispatch with exact URLs. App wires it once via `Tina4InstallLinkOpener` (no-op until then) |
 | b, strong, i, em, u, ins | ✅ | bold/italic/underline |
 | s, del | ✅ | line-through |
 | strike | ✅ | line-through (legacy alias of s/del) |

@@ -184,6 +184,12 @@ low-quality hack.
   is the fix; the backing-store is still TODO.
 
 ## H. Interaction model
+- ~~**[S] `<a href>` scheme links**~~ — **DONE.** A click on an anchor with no
+  `onclick`/control fires the core link hook (`Tina4InvokeLink`, OS-free); the
+  shell-side `Tina4LinkOpen` opener hands the URL to the OS by scheme
+  (`tel:`→dialer, `mailto:`→mail, `sms:`→messages, `http(s):`→browser, `geo:`/
+  `maps:`→maps) via `open`/`ShellExecute`/`xdg-open`. Wired in htmlviewer
+  (`Tina4InstallLinkOpener`); verified all four schemes dispatch with exact URLs.
 - **[M] `user-select` / `resize`** — parsed-ignored (no selection model / resize).
 - **[L] Shadow DOM / `<slot>`** — passthrough only.
 

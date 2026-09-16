@@ -1595,7 +1595,7 @@ end;
 
 function TinaTouch(Action: Integer; X, Y: Single): Integer;
 var
-  hit, ctrl, ne: THTMLTag;
+  hit, ctrl, ne, anc: THTMLTag;
   neTap: TElemTapProc;
   sb: TLayoutBox;
   cx, cy, dx, dy: Single;
@@ -1719,6 +1719,17 @@ begin
          end;
          if ctrl = nil then
          begin
+           // no control/onclick under the finger — an <a href> (tel:/mailto:/sms:/
+           // http(s):/geo:…) hands off to the OS via the registered link hook (the
+           // shell's dialer/mail/browser). The core never opens a URL itself.
+           anc := hit;
+           while (anc <> nil) and not (SameText(anc.TagName, 'a') and anc.HasAttribute('href')) do
+             anc := anc.Parent;
+           if (anc <> nil) and Tina4InvokeLink(anc.GetAttribute('href'), anc.GetAttribute('target')) then
+           begin
+             if GFocusedTag <> nil then begin BlurAll; GLayoutDirty := True; end;
+             Exit;
+           end;
            if GFocusedTag <> nil then begin BlurAll; GLayoutDirty := True; Result := TINA_HIDE_KBD; end;
            Exit;
          end;
