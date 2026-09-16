@@ -128,6 +128,7 @@ type
     procedure ResetCounterState;
     function CounterStack(const Name: string): TList<Integer>;
     function CounterApplyReset(const Spec: string): TStringList;
+    function CounterApplySet(const Spec: string): TStringList;
     procedure CounterApplyIncrement(const Spec: string);
     procedure CounterPop(Names: TStringList);
     function ResolveContentValue(Tag: THTMLTag; const CV: string): string;
@@ -706,6 +707,25 @@ begin
   finally names.Free; vals.Free; end;
 end;
 
+{ counter-set: set the innermost value of each named counter. If the counter
+  has no level yet one is created (and returned so the caller pops it when the
+  element scope ends); an existing level is overwritten in place. }
+function TLayoutEngine.CounterApplySet(const Spec: string): TStringList;
+var names: TStringList; vals: TList<Integer>; i: Integer; st: TList<Integer>;
+begin
+  Result := TStringList.Create;
+  names := TStringList.Create; vals := TList<Integer>.Create;
+  try
+    ParseCounterPairs(Spec, 0, names, vals);
+    for i := 0 to names.Count - 1 do
+    begin
+      st := CounterStack(names[i]);
+      if st.Count = 0 then begin st.Add(vals[i]); Result.Add(names[i]); end
+      else st[st.Count - 1] := vals[i];
+    end;
+  finally names.Free; vals.Free; end;
+end;
+
 { counter-increment: add to the innermost value (auto-creating at 0). }
 procedure TLayoutEngine.CounterApplyIncrement(const Spec: string);
 var names: TStringList; vals: TList<Integer>; i: Integer; st: TList<Integer>;
@@ -880,7 +900,7 @@ var
   kids: TList<THTMLTag>;
   edecls: TCSSDeclarations;
   spec: string;
-  pushed: TStringList;
+  pushed, setPushed: TStringList;
   isElem: Boolean;
 begin
   if Tag = nil then Exit;
@@ -903,6 +923,12 @@ begin
     try
       FSheet.ApplyTo(Tag, edecls);
       if edecls.TryGetValue('counter-reset', spec) then pushed := CounterApplyReset(spec);
+      if edecls.TryGetValue('counter-set', spec) then
+      begin
+        setPushed := CounterApplySet(spec);
+        if pushed = nil then pushed := setPushed
+        else begin pushed.AddStrings(setPushed); setPushed.Free; end;
+      end;
       if edecls.TryGetValue('counter-increment', spec) then CounterApplyIncrement(spec);
     finally
       edecls.Free;

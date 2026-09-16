@@ -683,7 +683,8 @@ begin
     FHasPseudo := True;   // covers ::before/::after too (they end with :before/:after)
   if (Rule.Declarations <> nil) and
      (Rule.Declarations.ContainsKey('counter-reset') or
-      Rule.Declarations.ContainsKey('counter-increment')) then
+      Rule.Declarations.ContainsKey('counter-increment') or
+      Rule.Declarations.ContainsKey('counter-set')) then
     FHasCounters := True;
 
   // Routing key comes from the subject (last simple selector). Deriving it from
