@@ -92,6 +92,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | text-overflow | ✅ | ellipsis truncation (single nowrap line): truncates the crossing run + drops the rest |
 | text-shadow | ✅ | painted (offset shadow pass before the glyph); see PaintBoxEx run loop |
 | white-space | ✅ | normal/nowrap/pre/pre-wrap/pre-line; pre* preserve newlines (+ spaces for pre/pre-wrap) — parser keeps raw text for <pre> and inline white-space:pre* |
+| text-wrap (+ -mode) | ✅ | `nowrap` (no wrapping) and `balance` — a measure-only line-count binary search finds the narrowest width that keeps the full-width line count, so 2–8 line headings/blocks break into even lines. `pretty`/`stable` parse and fall back to normal wrapping. Reftest `css-text-wrap-balance` |
 | word-break, overflow-wrap | ✅ | break-word/break-all/anywhere: over-long words break between characters (UTF-8 aware) |
 | vertical-align | ✅ | sub/super/top/bottom/middle/text-top/text-bottom + **`<length>`** (px/em/rem baseline shift on inline text) |
 | list-style-type | ✅ | disc/circle/square/none, decimal, decimal-leading-zero, lower/upper-alpha(latin), lower/upper-roman, lower-greek. Reftests `css-list-markers`, `css-list-greek` |

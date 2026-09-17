@@ -330,6 +330,7 @@ type
     AspectRatio: Single;   // width/height ratio (0 = none/auto)
     Display: string;
     WhiteSpace: string;
+    TextWrap: string;   // '' | 'nowrap' | 'balance' | 'pretty' | 'stable' (inherited)
     BoxSizing: string;
     AppearanceNone: Boolean;    // appearance:none — strip native control chrome
     AccentColor: TAlphaColor;   // accent-color for checkboxes/radios/range (0=auto)
@@ -2691,6 +2692,7 @@ begin
   Result.AspectRatio := 0;
   Result.Display := 'block';
   Result.WhiteSpace := 'normal';
+  Result.TextWrap := '';
   Result.BoxSizing := 'content-box';
   Result.CSSCursor := '';
   Result.TextTransform := 'none';
@@ -3236,6 +3238,7 @@ begin
   Result.WritingMode := ParentStyle.WritingMode;   // inherited
   Result.LineHeight := ParentStyle.LineHeight;
   Result.WhiteSpace := ParentStyle.WhiteSpace;
+  Result.TextWrap := ParentStyle.TextWrap;
   Result.ListStyleType := ParentStyle.ListStyleType;
   Result.ListStyleImage := ParentStyle.ListStyleImage;   // inherited
   Result.TextTransform := ParentStyle.TextTransform;
@@ -4520,6 +4523,10 @@ begin
     Style.VerticalAlign := Temp.ToLower;
   if Decls.TryGetValue('white-space', Temp) and not ShouldSkip(Temp) then
     Style.WhiteSpace := Temp.Trim.ToLower;
+  if Decls.TryGetValue('text-wrap', Temp) and not ShouldSkip(Temp) then
+    Style.TextWrap := Temp.Trim.ToLower;
+  if Decls.TryGetValue('text-wrap-mode', Temp) and not ShouldSkip(Temp) then
+    Style.TextWrap := Temp.Trim.ToLower;
   if Decls.TryGetValue('box-sizing', Temp) and not ShouldSkip(Temp) then
     Style.BoxSizing := Temp.ToLower;
   if (Decls.TryGetValue('appearance', Temp) or Decls.TryGetValue('-webkit-appearance', Temp))

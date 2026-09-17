@@ -4533,14 +4533,49 @@ var
     lineItems.Clear;
   end;
 
+  { Simulate wrapping over `items` at width w (no painting) and return the line
+    count — used by text-wrap:balance to find the balanced width. }
+  function CountLinesAt(w: Single): Integer;
+  var j: Integer; cw, sw: Single; it2: TInlineItem;
+  begin
+    Result := 1; cw := 0;
+    for j := 0 to items.Count - 1 do
+    begin
+      it2 := items[j];
+      if it2.LineBreak then begin Inc(Result); cw := 0; Continue; end;
+      sw := 0;
+      if it2.SpaceBefore and (cw > 0) then
+        sw := FCanvas.MeasureText(' ', it2.FontSize, it2.Styles).Width + ParentStyle.WordSpacing;
+      if (cw > 0) and (cw + sw + it2.W > w) then begin Inc(Result); cw := it2.W; end
+      else cw := cw + sw + it2.W;
+    end;
+  end;
+
   procedure FlowInlineItems;
   var
-    i, carrySpacer, spIdx: Integer;
+    i, carrySpacer, spIdx, fullLines, bIter: Integer;
     it: TInlineItem;
-    curW, lineH, spaceW, lineW, flw0, flw1: Single;
+    curW, lineH, spaceW, lineW, flw0, flw1, balancedW, blo, bhi, bmid: Single;
     lineItems: TList<Integer>;
   begin
     if items.Count = 0 then Exit;
+    // text-wrap:balance — find the narrowest width that keeps the full-width line
+    // count, so the lines end up roughly even (headings, short paragraphs).
+    balancedW := 0;
+    if SameText(ParentStyle.TextWrap, 'balance') and (not noWrapFlow) then
+    begin
+      fullLines := CountLinesAt(CW);
+      if (fullLines >= 2) and (fullLines <= 8) then
+      begin
+        blo := 0; bhi := CW;
+        for bIter := 1 to 24 do
+        begin
+          bmid := (blo + bhi) / 2;
+          if CountLinesAt(bmid) <= fullLines then bhi := bmid else blo := bmid;
+        end;
+        balancedW := bhi;
+      end;
+    end;
     lineItems := TList<Integer>.Create;
     try
       curW := 0; lineH := 0;
@@ -4561,6 +4596,8 @@ var
         // it (so text wraps beside a floated box).
         LineBounds(y, y + Max(lineH, it.H), flw0, flw1);
         lineW := flw1 - flw0;
+        // text-wrap:balance caps the usable width to the balanced width
+        if (balancedW > 0) and (balancedW < lineW) then lineW := balancedW;
         // text-indent narrows the FIRST line's usable width by the indent, so
         // the shifted first line wraps early instead of overflowing the margin.
         if firstInlineLine and (ParentStyle.TextIndent <> 0) and
@@ -4648,7 +4685,8 @@ begin
   end;
   FloatBase := Length(FFloats); MaxFloatY := CY;   // this container's floats append here
   noWrapFlow := SameText(ParentStyle.WhiteSpace, 'nowrap') or
-                SameText(ParentStyle.WhiteSpace, 'pre');
+                SameText(ParentStyle.WhiteSpace, 'pre') or
+                SameText(ParentStyle.TextWrap, 'nowrap');
   items := TList<TInlineItem>.Create;
   hyphenIdx := TList<Integer>.Create;
   bidiForce := TDictionary<Integer, string>.Create;
