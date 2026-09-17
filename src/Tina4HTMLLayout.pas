@@ -299,8 +299,12 @@ begin
   if t = 'circle' then Exit(#$E2#$97#$A6)         // ◦
   else if t = 'square' then Exit(#$E2#$96#$AA)    // ▪
   else if t = 'decimal' then Exit(IntToStr(Idx) + '.')
-  else if t = 'lower-alpha' then Exit(Chr(Ord('a') + (Idx - 1) mod 26) + '.')
-  else if t = 'upper-alpha' then Exit(Chr(Ord('A') + (Idx - 1) mod 26) + '.')
+  else if t = 'decimal-leading-zero' then
+  begin
+    if (Idx >= 0) and (Idx < 10) then Exit('0' + IntToStr(Idx) + '.') else Exit(IntToStr(Idx) + '.');
+  end
+  else if (t = 'lower-alpha') or (t = 'lower-latin') then Exit(Chr(Ord('a') + (Idx - 1) mod 26) + '.')
+  else if (t = 'upper-alpha') or (t = 'upper-latin') then Exit(Chr(Ord('A') + (Idx - 1) mod 26) + '.')
   else if t = 'lower-roman' then Exit(ToRoman(Idx) + '.')
   else if t = 'upper-roman' then Exit(UpperCase(ToRoman(Idx)) + '.')
   else Exit(#$E2#$80#$A2);                        // • disc (default)
