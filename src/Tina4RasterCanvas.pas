@@ -92,6 +92,10 @@ type
       applied here yet — a safe degrade; see docs/OUTSTANDING.md A.) }
     function  BeginLayer(X, Y, W, H, Pad: Single): Integer; override;
     procedure EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string); override;
+    { CSS 3D transform / preserve-3d: warp the layer texture onto its projected
+      quad (Corners = TL,TR,BR,BL in doc coords) and composite. Pure-Pascal via
+      the compositor's WarpQuad, so 3D scenes render on Android too. }
+    procedure EndLayer3D(Handle: Integer; const Corners: array of Single); override;
     { CSS backdrop-filter: filter the already-painted pixels under the rect (the
       raster canvas can read its own buffer, so this is a real read-back). }
     procedure BackdropFilter(X, Y, W, H: Single; const FilterSpec: string); override;
@@ -794,6 +798,68 @@ begin
       end
       else
         BlendPixel(dpx, dpy, (c shr 16) and $FF, (c shr 8) and $FF, c and $FF, srcA);
+    end;
+end;
+
+procedure TTina4RasterCanvas.EndLayer3D(Handle: Integer; const Corners: array of Single);
+var
+  layPix: array of Cardinal;
+  lw, lh, n, i, k, x, y, di: Integer;
+  fbuf: array of Single; c: Cardinal; fa: Single;
+  minx, miny, maxx, maxy, qx, qy: Single;
+  bx0, by0, bw, bh: Integer; quadL: array[0..7] of Single;
+  dst: array of Byte; pa: Single;
+begin
+  n := Length(FLayers);
+  if n = 0 then Exit;
+  // capture the just-drawn layer, restore the parent target
+  layPix := FPix; lw := FW; lh := FH;
+  Dec(n);
+  FPix := FLayers[n].Pix; FW := FLayers[n].W; FH := FLayers[n].H;
+  FTgtOX := FLayers[n].OX; FTgtOY := FLayers[n].OY;
+  FClip := FLayers[n].Clip; FClipSave := FLayers[n].ClipSave;
+  SetLength(FLayers, n); SetLength(FCov, FW);
+  if (lw <= 0) or (lh <= 0) then Exit;
+  // layer → premultiplied float for WarpQuad
+  SetLength(fbuf, lw * lh * 4);
+  for i := 0 to lw * lh - 1 do
+  begin
+    c := layPix[i]; fa := ((c shr 24) and $FF) / 255;
+    fbuf[i*4]   := ((c shr 16) and $FF) / 255 * fa;
+    fbuf[i*4+1] := ((c shr 8)  and $FF) / 255 * fa;
+    fbuf[i*4+2] := ( c         and $FF) / 255 * fa;
+    fbuf[i*4+3] := fa;
+  end;
+  // destination bounding box of the quad (parent-buffer coords)
+  minx := 1e30; miny := 1e30; maxx := -1e30; maxy := -1e30;
+  for k := 0 to 3 do
+  begin
+    qx := Corners[k*2] - FTgtOX; qy := Corners[k*2+1] - FTgtOY;
+    if qx < minx then minx := qx; if qx > maxx then maxx := qx;
+    if qy < miny then miny := qy; if qy > maxy then maxy := qy;
+  end;
+  bx0 := Floor(minx); by0 := Floor(miny);
+  bw := Ceil(maxx) - bx0; bh := Ceil(maxy) - by0;
+  if (bw <= 0) or (bh <= 0) or (bw > 8192) or (bh > 8192) then Exit;
+  for k := 0 to 3 do
+  begin
+    quadL[k*2]   := (Corners[k*2]   - FTgtOX) - bx0;
+    quadL[k*2+1] := (Corners[k*2+1] - FTgtOY) - by0;
+  end;
+  SetLength(dst, bw * bh * 4);   // zero = transparent
+  WarpQuad(PSingleBuf(@fbuf[0]), lw, lh, quadL, PByte(@dst[0]), bw, bh);
+  // composite the warped (premultiplied) result onto the parent via BlendPixel
+  // (which takes straight alpha at doc coords, honouring the parent clip)
+  for y := 0 to bh - 1 do
+    for x := 0 to bw - 1 do
+    begin
+      di := (y * bw + x) * 4;
+      pa := dst[di+3] / 255;
+      if pa <= 0 then Continue;
+      BlendPixel(FTgtOX + bx0 + x, FTgtOY + by0 + y,
+        Min(255, Round(dst[di]   / pa)),
+        Min(255, Round(dst[di+1] / pa)),
+        Min(255, Round(dst[di+2] / pa)), pa);
     end;
 end;
 

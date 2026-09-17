@@ -241,6 +241,12 @@ var
   GSelText: string = '';                    // selected text, gathered during paint
   GSelLastY: Single = -1;                   // last selected glyph's line Y (for LF breaks)
 
+  { Active perspective context (transform-style:preserve-3d scenes). Set while
+    painting the subtree of an element with the `perspective` property; a
+    preserve-3d container inside it projects its children through this. }
+  G3DPerspD: Single = 0;                     // perspective distance px, 0 = none
+  G3DPerspOX: Single = 0; G3DPerspOY: Single = 0;   // perspective origin, paint coords
+
 { Normalise anchor/focus into reading order: lo is the earlier point (smaller Y,
   or same line and smaller X), hi the later. }
 procedure SelOrder(out loX, loY, hiX, hiY: Single);
@@ -1815,6 +1821,121 @@ begin
     if W4 < 0.0001 then W4 := 0.0001;    // clamp corners at/behind the camera
     C[i*2]     := pivotX + X / W4;
     C[i*2 + 1] := pivotY + Y / W4;
+  end;
+end;
+
+{ Apply a row-major 4x4 (point as column vector p' = M·p) to a 3D point, with the
+  perspective divide when the matrix has a non-affine w row. }
+procedure Xform3D(const M: array of Single; x, y, z: Single; out ox, oy, oz: Single);
+var w: Single;
+begin
+  ox := M[0]*x + M[1]*y + M[2]*z + M[3];
+  oy := M[4]*x + M[5]*y + M[6]*z + M[7];
+  oz := M[8]*x + M[9]*y + M[10]*z + M[11];
+  w  := M[12]*x + M[13]*y + M[14]*z + M[15];
+  if (Abs(w) > 1e-6) and (Abs(w - 1) > 1e-6) then
+  begin ox := ox / w; oy := oy / w; oz := oz / w; end;
+end;
+
+{ Resolve a transform-origin component (the <-1.5 = percentage marker) to px. }
+function ResolveOrigin(v, extent: Single): Single;
+begin
+  if v < -1.5 then Result := extent * (-v) / 100 else Result := v;
+end;
+
+{ transform-style:preserve-3d — paint the container's children as flat textures
+  warped onto their perspective-projected quads in the container's shared 3D
+  space (its own transform + the active perspective), z-sorted back-to-front and
+  backface-culled. Reuses the single-element layer+quad-warp machinery per face. }
+procedure PaintBoxEx(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single;
+  Opacity: Single; Hidden: Boolean); forward;
+procedure Paint3DScene(Canvas: TTina4Canvas; Container: TLayoutBox; innerOfs, op: Single; Hidden: Boolean);
+var
+  n, i, j, layer: Integer;
+  ocx, ocy, ocX0, ocY0: Single;                    // container transform-origin (paint coords)
+  ci: Integer;
+  face: TLayoutBox;
+  ofx, ofy, ofX0, ofY0, fyp: Single;               // per-face origin
+  corner: Integer;
+  cxd, cyd, lx, ly, lz, fxo, fyo, fzo: Single;
+  cxr, cyr, czr, oxo, oyo, ozo, absX, absY, depth, scale: Single;
+  scr: array[0..7] of Single;                      // face screen corners TL,TR,BR,BL
+  e1x, e1y, e2x, e2y, crossz: Single;
+  savedT3D: Boolean;
+  order: array of Integer;
+  avgZ: array of Single;
+  corners: array of array of Single;
+  tmpI: Integer; tmpZ: Single;
+begin
+  n := Container.Children.Count;
+  if n = 0 then Exit;
+  SetLength(order, n); SetLength(avgZ, n); SetLength(corners, n);
+  // container transform-origin in paint coords
+  ocX0 := ResolveOrigin(Container.Style.TransformOriginX, Container.W);
+  ocY0 := ResolveOrigin(Container.Style.TransformOriginY, Container.H);
+  ocx := Container.X + ocX0;
+  ocy := (Container.Y - innerOfs) + ocY0;
+  for ci := 0 to n - 1 do
+  begin
+    face := Container.Children[ci];
+    SetLength(corners[ci], 8);
+    order[ci] := ci;
+    ofX0 := ResolveOrigin(face.Style.TransformOriginX, face.W);
+    ofY0 := ResolveOrigin(face.Style.TransformOriginY, face.H);
+    fyp := face.Y - innerOfs;
+    ofx := face.X + ofX0; ofy := fyp + ofY0;
+    avgZ[ci] := 0;
+    for corner := 0 to 3 do
+    begin
+      case corner of
+        0: begin cxd := face.X;          cyd := fyp; end;            // TL
+        1: begin cxd := face.X + face.W; cyd := fyp; end;            // TR
+        2: begin cxd := face.X + face.W; cyd := fyp + face.H; end;   // BR
+      else   begin cxd := face.X;          cyd := fyp + face.H; end; // BL
+      end;
+      // relative to the face's own transform-origin, then apply the face matrix
+      lx := cxd - ofx; ly := cyd - ofy; lz := 0;
+      if face.Style.Transform3DSet then Xform3D(face.Style.TransformM3D, lx, ly, lz, fxo, fyo, fzo)
+      else begin fxo := lx; fyo := ly; fzo := lz; end;
+      // move into the container's origin frame, then apply the container matrix
+      cxr := fxo + (ofx - ocx); cyr := fyo + (ofy - ocy); czr := fzo;
+      if Container.Style.Transform3DSet then Xform3D(Container.Style.TransformM3D, cxr, cyr, czr, oxo, oyo, ozo)
+      else begin oxo := cxr; oyo := cyr; ozo := czr; end;
+      // perspective projection about the active perspective origin
+      absX := ocx + oxo; absY := ocy + oyo; depth := ozo;
+      if (G3DPerspD > 0) and (G3DPerspD - depth > 1) then scale := G3DPerspD / (G3DPerspD - depth)
+      else scale := 1;
+      scr[corner*2]     := G3DPerspOX + (absX - G3DPerspOX) * scale;
+      scr[corner*2 + 1] := G3DPerspOY + (absY - G3DPerspOY) * scale;
+      avgZ[ci] := avgZ[ci] + depth;
+    end;
+    avgZ[ci] := avgZ[ci] / 4;
+    for i := 0 to 7 do corners[ci][i] := scr[i];
+  end;
+  // z-sort back-to-front (smaller depth first — further from the viewer)
+  for i := 1 to n - 1 do
+  begin
+    tmpI := order[i]; j := i;
+    while (j > 0) and (avgZ[order[j-1]] > avgZ[tmpI]) do begin order[j] := order[j-1]; Dec(j); end;
+    order[j] := tmpI;
+  end;
+  for i := 0 to n - 1 do
+  begin
+    ci := order[i];
+    face := Container.Children[ci];
+    // backface cull: screen winding flips when the face turns away
+    e1x := corners[ci][2] - corners[ci][0]; e1y := corners[ci][3] - corners[ci][1];   // TR-TL
+    e2x := corners[ci][6] - corners[ci][0]; e2y := corners[ci][7] - corners[ci][1];   // BL-TL
+    crossz := e1x*e2y - e1y*e2x;
+    if face.Style.BackfaceHidden and (crossz <= 0) then Continue;
+    // paint the face flat into a layer, then warp it onto its projected quad
+    layer := Canvas.BeginLayer(face.X, face.Y - innerOfs, face.W, face.H, 0);
+    if layer < 0 then Continue;
+    savedT3D := face.Style.Transform3DSet;
+    face.Style.Transform3DSet := False;   // flat — the transform is in the quad
+    PaintBoxEx(Canvas, face, innerOfs, op, Hidden);
+    face.Style.Transform3DSet := savedT3D;
+    Canvas.EndLayer3D(layer, corners[ci]);
   end;
 end;
 
@@ -5841,9 +5962,6 @@ begin
   end;
 end;
 
-procedure PaintBoxEx(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single;
-  Opacity: Single; Hidden: Boolean); forward;
-
 { Resolve a text-emphasis-style value to its mark glyph (UTF-8). A quoted custom
   string wins; otherwise fill (filled/open) + shape (dot/circle/double-circle/
   triangle/sesame) select the mark. Default shape is a filled circle. }
@@ -6329,6 +6447,7 @@ var
   rgX, rgY: Single; rgI: Integer;   // resize grip corner
   selCi, selCl: Integer; selRunX, selCW, selBandS, selBandE: Single;   // selection highlight
   upx, upcw: Single; upci, upcl: Integer; upch: string;   // text-orientation:upright per-glyph
+  savedPerspD, savedPerspOX, savedPerspOY: Single;   // perspective context save/restore
   stretchF: Single;   // font-stretch horizontal scale for this run
   vAx, vAy, vWc: Single;   // writing-mode:vertical-rl paint frame (top-left + content width)
   vRotSaved: Boolean;      // a vertical-rl content rotation is open (balance the restore)
@@ -6393,7 +6512,9 @@ begin
   // CSS 3D transform: capture the element into an offscreen layer, then map that
   // texture onto its perspective-projected quad (EndLayer3D). Takes precedence
   // over the 2D transform / filter paths for this element.
-  use3D := st.Transform3DSet;
+  // a preserve-3d container does NOT flatten to one quad — its children are each
+  // projected in the shared 3D space (Paint3DScene) once inside a perspective.
+  use3D := st.Transform3DSet and not (st.Preserve3D and (G3DPerspD > 0));
   layer3D := -1;
   if use3D then
   begin
@@ -7122,13 +7243,26 @@ begin
     end;
   end;
 
-  for zi := 0 to High(zorder) do
+  // the `perspective` property establishes a 3D viewing context for the children
+  savedPerspD := G3DPerspD; savedPerspOX := G3DPerspOX; savedPerspOY := G3DPerspOY;
+  if st.Perspective > 0 then
   begin
-    i := zorder[zi];
-    if sx <> 0 then ShiftBoxTree(Box.Children[i], -sx, 0);
-    PaintBoxEx(Canvas, Box.Children[i], innerOfs, op, Hidden);
-    if sx <> 0 then ShiftBoxTree(Box.Children[i], sx, 0);
+    G3DPerspD := st.Perspective;
+    G3DPerspOX := Box.X + ResolveOrigin(st.PerspectiveOriginX, Box.W);
+    G3DPerspOY := (Box.Y - innerOfs) + ResolveOrigin(st.PerspectiveOriginY, Box.H);
   end;
+  // a preserve-3d container inside a perspective projects each child as a 3D plane
+  if st.Preserve3D and (G3DPerspD > 0) then
+    Paint3DScene(Canvas, Box, innerOfs, op, Hidden)
+  else
+    for zi := 0 to High(zorder) do
+    begin
+      i := zorder[zi];
+      if sx <> 0 then ShiftBoxTree(Box.Children[i], -sx, 0);
+      PaintBoxEx(Canvas, Box.Children[i], innerOfs, op, Hidden);
+      if sx <> 0 then ShiftBoxTree(Box.Children[i], sx, 0);
+    end;
+  G3DPerspD := savedPerspD; G3DPerspOX := savedPerspOX; G3DPerspOY := savedPerspOY;
 
   if didClip then
   begin
