@@ -172,7 +172,8 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | appearance: none | ✅ | radios/checkboxes render as styled boxes |
 | cursor | ✅ | desktop shells set the native OS pointer (pointer/text/move/grab/resize/crosshair/not-allowed/none…); inherits down the DOM. Touch shells ignore it |
 | pointer-events | ✅ | `none` makes the box + subtree transparent to hit-testing (clicks pass through) |
-| user-select, resize | 📦 | parsed-ignored — no text-selection model / drag-resize handle yet |
+| resize | ✅ | `both` / `horizontal` / `vertical` draw a three-line grip in the bottom-right corner (only when `overflow` is not visible, per spec) and drag-resize the element: the grip grab is arbitrated ahead of scroll/slider in `TinaTouch`, the drag writes `width`/`height` (box-sizing:border-box, so the grip tracks the cursor) onto the element and relayouts, and release fires `onresize`. Runtime-proven in `tests/test_interact.pas` (grab → drag → box grows to the dragged size) |
+| user-select | 📦 | parsed + inherited; honoured once a text-selection model exists |
 | accent-color | ✅ | tints checkboxes, radios, range fill/thumb, and progress fill (falls back to the theme indigo) |
 | caret-color | ✅ | colours the text-input/textarea caret |
 

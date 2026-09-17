@@ -143,6 +143,8 @@ const PAGE =
     'style="display:block;width:180px;height:40px;margin-top:8px"></recorder>' +
   '<audio id="rec" controls></audio>' +
   '<p class="tag">done</p>' +
+  '<div id="rz" style="box-sizing:border-box;width:100px;height:60px;' +
+    'overflow:auto;resize:both;border:1px solid #333">box</div>' +
   '</body>';
 
 var
@@ -217,6 +219,22 @@ begin
     Check(TinaAttr('rec', 'src') = '/tmp/tina4-rec-test.m4a',
           'the clip is routed into <audio id="rec">');
     Check(not TinaHasAttr('mic', 'recording'), 'recorder is disarmed after delivery');
+
+    // ---- resize: drag the bottom-right grip, box grows ------------------
+    BoxRect('rz', selX, selY, selW, selH, ok);
+    Check(ok and (Abs(selW - 100) < 2) and (Abs(selH - 60) < 2),
+      'resizable box starts 100x60');
+    if ok then
+    begin
+      // grab the grip (bottom-right corner), drag +40x/+30y, release
+      TinaTouch(0, selX + selW - 3, selY + selH - 3);
+      TinaTouch(2, selX + selW - 3 + 40, selY + selH - 3 + 30);
+      TinaTouch(1, selX + selW - 3 + 40, selY + selH - 3 + 30);
+      Frame;
+      BoxRect('rz', selX, selY, selW, selH, ok);
+      Check(Abs(selW - 140) < 3, 'drag widened the box to ~140 (border-box)');
+      Check(Abs(selH - 90) < 3, 'drag heightened the box to ~90');
+    end;
 
     // ---- survive a burst of rebuilds on the pseudo page ------------------
     for i := 1 to 6 do TapId('agree');    // 6 more Builds, InjectPseudo each time

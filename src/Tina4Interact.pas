@@ -233,6 +233,10 @@ var
   // rows are hit-tested in screen space.
   GOpenSelect: THTMLTag = nil;
   GRangeDrag: THTMLTag = nil;          // <input type=range> being dragged
+  GResizeTag: THTMLTag = nil;          // element whose resize grip is being dragged
+  GResizeMode: string = '';            // 'both' | 'horizontal' | 'vertical'
+  GResizeStartW: Single = 0; GResizeStartH: Single = 0;
+  GResizeDownX: Single = 0; GResizeDownY: Single = 0;
   GFileTag: THTMLTag = nil;            // <input type=file>/<camera> awaiting a result
   GOptCount: Integer = 0;
   GOptTop: array[0..63] of Single;    // screen-y of each option row
@@ -401,6 +405,46 @@ begin
   ctrl := HitTest(GRoot, cx, cy + GScrollY);
   while (ctrl <> nil) and (CtrlKind(ctrl) <> ckRange) do ctrl := ctrl.Parent;
   Result := ctrl;
+end;
+
+{ The element (if any) whose bottom-right resize grip is under the point. Walks
+  up from the hit tag so a grip drawn over a child still grabs the resizable box.
+  CSS shows the grip only when resize<>none and overflow is not visible. }
+function ResizeGripAt(cx, cy: Single): THTMLTag;
+var t: THTMLTag; b: TLayoutBox; docY: Single;
+begin
+  Result := nil;
+  if GRoot = nil then Exit;
+  docY := cy + GScrollY;
+  t := HitTest(GRoot, cx, docY);
+  while t <> nil do
+  begin
+    b := FindBoxForTag(GRoot, t);
+    if (b <> nil) and (b.Style.Resize <> '') and (b.Style.Resize <> 'none')
+       and (b.Style.Overflow <> '') and (b.Style.Overflow <> 'visible')
+       and (cx >= b.X + b.W - 18) and (cx <= b.X + b.W + 2)
+       and (docY >= b.Y + b.H - 18) and (docY <= b.Y + b.H + 2) then
+    begin Result := t; Exit; end;
+    t := t.Parent;
+  end;
+end;
+
+{ Track the grip drag: grow/shrink from the size captured at press. box-sizing is
+  forced to border-box so the CSS width/height we write equal the border box and
+  the grip stays under the cursor. Clamped to a sane minimum. }
+procedure ApplyResize(cx, cy: Single);
+var nw, nh: Single;
+begin
+  if GResizeTag = nil then Exit;
+  nw := GResizeStartW + (cx - GResizeDownX);
+  nh := GResizeStartH + (cy - GResizeDownY);
+  if nw < 20 then nw := 20;
+  if nh < 20 then nh := 20;
+  GResizeTag.Style.AddOrSetValue('box-sizing', 'border-box');
+  if (GResizeMode = 'both') or (GResizeMode = 'horizontal') then
+    GResizeTag.Style.AddOrSetValue('width', IntToStr(Round(nw)) + 'px');
+  if (GResizeMode = 'both') or (GResizeMode = 'vertical') then
+    GResizeTag.Style.AddOrSetValue('height', IntToStr(Round(nh)) + 'px');
 end;
 
 { Set a range's value from a touch X (snapped to step), so dragging works. }
@@ -1619,6 +1663,17 @@ begin
     0: begin
          GDownX := cx; GDownY := cy; GLastX := cx; GLastY := cy;
          GVelX := 0; GVelY := 0; GFlingVX := 0; GFlingVY := 0; GMoved := False;
+         // a resize grip grabs the gesture before anything else (drag to resize)
+         GResizeTag := ResizeGripAt(cx, cy);
+         if GResizeTag <> nil then
+         begin
+           sb := FindBoxForTag(GRoot, GResizeTag);
+           GResizeMode := sb.Style.Resize;
+           GResizeStartW := sb.W; GResizeStartH := sb.H;
+           GResizeDownX := cx; GResizeDownY := cy;
+           GDragBox := nil; GRangeDrag := nil;
+           Exit;
+         end;
          // a range slider grabs the gesture (drag the thumb, don't scroll)
          GRangeDrag := RangeAt(cx, cy);
          if GRangeDrag <> nil then
@@ -1638,6 +1693,14 @@ begin
          SetActiveTag(PressTargetAt(cx, cy));    // :active pseudo-class on press
        end;
     2: begin
+         // dragging a resize grip resizes the element, never scrolls the page
+         if GResizeTag <> nil then
+         begin
+           GLastX := cx; GLastY := cy;
+           ApplyResize(cx, cy);
+           GLayoutDirty := True;
+           Exit;
+         end;
          // dragging a range slider tracks the finger, never scrolls the page
          if GRangeDrag <> nil then
          begin
@@ -1665,6 +1728,14 @@ begin
        end;
     1: begin
          SetActiveTag(nil);               // release: drop :active
+         if GResizeTag <> nil then        // finish a resize drag: commit + fire onresize
+         begin
+           ApplyResize(cx, cy);
+           if GResizeTag.HasAttribute('onresize') then
+             DispatchAction(GResizeTag.GetAttribute('onresize'));
+           GResizeTag := nil; GLayoutDirty := True;
+           Exit;
+         end;
          if GRangeDrag <> nil then        // finish a slider drag: commit + fire handler
          begin
            SetRangeFromX(GRangeDrag, cx);

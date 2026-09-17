@@ -6274,6 +6274,7 @@ var
   bcCi, bcCl: Integer; bcCh: string;
   emMark, emCh: string; emCol: TTina4Color;
   emSize, emX, emY, emCW, emMW: Single; emCi, emCl: Integer;
+  rgX, rgY: Single; rgI: Integer;   // resize grip corner
   stretchF: Single;   // font-stretch horizontal scale for this run
   vAx, vAy, vWc: Single;   // writing-mode:vertical-rl paint frame (top-left + content width)
   vRotSaved: Boolean;      // a vertical-rl content rotation is open (balance the restore)
@@ -6710,6 +6711,17 @@ begin
     else
       // rectangular: each side with its own width, colour and style
       PaintBorders(Canvas, Box, st, y, op);
+  end;
+  // resize grip: three diagonal hairlines in the bottom-right corner, like a
+  // textarea. CSS only shows it when overflow is not visible.
+  if (not Hidden) and (st.Resize <> '') and (st.Resize <> 'none')
+     and (st.Overflow <> '') and (st.Overflow <> 'visible') then
+  begin
+    rgX := Box.X + Box.W - Max(0, st.BorderWidths.Right);
+    rgY := y + Box.H - Max(0, st.BorderWidths.Bottom);
+    for rgI := 1 to 3 do
+      Canvas.DrawLine(rgX - rgI * 4, rgY, rgX, rgY - rgI * 4,
+        Max(1, st.FontSize / 18), ScaleAlpha($FF808080, op));
   end;
   // outline: a stroke OUTSIDE the border box, offset by outline-offset. Sits in
   // the margin, doesn't affect layout.
