@@ -145,6 +145,9 @@ function TinaBoxTree: string;
 { Inspect the element at (X,Y): JSON with the tag, id/class, its box geometry and
   key computed styles — the equivalent of a browser's "inspect element". }
 function TinaHitTestInfo(X, Y: Single): string;
+{ The text currently selected by a user-select:text/all drag (gathered on the
+  last paint; '' when nothing is selected). The shell uses it for copy. }
+function TinaSelectedText: string;
 { Live DOM attribute of the element with the given id, AFTER interaction has
   mutated it (e.g. a checkbox's 'checked' set/cleared by a tap). Returns '' when
   the element or attribute is absent — use TinaHasAttr to tell an empty-valued
@@ -233,6 +236,13 @@ var
   // rows are hit-tested in screen space.
   GOpenSelect: THTMLTag = nil;
   GRangeDrag: THTMLTag = nil;          // <input type=range> being dragged
+  GResizeTag: THTMLTag = nil;          // element whose resize grip is being dragged
+  GResizeMode: string = '';            // 'both' | 'horizontal' | 'vertical'
+  GResizeStartW: Single = 0; GResizeStartH: Single = 0;
+  GResizeDownX: Single = 0; GResizeDownY: Single = 0;
+  GSelecting: Boolean = False;         // a user-select:text drag is in progress
+  GHasSel: Boolean = False;            // a selection is currently shown
+  GSelAnchorX: Single = 0; GSelAnchorY: Single = 0;   // anchor in document CSS px
   GFileTag: THTMLTag = nil;            // <input type=file>/<camera> awaiting a result
   GOptCount: Integer = 0;
   GOptTop: array[0..63] of Single;    // screen-y of each option row
@@ -401,6 +411,69 @@ begin
   ctrl := HitTest(GRoot, cx, cy + GScrollY);
   while (ctrl <> nil) and (CtrlKind(ctrl) <> ckRange) do ctrl := ctrl.Parent;
   Result := ctrl;
+end;
+
+{ The element (if any) whose bottom-right resize grip is under the point. Walks
+  up from the hit tag so a grip drawn over a child still grabs the resizable box.
+  CSS shows the grip only when resize<>none and overflow is not visible. }
+function ResizeGripAt(cx, cy: Single): THTMLTag;
+var t: THTMLTag; b: TLayoutBox; docY: Single;
+begin
+  Result := nil;
+  if GRoot = nil then Exit;
+  docY := cy + GScrollY;
+  t := HitTest(GRoot, cx, docY);
+  while t <> nil do
+  begin
+    b := FindBoxForTag(GRoot, t);
+    if (b <> nil) and (b.Style.Resize <> '') and (b.Style.Resize <> 'none')
+       and (b.Style.Overflow <> '') and (b.Style.Overflow <> 'visible')
+       and (cx >= b.X + b.W - 18) and (cx <= b.X + b.W + 2)
+       and (docY >= b.Y + b.H - 18) and (docY <= b.Y + b.H + 2) then
+    begin Result := t; Exit; end;
+    t := t.Parent;
+  end;
+end;
+
+{ The effective user-select at a point: 'text'/'all' if the element there opts in
+  to selection, '' otherwise (including an explicit user-select:none, which stops
+  the walk so a selectable ancestor underneath is not reached). }
+function TextSelectAt(cx, cy: Single; out box: TLayoutBox): string;
+var t: THTMLTag; b: TLayoutBox; docY: Single;
+begin
+  Result := ''; box := nil;
+  if GRoot = nil then Exit;
+  docY := cy + GScrollY;
+  t := HitTest(GRoot, cx, docY);
+  while t <> nil do
+  begin
+    b := FindBoxForTag(GRoot, t);
+    if b <> nil then
+    begin
+      if b.Style.UserSelect = 'none' then Exit;
+      if (b.Style.UserSelect = 'text') or (b.Style.UserSelect = 'all') then
+      begin Result := b.Style.UserSelect; box := b; Exit; end;
+    end;
+    t := t.Parent;
+  end;
+end;
+
+{ Track the grip drag: grow/shrink from the size captured at press. box-sizing is
+  forced to border-box so the CSS width/height we write equal the border box and
+  the grip stays under the cursor. Clamped to a sane minimum. }
+procedure ApplyResize(cx, cy: Single);
+var nw, nh: Single;
+begin
+  if GResizeTag = nil then Exit;
+  nw := GResizeStartW + (cx - GResizeDownX);
+  nh := GResizeStartH + (cy - GResizeDownY);
+  if nw < 20 then nw := 20;
+  if nh < 20 then nh := 20;
+  GResizeTag.Style.AddOrSetValue('box-sizing', 'border-box');
+  if (GResizeMode = 'both') or (GResizeMode = 'horizontal') then
+    GResizeTag.Style.AddOrSetValue('width', IntToStr(Round(nw)) + 'px');
+  if (GResizeMode = 'both') or (GResizeMode = 'vertical') then
+    GResizeTag.Style.AddOrSetValue('height', IntToStr(Round(nh)) + 'px');
 end;
 
 { Set a range's value from a touch X (snapped to step), so dragging works. }
@@ -1333,6 +1406,11 @@ begin
   Result := BoxJson(GRoot);
 end;
 
+function TinaSelectedText: string;
+begin
+  Result := SelectedText;
+end;
+
 function TinaHitTestInfo(X, Y: Single): string;
 var t: THTMLTag; b: TLayoutBox; s: TComputedStyle;
 begin
@@ -1599,6 +1677,7 @@ var
   neTap: TElemTapProc;
   sb: TLayoutBox;
   cx, cy, dx, dy: Single;
+  selMode: string;
 begin
   Result := TINA_NONE;
   if GRoot = nil then Exit;
@@ -1619,6 +1698,41 @@ begin
     0: begin
          GDownX := cx; GDownY := cy; GLastX := cx; GLastY := cy;
          GVelX := 0; GVelY := 0; GFlingVX := 0; GFlingVY := 0; GMoved := False;
+         // a resize grip grabs the gesture before anything else (drag to resize)
+         GResizeTag := ResizeGripAt(cx, cy);
+         if GResizeTag <> nil then
+         begin
+           sb := FindBoxForTag(GRoot, GResizeTag);
+           GResizeMode := sb.Style.Resize;
+           GResizeStartW := sb.W; GResizeStartH := sb.H;
+           GResizeDownX := cx; GResizeDownY := cy;
+           GDragBox := nil; GRangeDrag := nil;
+           Exit;
+         end;
+         // a user-select:text/all element grabs the gesture to select text
+         // (default 'auto' text is left to scroll, so touch pages are unaffected)
+         selMode := TextSelectAt(cx, cy, sb);
+         if selMode <> '' then
+         begin
+           if (selMode = 'all') and (sb <> nil) then
+           begin
+             SetTextSelection(True, sb.X, sb.Y, sb.X + sb.W, sb.Y + sb.H);
+             GSelecting := False;
+           end
+           else
+           begin
+             GSelAnchorX := cx; GSelAnchorY := cy + GScrollY;
+             SetTextSelection(True, GSelAnchorX, GSelAnchorY, GSelAnchorX, GSelAnchorY);
+             GSelecting := True;
+           end;
+           GHasSel := True; GDragBox := nil; GRangeDrag := nil;
+           GLayoutDirty := True;
+           Exit;
+         end
+         else if GHasSel then       // a press elsewhere clears the selection
+         begin
+           SetTextSelection(False, 0, 0, 0, 0); GHasSel := False; GLayoutDirty := True;
+         end;
          // a range slider grabs the gesture (drag the thumb, don't scroll)
          GRangeDrag := RangeAt(cx, cy);
          if GRangeDrag <> nil then
@@ -1638,6 +1752,22 @@ begin
          SetActiveTag(PressTargetAt(cx, cy));    // :active pseudo-class on press
        end;
     2: begin
+         // dragging a resize grip resizes the element, never scrolls the page
+         if GResizeTag <> nil then
+         begin
+           GLastX := cx; GLastY := cy;
+           ApplyResize(cx, cy);
+           GLayoutDirty := True;
+           Exit;
+         end;
+         // extending a text selection tracks the finger, never scrolls
+         if GSelecting then
+         begin
+           GLastX := cx; GLastY := cy; GMoved := True;
+           SetTextSelection(True, GSelAnchorX, GSelAnchorY, cx, cy + GScrollY);
+           GLayoutDirty := True;
+           Exit;
+         end;
          // dragging a range slider tracks the finger, never scrolls the page
          if GRangeDrag <> nil then
          begin
@@ -1665,6 +1795,20 @@ begin
        end;
     1: begin
          SetActiveTag(nil);               // release: drop :active
+         if GSelecting then               // finish a text-selection drag: keep it
+         begin
+           SetTextSelection(True, GSelAnchorX, GSelAnchorY, cx, cy + GScrollY);
+           GSelecting := False; GLayoutDirty := True;
+           Exit;
+         end;
+         if GResizeTag <> nil then        // finish a resize drag: commit + fire onresize
+         begin
+           ApplyResize(cx, cy);
+           if GResizeTag.HasAttribute('onresize') then
+             DispatchAction(GResizeTag.GetAttribute('onresize'));
+           GResizeTag := nil; GLayoutDirty := True;
+           Exit;
+         end;
          if GRangeDrag <> nil then        // finish a slider drag: commit + fire handler
          begin
            SetRangeFromX(GRangeDrag, cx);

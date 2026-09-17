@@ -362,6 +362,8 @@ type
     // overflow-x / overflow-y: per-axis scroll control.
     OverflowX: string;
     OverflowY: string;
+    Resize: string;      // '' / 'none' (default) | 'both' | 'horizontal' | 'vertical'
+    UserSelect: string;  // '' / 'auto' (default) | 'none' | 'text' | 'all' | 'contain' (inherited)
     WordBreak: string;
     OverflowWrap: string;
     Hyphens: string;   // 'manual' (default) | 'none' | 'auto' — inherited
@@ -2718,6 +2720,7 @@ begin
   Result.ListStyleType := '';
   Result.ListStyleImage := '';
   Result.Overflow := 'visible';
+  Result.Resize := 'none'; Result.UserSelect := 'auto';
   Result.OverflowX := 'visible';
   Result.OverflowY := 'visible';
   Result.WordBreak := 'normal';
@@ -3249,6 +3252,7 @@ begin
   Result.TextEmphasisStyle := ParentStyle.TextEmphasisStyle;   // inherited
   Result.TextEmphasisColor := ParentStyle.TextEmphasisColor;
   Result.TextEmphasisOver := ParentStyle.TextEmphasisOver;
+  Result.UserSelect := ParentStyle.UserSelect;   // inherited
   Result.ListStyleType := ParentStyle.ListStyleType;
   Result.ListStyleImage := ParentStyle.ListStyleImage;   // inherited
   Result.TextTransform := ParentStyle.TextTransform;
@@ -3301,6 +3305,7 @@ begin
   Result.MinHeight := -1;
   Result.MaxHeight := -1;
   Result.Overflow := 'visible';
+  Result.Resize := 'none';   // not inherited; UserSelect inherited above
   Result.OverflowX := 'visible';
   Result.OverflowY := 'visible';
   Result.TextOverflow := 'clip'; Result.LineClamp := 0;
@@ -4835,6 +4840,11 @@ begin
     end;
   end;
 
+  if Decls.TryGetValue('resize', Temp) and not ShouldSkip(Temp) then
+    Style.Resize := LowerCase(Trim(Temp));
+  if (Decls.TryGetValue('user-select', Temp) or Decls.TryGetValue('-webkit-user-select', Temp))
+     and not ShouldSkip(Temp) then
+    Style.UserSelect := LowerCase(Trim(Temp));
   if Decls.TryGetValue('overflow', Temp) and not ShouldSkip(Temp) then
   begin
     // overflow shorthand: `overflow: <x> <y>` or `overflow: <both>`
