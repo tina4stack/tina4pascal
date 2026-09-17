@@ -185,10 +185,25 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | `@media` (in `<style>`) | ✅ | min/max-width breakpoints + `prefers-color-scheme` dark (incl. dark `:root` var swaps), live via `SetMediaContext` |
 | `@font-face` | ✅ | downloadable fonts: parse family + `src url()`, fetch (async/disk-cached like `<img>`) + register on all 3 shells (Cocoa/iOS CoreText, Android Typeface); CSS family aliased to the face's real name |
 | `@keyframes` | ✅ | parsed into named stops; drives `animation` |
-| `@supports` | ✅ | feature query evaluated at parse time (`and`/`or`/`not`, parenthesised tests); the block's rules apply only if supported. The oracle answers yes for our broad feature set and no for the props we still lack (mask, background-blend-mode, perspective, transform-style, 3D transforms). Nests inside `@media` |
+| `@supports` | ✅ | feature query evaluated at parse time (`and`/`or`/`not`, parenthesised tests); the block's rules apply only if supported. The oracle answers yes for our broad feature set and no for the props we still lack (standalone perspective, transform-style, 3D transforms). Nests inside `@media` |
 | `@import` | ✅ | `@import "x.css"` / `url(...)` (+ trailing media ignored) — the URL is recorded and fetched like a `<link rel=stylesheet>`, then parsed; drained until empty so nested imports load. macOS host does remote+relative; the shared Win/Linux path does local files |
 | clamp(), min(), max() | ✅ | evaluated via the calc() engine (nestable, same unit support) |
 | env() | ✅ | `env(<name>, <fallback>)` resolves to its fallback — safe-area insets are 0 on desktop, so the named value is unavailable. Usable bare or inside calc() |
+
+## Behavioral, fragmentation & niche (out of core rendering scope)
+
+These have no effect on a single static frame, need an interaction/scroll model
+the immediate-mode core doesn't own, or are niche East-Asian typography. Listed
+for completeness — the engine renders correctly whether or not they are present.
+
+| Property | Status | Note |
+|---|---|---|
+| scroll-snap-type / -align / -padding / -margin, overscroll-behavior, scroll-behavior | ⬜ | scroll snapping/anchoring is an interaction concern — the renderer owns scroll deltas but has no snap model; ignored, content still scrolls |
+| will-change, content-visibility, contain, isolation | ⬜ | performance/containment hints with no visual effect on a static frame (`content-visibility:hidden` subtree-skipping not done); ignored |
+| widows, orphans, break-before / -after / -inside | ⬜ | fragmentation controls — no effect in the continuous single-column flow; `break-inside:avoid` is naturally satisfied since multicol never splits a child |
+| text-emphasis (+ -position / -color / -style), text-combine-upright | ⬜ | East-Asian emphasis marks / tate-chū-yoko — niche; not painted |
+| text-orientation, unicode-bidi | 🟡 | writing-mode vertical + the bidi reorder/mirror path (`<bdo>`/`<bdi>`) are done; `text-orientation:upright` glyph rotation and explicit `unicode-bidi` embedding levels are not |
+| column-span | 🟡 | `column-span:all` (an element spanning all columns) needs the balancer to segment around it — not done; see the multicol row |
 
 ## Prioritised roadmap (by real-world impact ÷ effort)
 
@@ -206,32 +221,32 @@ text-decoration overline + wavy/dotted/dashed/double + color/style,
 gradients, position:sticky, cursor). Remaining longhands: the sub-keyword
 resize cursors beyond col/row-resize.
 
-**Outstanding — bigger rocks** (each needs a dedicated subsystem the immediate-
-mode renderer doesn't yet have):
+**Outstanding — the advanced tail** (each the last, hardest slice of an
+otherwise-working feature):
 1. **transform-style: preserve-3d** multi-plane 3D scenes — a shared 3D space
     with z-sorting + backface-culling across sibling planes (single-element 3D
     transforms, `perspective()`, `matrix3d` are done).
-2. **mask** long tail — `url()` image masks, `mask-mode:luminance`, mask
-    position/size/repeat (gradient alpha masks + `filter`/`backdrop-filter`/
-    `mix-blend-mode`/`drop-shadow` and clip-path basic shapes are done).
-3. Typography remainder (font selection / bidi): `hyphens: auto` dictionary,
-    `vertical-lr` + upright CJK orientation (`font-variant` small-caps, soft-hyphen
-    `hyphens: manual`, synthetic `font-stretch`, `vertical-rl` block-flow, and bidi
-    — reorder + mirror + `<bdo>`/`<bdi>` — all done).
-4. **user-select / resize** (need a selection model / drag-resize handle);
-    **background-blend-mode** (software per-background-layer blend compositing —
-    the existing blend path is Cocoa CGBlendMode, not pure-Pascal).
+2. **mask** long tail — `mask-mode:luminance` and mask `size`/`position`/`repeat`
+    (gradient alpha masks **and** `url()` image masks, plus `filter`/
+    `backdrop-filter`/`mix-blend-mode`/`drop-shadow` and clip-path basic shapes
+    are all done).
+3. **multicol `column-span:all`** — an element breaking out to span every column
+    (count/width/gap/rule + balancing are done).
+4. Typography remainder: `hyphens:auto` dictionary, `text-orientation:upright`
+    CJK glyph rotation, `text-emphasis` marks (`font-variant` small-caps,
+    soft-hyphen `hyphens:manual`, synthetic `font-stretch`, vertical block-flow,
+    bidi reorder/mirror/`<bdo>`/`<bdi>`, `text-wrap:balance`,
+    `text-decoration-thickness`/`-underline-offset` are done).
+5. **user-select / resize** (need a text-selection model / drag-resize handle).
 
-Coverage: **106 ✅ · 5 🟡 · 3 📦 · 0 ❌** — no property is entirely unhandled.
-(An ours-vs-Chrome pass exposed two flex bugs the ours-vs-ours reftests missed —
-reverse-direction packing and column-direction `flex-wrap` — both now **fixed**
-and verified 0.0–0.25% vs Chrome.)
-Every 🟡/📦 that remains is the advanced tail of an otherwise-working feature and
-needs a dedicated subsystem to finish: a hyphenation dictionary + soft-hyphen
-line-breaking, the Unicode bidi algorithm, font synthesis (small-caps/stretch),
-a text-selection model (user-select/resize), `mask` url() images, non-separable
-blend modes, full vertical block-flow, and multi-plane `preserve-3d`.
+Everything else — including background-blend-mode (software sRGB, gradient **and**
+image layers), CSS counters, the structural/combinator/`:not()` selectors,
+`::first-letter`/`::first-line`, object-fit, and multi-column — is done and
+verified 0.00% vs headless Chrome. Behavioral, fragmentation and niche-i18n
+properties are catalogued above as ⬜ (out of core rendering scope).
 
+Coverage: **127 ✅ · 4 🟡 · 2 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
+property is an unaccounted gap.
 
-Each item ships with a reftest under `examples/compliance/` and flips its row
+Each ✅ item ships with a reftest under `examples/compliance/` and flips its row
 here and in `CONFORMANCE.md`.

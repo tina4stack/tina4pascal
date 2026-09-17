@@ -773,8 +773,9 @@ var p, v: string;
 begin
   p := LowerCase(Trim(Prop));
   v := LowerCase(Trim(Val));
-  if (p = 'mask') or (p = 'mask-image') or (p = 'background-blend-mode')
-     or (p = 'perspective') or (p = 'transform-style') then Exit(False);
+  // mask-image (gradient + url alpha) and background-blend-mode are supported now;
+  // standalone perspective and transform-style:preserve-3d are still not.
+  if (p = 'perspective') or (p = 'transform-style') then Exit(False);
   // 3D transforms are not projected
   if (p = 'transform') and ((Pos('3d', v) > 0) or (Pos('perspective', v) > 0)
      or (Pos('rotatex', v) > 0) or (Pos('rotatey', v) > 0)) then Exit(False);
