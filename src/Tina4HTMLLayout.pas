@@ -13,7 +13,7 @@ interface
 uses
   SysUtils, Classes, Math, Generics.Collections,
   Tina4HTMLDom, Tina4RenderBackend, Tina4Theme, Tina4QR, Tina4SVG, Tina4Canvas2D,
-  Tina4Lottie, Tina4RasterCanvas, Tina4Elements;
+  Tina4Lottie, Tina4RasterCanvas, Tina4Elements, Tina4Hyphen;
 
 type
   TTextRun = record
@@ -4001,6 +4001,25 @@ var
     hyphenIdx set). Fragments that stay together render contiguous with no hyphen.
     'auto' has no dictionary here, so it behaves like 'manual' (breaks only at the
     explicit soft hyphens the author placed). }
+  { hyphens:auto — insert soft hyphens (U+00AD) into a plain ASCII word at the
+    dictionary hyphenation points, so EmitSoftHyphenWord then breaks it there. }
+  function AutoHyphenate(const W: string): string;
+  var pts: TBoundArray; i, k: Integer;
+  begin
+    Result := W;
+    if Length(W) < 5 then Exit;
+    for i := 1 to Length(W) do
+      if not (((W[i] >= 'a') and (W[i] <= 'z')) or ((W[i] >= 'A') and (W[i] <= 'Z'))) then Exit;
+    pts := HyphenPoints(W);
+    if Length(pts) = 0 then Exit;
+    Result := ''; k := 0;
+    for i := 1 to Length(W) do
+    begin
+      Result := Result + W[i];
+      if (k <= High(pts)) and (pts[k] = i) then begin Result := Result + #$C2#$AD; Inc(k); end;
+    end;
+  end;
+
   procedure EmitSoftHyphenWord(const W: string; const St: TComputedStyle; SpaceBefore: Boolean);
   var p, q: Integer; frag: string; sp, last: Boolean;
   begin
@@ -4150,6 +4169,9 @@ var
         for i := 0 to words.Count - 1 do
         begin
           if words[i] = '' then Continue;
+          // hyphens:auto — insert dictionary soft hyphens; then the manual path breaks them
+          if SameText(St.Hyphens, 'auto') and (Pos(#$C2#$AD, words[i]) = 0) then
+            words[i] := AutoHyphenate(words[i]);
           // hyphens: manual/auto — a word carrying soft hyphens becomes a chain of
           // breakable fragments; prefer this to arbitrary char-breaking.
           if (Pos(#$C2#$AD, words[i]) > 0) and not SameText(St.Hyphens, 'none') then

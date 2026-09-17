@@ -105,7 +105,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | text-align-last | ✅ | left/right/center/start/end/justify on the block's last line (and the line before a `<br>`) |
 | text-justify | ✅ | `none` disables the justification `text-align:justify` turns on; `inter-word`/`auto` keep it |
 | text-rendering | ✅ | accepted (a rendering hint with no required visual change — no-op) |
-| hyphens | ✅ | `manual` (the default) breaks a word at its soft hyphens (`&shy;` / U+00AD) when a line needs it and renders a `-` at the break; fragments that stay together show none. `none` never breaks at soft hyphens. `auto` has no dictionary, so it degrades to `manual` (breaks only at author-placed soft hyphens). Reftest `hyphens-shy` |
+| hyphens | ✅ | `manual` (the default) breaks a word at its soft hyphens (`&shy;` / U+00AD) when a line needs it and renders a `-` at the break; fragments that stay together show none. `none` never breaks at soft hyphens. **`auto`** runs real Liang/Knuth hyphenation: the public-domain en-US TeX patterns (`hyph-en-us`, the same set browsers use) + the standard exception list are embedded in `Tina4Hyphen`; each plain ASCII word gets soft hyphens inserted at the dictionary points (lefthyphenmin 2, righthyphenmin 3), then the manual path breaks them. `hyphenation`→hy-phen-ation, `representation`→rep-re-sen-ta-tion; a justified paragraph wraps to the same line count as Chrome. Reftests `hyphens-shy`, `css-hyphens-auto` (0.00% — auto matches manual at the dictionary points) |
 
 ## Backgrounds & borders
 
@@ -230,16 +230,7 @@ one-feature change) and/or has a hard platform blocker, and/or has near-zero
 real-world use. The disposition + what it would actually take is recorded so the
 index stays honest — none is a quick win, and none is marked ✅ without proof.
 
-1. **`hyphens:auto`** — needs an embedded hyphenation dictionary (Liang/TeX
-    patterns); without one it degrades to `manual` (breaks only at author soft
-    hyphens), which is correct-but-conservative rather than wrong. A bad heuristic
-    hyphenator (breaking at the wrong points) would be worse than the current
-    fallback, so it waits for real patterns. The rest of typography is done:
-    `text-orientation:upright`, `text-emphasis`, `font-variant` small-caps,
-    `hyphens:manual`, synthetic `font-stretch`, vertical block-flow, bidi
-    reorder/mirror/`<bdo>`/`<bdi>`, `text-wrap:balance`,
-    `text-decoration-thickness`/`-underline-offset`.
-2. **multi-column line-level fragmentation** — the balancer distributes whole
+1. **multi-column line-level fragmentation** — the balancer distributes whole
     block children across columns; splitting a single tall paragraph's *lines*
     across a column break needs a fragmentation engine (the same machinery
     page-break/`break-inside` would use). Whole-child balancing covers the common
@@ -254,7 +245,7 @@ image layers), CSS counters, the structural/combinator/`:not()` selectors,
 verified 0.00% vs headless Chrome. Behavioral, fragmentation and niche-i18n
 properties are catalogued above as ⬜ (out of core rendering scope).
 
-Coverage: **135 ✅ · 2 🟡 · 0 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
+Coverage: **136 ✅ · 1 🟡 · 0 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
 property is an unaccounted gap.
 
 Each ✅ item ships with a reftest under `examples/compliance/` and flips its row
