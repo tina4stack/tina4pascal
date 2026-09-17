@@ -26,6 +26,9 @@
 @property (strong, nonatomic) NSMutableDictionary<NSString *, AVPlayerViewController *> *videoControllers;
 @property (strong, nonatomic) NSMutableDictionary<NSString *, id> *videoLoopObservers;
 @property (strong, nonatomic) NSMutableDictionary<NSString *, NSNumber *> *videoFlags;   // bit0 controls·1 autoplay·2 loop·3 muted
+// native <recorder>: mic capture to an AAC .m4a in the temp dir
+@property (strong, nonatomic) AVAudioRecorder *audioRecorder;
+@property (strong, nonatomic) NSString *audioRecPath;
 @end
 
 @implementation Tina4View
@@ -337,6 +340,8 @@
     else if (r == TINA_FLING)    [self startFling];
     else if (r == TINA_PICK_FILE)[self pickFile];
     else if (r == TINA_CAPTURE)  [self capturePhoto];
+    else if (r == TINA_RECORD_START) [self startRecording];
+    else if (r == TINA_RECORD_STOP)  [self stopRecording];
     // deterministic keyboard: up only while a text field is focused
     if (r != TINA_SHOW_KBD && tina4_focus_kind() == 0) [self hideKeyboard];
     [self setNeedsDisplay];
@@ -483,5 +488,50 @@
 
 - (void)setPickedFile:(NSString *)name { tina4_set_file(name.UTF8String); [self setNeedsDisplay]; }
 - (void)setPickedPhoto:(NSString *)path { tina4_set_photo(path.UTF8String); [self setNeedsDisplay]; }
+
+// ---- <recorder>: microphone capture -----------------------------------
+// The engine fires TINA_RECORD_START when an idle <recorder> is tapped and
+// TINA_RECORD_STOP on the next tap. We record to an AAC .m4a and hand the path
+// back with tina4_set_recording (or '' if permission/record fails, which rolls
+// the control back to idle). AVAudioSession is the iOS-only bit vs macOS.
+
+- (void)startRecording {
+    AVAudioSession *sess = [AVAudioSession sharedInstance];
+    [sess setCategory:AVAudioSessionCategoryPlayAndRecord error:nil];
+    [sess setActive:YES error:nil];
+    // record only after the mic permission is granted (first run shows the prompt)
+    [sess requestRecordPermission:^(BOOL granted) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!granted) { tina4_set_recording(""); [self setNeedsDisplay]; return; }
+            NSString *dir = NSTemporaryDirectory();
+            NSString *fn = [NSString stringWithFormat:@"tina4-rec-%.0f.m4a",
+                            [[NSDate date] timeIntervalSince1970]];
+            self.audioRecPath = [dir stringByAppendingPathComponent:fn];
+            NSDictionary *settings = @{
+                AVFormatIDKey: @(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: @44100.0,
+                AVNumberOfChannelsKey: @1,
+                AVEncoderAudioQualityKey: @(AVAudioQualityHigh) };
+            NSError *err = nil;
+            self.audioRecorder = [[AVAudioRecorder alloc]
+                initWithURL:[NSURL fileURLWithPath:self.audioRecPath]
+                settings:settings error:&err];
+            if (!self.audioRecorder || err || ![self.audioRecorder record]) {
+                self.audioRecorder = nil;
+                tina4_set_recording("");   // failed → roll the <recorder> back to idle
+            }
+            [self setNeedsDisplay];
+        });
+    }];
+}
+
+- (void)stopRecording {
+    if (!self.audioRecorder) { tina4_set_recording(""); [self setNeedsDisplay]; return; }
+    [self.audioRecorder stop];
+    self.audioRecorder = nil;
+    tina4_set_recording(self.audioRecPath ? self.audioRecPath.UTF8String : "");
+    self.audioRecPath = nil;
+    [self setNeedsDisplay];
+}
 
 @end

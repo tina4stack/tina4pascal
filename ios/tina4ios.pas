@@ -233,6 +233,14 @@ begin
   TinaSetPhoto(string(Path));
 end;
 
+{ The Obj-C app hands back the recorded audio file when a <recorder> stops
+  (or '' if the start/record failed); the core stamps the control, routes the
+  clip into <audio id="rec">, fires onrecord, and disarms. }
+procedure tina4_set_recording(Path: PAnsiChar); cdecl;
+begin
+  TinaSetRecording(string(Path));
+end;
+
 { ---- native media embeds (<video>) ----------------------------------- }
 
 function tina4_embed_count: cint; cdecl;
@@ -311,7 +319,7 @@ exports
   tina4_set_html, tina4_set_asset_base, tina4_frame, tina4_sheep_frame, tina4_frame_region, tina4_anim_region,
   tina4_touch, tina4_tick, tina4_anim_active, tina4_http_pending,
   tina4_wants_keyboard, tina4_blur, tina4_blink_caret, tina4_key,
-  tina4_focus_kind, tina4_focus_next, tina4_set_file, tina4_set_photo,
+  tina4_focus_kind, tina4_focus_next, tina4_set_file, tina4_set_photo, tina4_set_recording,
   tina4_embed_count, tina4_embed_rect, tina4_embed_src,
   tina4_embed_flags, tina4_embed_poster, tina4_embed_kind,
   tina4_embed_formats, tina4_scan_result;
