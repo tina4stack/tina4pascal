@@ -6328,6 +6328,7 @@ var
   emSize, emX, emY, emCW, emMW: Single; emCi, emCl: Integer;
   rgX, rgY: Single; rgI: Integer;   // resize grip corner
   selCi, selCl: Integer; selRunX, selCW, selBandS, selBandE: Single;   // selection highlight
+  upx, upcw: Single; upci, upcl: Integer; upch: string;   // text-orientation:upright per-glyph
   stretchF: Single;   // font-stretch horizontal scale for this run
   vAx, vAy, vWc: Single;   // writing-mode:vertical-rl paint frame (top-left + content width)
   vRotSaved: Boolean;      // a vertical-rl content rotation is open (balance the restore)
@@ -6985,10 +6986,37 @@ begin
         Canvas.SaveState;
         Canvas.Translate(r.X - sx, 0); Canvas.Scale(stretchF, 1); Canvas.Translate(-(r.X - sx), 0);
       end;
-      if (r.ShadowColor shr 24) > 0 then
-        Canvas.DrawText(r.X - sx + r.ShadowDX, r.Y - innerOfs + r.ShadowDY, drawTxt,
-          r.FontSize, r.Styles, ScaleAlpha(r.ShadowColor, op));
-      Canvas.DrawText(r.X - sx, r.Y - innerOfs, drawTxt, r.FontSize, r.Styles, fg);
+      // text-orientation:upright — in a vertical column, stand each glyph up by
+      // counter-rotating it -90° about its own centre (cancelling the column's
+      // +90° rotation), so CJK reads top-to-bottom upright instead of on its side.
+      if (Box.VerticalRL or Box.VerticalLR) and (st.TextOrientation = 'upright')
+         and (drawTxt <> '') then
+      begin
+        upx := r.X - sx;
+        upci := 1;
+        while upci <= Length(drawTxt) do
+        begin
+          upcl := 1;
+          while (upci + upcl <= Length(drawTxt)) and
+                ((Ord(drawTxt[upci + upcl]) and $C0) = $80) do Inc(upcl);
+          upch := Copy(drawTxt, upci, upcl);
+          upcw := Canvas.MeasureText(upch, r.FontSize, r.Styles).Width;
+          Canvas.SaveState;
+          Canvas.Translate(upx + upcw * 0.5, r.Y - innerOfs + r.FontSize * 0.5);
+          Canvas.Rotate(-90);
+          Canvas.DrawText(-upcw * 0.5, -r.FontSize * 0.5, upch, r.FontSize, r.Styles, fg);
+          Canvas.RestoreState;
+          upx := upx + upcw;
+          upci := upci + upcl;
+        end;
+      end
+      else
+      begin
+        if (r.ShadowColor shr 24) > 0 then
+          Canvas.DrawText(r.X - sx + r.ShadowDX, r.Y - innerOfs + r.ShadowDY, drawTxt,
+            r.FontSize, r.Styles, ScaleAlpha(r.ShadowColor, op));
+        Canvas.DrawText(r.X - sx, r.Y - innerOfs, drawTxt, r.FontSize, r.Styles, fg);
+      end;
       if stretchF <> 1.0 then Canvas.RestoreState;
       // overline: no native font attribute, so rule it by hand across the run,
       // just inside the top of the em box (matches Chrome's placement closely).

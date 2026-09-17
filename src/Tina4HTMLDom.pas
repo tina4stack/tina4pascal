@@ -442,6 +442,7 @@ type
     GradStopCount: Integer;
     BackgroundClipText: Boolean;  // background-clip:text — paint the bg into the glyphs
     WritingMode: string;          // 'horizontal-tb' (default) | 'vertical-rl' | 'vertical-lr'
+    TextOrientation: string;      // '' / 'mixed' (default) | 'upright' | 'sideways' (inherited; vertical modes)
     // CSS transforms (subset)
     TransformActive: Boolean;
     TransformTranslateX: Single;
@@ -3246,6 +3247,7 @@ begin
   Result.BidiForce := ParentStyle.BidiForce;           // <bdo>/<bdi> apply to all descendant text
   Result.BidiOverride := ParentStyle.BidiOverride;
   Result.WritingMode := ParentStyle.WritingMode;   // inherited
+  Result.TextOrientation := ParentStyle.TextOrientation;   // inherited
   Result.LineHeight := ParentStyle.LineHeight;
   Result.WhiteSpace := ParentStyle.WhiteSpace;
   Result.TextWrap := ParentStyle.TextWrap;
@@ -4356,6 +4358,8 @@ begin
     Style.BackgroundClipText := SameText(Trim(Temp), 'text');
   if Decls.TryGetValue('writing-mode', Temp) and not ShouldSkip(Temp) then
     Style.WritingMode := Temp.ToLower;
+  if Decls.TryGetValue('text-orientation', Temp) and not ShouldSkip(Temp) then
+    Style.TextOrientation := Temp.ToLower;
   if Decls.TryGetValue('text-align', Temp) and not ShouldSkip(Temp) then
   begin
     Temp := Temp.ToLower;

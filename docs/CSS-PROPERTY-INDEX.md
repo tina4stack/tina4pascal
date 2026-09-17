@@ -204,7 +204,8 @@ for completeness — the engine renders correctly whether or not they are presen
 | widows, orphans, break-before / -after / -inside | ⬜ | fragmentation controls — no effect in the continuous single-column flow; `break-inside:avoid` is naturally satisfied since multicol never splits a child |
 | text-emphasis (+ -style / -color / -position) | ✅ | a small mark centred over (or under) each non-space glyph, from the `text-emphasis` shorthand or the longhands. Fill `filled`/`open` × shape `dot`/`circle`/`double-circle`/`triangle`/`sesame`, a custom quoted `<string>` mark, a colour token, and `-position: over`/`under`; inherited; mark sized 0.5em, positioned per-glyph (UTF-8 aware). Taken from the box style (emphasis set on a block, applying to its text — the common case). Reftest `css-text-emphasis` (0.23% ours; marks land within 1px of Chrome). `-webkit-` aliases parsed |
 | text-combine-upright | ⬜ | tate-chū-yoko — niche; not painted |
-| text-orientation, unicode-bidi | 🟡 | writing-mode vertical + the bidi reorder/mirror path (`<bdo>`/`<bdi>`) are done; `text-orientation:upright` glyph rotation and explicit `unicode-bidi` embedding levels are not |
+| text-orientation | ✅ | `upright` stands each glyph up inside a vertical column (counter-rotates every glyph -90° about its centre, cancelling the column's 90° rotation) so CJK reads top-to-bottom upright — verified against Chrome; reftest `css-text-orientation-upright` (0.28%). `mixed`/`sideways` = the default rotated flow. Inherited |
+| unicode-bidi | 🟡 | the bidi reorder/mirror path (`<bdo>`/`<bdi>`) is done; explicit `unicode-bidi` embedding levels are not |
 
 ## Prioritised roadmap (by real-world impact ÷ effort)
 
@@ -233,8 +234,8 @@ otherwise-working feature):
     and `mask-repeat` are **done** (gradient **and** `url()` image masks, plus
     `filter`/`backdrop-filter`/`mix-blend-mode`/`drop-shadow` and clip-path basic
     shapes).
-3. Typography remainder: `hyphens:auto` dictionary, `text-orientation:upright`
-    CJK glyph rotation (`text-emphasis` marks, `font-variant` small-caps,
+3. Typography remainder: `hyphens:auto` dictionary (`text-orientation:upright` CJK glyph
+    stacking, `text-emphasis` marks, `font-variant` small-caps,
     soft-hyphen `hyphens:manual`, synthetic `font-stretch`, vertical block-flow,
     bidi reorder/mirror/`<bdo>`/`<bdi>`, `text-wrap:balance`,
     `text-decoration-thickness`/`-underline-offset` are done).
@@ -248,7 +249,7 @@ image layers), CSS counters, the structural/combinator/`:not()` selectors,
 verified 0.00% vs headless Chrome. Behavioral, fragmentation and niche-i18n
 properties are catalogued above as ⬜ (out of core rendering scope).
 
-Coverage: **131 ✅ · 3 🟡 · 1 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
+Coverage: **132 ✅ · 3 🟡 · 1 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
 property is an unaccounted gap.
 
 Each ✅ item ships with a reftest under `examples/compliance/` and flips its row
