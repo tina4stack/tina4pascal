@@ -176,6 +176,12 @@ function HitTest(Box: TLayoutBox; X, Y: Single): THTMLTag;
 function FindScrollBox(Box: TLayoutBox; X, Y: Single): TLayoutBox;
 { Box whose Tag = T (first match). }
 function FindBoxForTag(Box: TLayoutBox; T: THTMLTag): TLayoutBox;
+{ Text selection (document CSS px), driven by Tina4Interact, painted + read by
+  the core. SetTextSelection(False,...) clears it. }
+procedure SetTextSelection(Active: Boolean; ax, ay, fx, fy: Single);
+{ The currently-selected text, accumulated during the last paint (paint order,
+  user-select:none subtrees skipped, lines joined with LF); '' if none. }
+function SelectedText: string;
 { Concatenated descendant text of a tag (entities already decoded). }
 function InnerText(Tag: THTMLTag): string;
 function IsFormControlTag(const Name: string): Boolean;
@@ -224,6 +230,50 @@ var
   { Reused across frames/elements so a <lottie> repaint allocates no buffer once
     its size settles (Resize is a no-op when unchanged). Freed at finalization. }
   GLottieRaster: TTina4RasterCanvas = nil;
+
+  { Active text selection, in document CSS px. Anchor is where the drag began,
+    Focus is the current end. Selection lives in the core (not the interaction
+    unit) so PaintBoxEx can paint the highlight and CollectSelectedText can read
+    it, while Tina4Interact only drives it via SetTextSelection. }
+  GSelActive: Boolean = False;
+  GSelAX: Single = 0; GSelAY: Single = 0;   // anchor (drag start)
+  GSelFX: Single = 0; GSelFY: Single = 0;   // focus (drag end)
+  GSelText: string = '';                    // selected text, gathered during paint
+  GSelLastY: Single = -1;                   // last selected glyph's line Y (for LF breaks)
+
+{ Normalise anchor/focus into reading order: lo is the earlier point (smaller Y,
+  or same line and smaller X), hi the later. }
+procedure SelOrder(out loX, loY, hiX, hiY: Single);
+begin
+  if (GSelAY < GSelFY) or ((Abs(GSelAY - GSelFY) < 0.5) and (GSelAX <= GSelFX)) then
+  begin loX := GSelAX; loY := GSelAY; hiX := GSelFX; hiY := GSelFY; end
+  else
+  begin loX := GSelFX; loY := GSelFY; hiX := GSelAX; hiY := GSelAY; end;
+end;
+
+{ Is a glyph whose centre is (gcx, gcy) inside the current selection, given a
+  half-line tolerance for deciding same-line membership? }
+function GlyphSelected(gcx, gcy, halfLine: Single): Boolean;
+var loX, loY, hiX, hiY: Single; afterLo, beforeHi: Boolean;
+begin
+  SelOrder(loX, loY, hiX, hiY);
+  afterLo := (gcy - loY > halfLine) or
+             ((Abs(gcy - loY) <= halfLine) and (gcx >= loX));
+  beforeHi := (hiY - gcy > halfLine) or
+              ((Abs(gcy - hiY) <= halfLine) and (gcx <= hiX));
+  Result := afterLo and beforeHi;
+end;
+
+{ Drive the selection from the interaction unit. }
+procedure SetTextSelection(Active: Boolean; ax, ay, fx, fy: Single);
+begin
+  GSelActive := Active; GSelAX := ax; GSelAY := ay; GSelFX := fx; GSelFY := fy;
+end;
+
+function SelectedText: string;
+begin
+  Result := GSelText;
+end;
 
 { TLayoutBox }
 
@@ -5832,6 +5882,8 @@ end;
 
 procedure PaintBox(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single);
 begin
+  // start a fresh gather of the selected text for this frame's paint walk
+  GSelText := ''; GSelLastY := -1;
   PaintBoxEx(Canvas, Box, OffsetY, 1.0, False);
 end;
 
@@ -6275,6 +6327,7 @@ var
   emMark, emCh: string; emCol: TTina4Color;
   emSize, emX, emY, emCW, emMW: Single; emCi, emCl: Integer;
   rgX, rgY: Single; rgI: Integer;   // resize grip corner
+  selCi, selCl: Integer; selRunX, selCW, selBandS, selBandE: Single;   // selection highlight
   stretchF: Single;   // font-stretch horizontal scale for this run
   vAx, vAy, vWc: Single;   // writing-mode:vertical-rl paint frame (top-left + content width)
   vRotSaved: Boolean;      // a vertical-rl content rotation is open (balance the restore)
@@ -6842,6 +6895,40 @@ begin
     begin
       r := Box.Runs[i];
       drawTxt := r.Text;
+      // text selection highlight: paint a blue band behind the selected glyphs
+      // (before the text). user-select:none subtrees are never selectable.
+      if GSelActive and (st.UserSelect <> 'none') and (drawTxt <> '') then
+      begin
+        selCi := 1; selRunX := r.X; selBandS := -1; selBandE := -1;
+        while selCi <= Length(drawTxt) do
+        begin
+          selCl := 1;
+          while (selCi + selCl <= Length(drawTxt)) and
+                ((Ord(drawTxt[selCi + selCl]) and $C0) = $80) do Inc(selCl);
+          selCW := Canvas.MeasureText(Copy(drawTxt, selCi, selCl), r.FontSize, r.Styles).Width;
+          if GlyphSelected(selRunX + selCW / 2, r.Y + r.FontSize * 0.5, r.FontSize * 0.7) then
+          begin
+            if selBandS < 0 then selBandS := selRunX;
+            selBandE := selRunX + selCW;
+            // gather the text (LF between glyphs on different lines)
+            if (GSelLastY >= 0) and (Abs(r.Y - GSelLastY) > r.FontSize * 0.5) then
+              GSelText := GSelText + #10;
+            GSelText := GSelText + Copy(drawTxt, selCi, selCl);
+            GSelLastY := r.Y;
+          end
+          else if selBandS >= 0 then
+          begin
+            Canvas.FillRect(selBandS - sx, r.Y - innerOfs - r.FontSize * 0.1,
+              selBandE - selBandS, r.FontSize * 1.25, ScaleAlpha($663B82F6, op));
+            selBandS := -1;
+          end;
+          selRunX := selRunX + selCW;
+          selCi := selCi + selCl;
+        end;
+        if selBandS >= 0 then
+          Canvas.FillRect(selBandS - sx, r.Y - innerOfs - r.FontSize * 0.1,
+            selBandE - selBandS, r.FontSize * 1.25, ScaleAlpha($663B82F6, op));
+      end;
       // per-glyph gradient fill for background-clip:text (approximates the CSS
       // text mask: each glyph is a solid sample of the gradient at its centre).
       if st.BackgroundClipText and st.BgGradientActive and (st.GradStopCount >= 2)

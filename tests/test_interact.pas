@@ -145,6 +145,8 @@ const PAGE =
   '<p class="tag">done</p>' +
   '<div id="rz" style="box-sizing:border-box;width:100px;height:60px;' +
     'overflow:auto;resize:both;border:1px solid #333">box</div>' +
+  '<p id="seltext" style="user-select:text;width:400px;height:24px;margin:0">ABCDEFGHIJKL</p>' +
+  '<p id="nosel" style="user-select:none;width:400px;height:24px;margin:0">no selecting here</p>' +
   '</body>';
 
 var
@@ -234,6 +236,31 @@ begin
       BoxRect('rz', selX, selY, selW, selH, ok);
       Check(Abs(selW - 140) < 3, 'drag widened the box to ~140 (border-box)');
       Check(Abs(selH - 90) < 3, 'drag heightened the box to ~90');
+    end;
+
+    // ---- user-select: drag over selectable text selects it --------------
+    BoxRect('seltext', selX, selY, selW, selH, ok);
+    Check(ok, 'selectable paragraph found in layout tree');
+    if ok then
+    begin
+      // drag from the left edge rightwards across ~half the line
+      TinaTouch(0, selX + 1, selY + selH / 2);
+      TinaTouch(2, selX + selW * 0.5, selY + selH / 2);
+      TinaTouch(1, selX + selW * 0.5, selY + selH / 2);
+      Frame;
+      Check(Length(TinaSelectedText) > 0, 'a user-select:text drag selects text');
+      Check(Pos(TinaSelectedText, 'ABCDEFGHIJKL') = 1,
+        'selection is a left-anchored prefix of the paragraph');
+    end;
+    // dragging over a user-select:none paragraph selects nothing (and clears)
+    BoxRect('nosel', selX, selY, selW, selH, ok);
+    if ok then
+    begin
+      TinaTouch(0, selX + 1, selY + selH / 2);
+      TinaTouch(2, selX + selW * 0.5, selY + selH / 2);
+      TinaTouch(1, selX + selW * 0.5, selY + selH / 2);
+      Frame;
+      Check(TinaSelectedText = '', 'user-select:none is not selectable');
     end;
 
     // ---- survive a burst of rebuilds on the pseudo page ------------------

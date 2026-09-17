@@ -173,7 +173,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | cursor | ✅ | desktop shells set the native OS pointer (pointer/text/move/grab/resize/crosshair/not-allowed/none…); inherits down the DOM. Touch shells ignore it |
 | pointer-events | ✅ | `none` makes the box + subtree transparent to hit-testing (clicks pass through) |
 | resize | ✅ | `both` / `horizontal` / `vertical` draw a three-line grip in the bottom-right corner (only when `overflow` is not visible, per spec) and drag-resize the element: the grip grab is arbitrated ahead of scroll/slider in `TinaTouch`, the drag writes `width`/`height` (box-sizing:border-box, so the grip tracks the cursor) onto the element and relayouts, and release fires `onresize`. Runtime-proven in `tests/test_interact.pas` (grab → drag → box grows to the dragged size) |
-| user-select | 📦 | parsed + inherited; honoured once a text-selection model exists |
+| user-select | ✅ | `text`/`all` opt an element in to selection; a drag over it paints a blue highlight behind the selected glyphs and gathers the text (exposed as `TinaSelectedText` for copy). `none` is non-selectable (and stops the walk, so a selectable ancestor underneath is not reached); the default `auto` is left to scroll, so touch pages are unaffected. Selection state lives in the core (`SetTextSelection`, gathered on paint), driven by `Tina4Interact`. Runtime-proven in `tests/test_interact.pas` (drag selects a left-anchored prefix; `user-select:none` selects nothing). Inherited |
 | accent-color | ✅ | tints checkboxes, radios, range fill/thumb, and progress fill (falls back to the theme indigo) |
 | caret-color | ✅ | colours the text-input/textarea caret |
 
@@ -238,7 +238,9 @@ otherwise-working feature):
     soft-hyphen `hyphens:manual`, synthetic `font-stretch`, vertical block-flow,
     bidi reorder/mirror/`<bdo>`/`<bdi>`, `text-wrap:balance`,
     `text-decoration-thickness`/`-underline-offset` are done).
-4. **user-select / resize** (need a text-selection model / drag-resize handle).
+
+`user-select` (drag-select with a painted highlight + `TinaSelectedText`) and
+`resize` (drag-resize handle with a corner grip) are now **done**.
 
 Everything else — including background-blend-mode (software sRGB, gradient **and**
 image layers), CSS counters, the structural/combinator/`:not()` selectors,
@@ -246,7 +248,7 @@ image layers), CSS counters, the structural/combinator/`:not()` selectors,
 verified 0.00% vs headless Chrome. Behavioral, fragmentation and niche-i18n
 properties are catalogued above as ⬜ (out of core rendering scope).
 
-Coverage: **129 ✅ · 3 🟡 · 2 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
+Coverage: **131 ✅ · 3 🟡 · 1 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
 property is an unaccounted gap.
 
 Each ✅ item ships with a reftest under `examples/compliance/` and flips its row
