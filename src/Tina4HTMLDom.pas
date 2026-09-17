@@ -356,6 +356,7 @@ type
     BoxShadows: array[0..7] of TBoxShadow; // all comma-separated shadows, [0] = on top
     BoxShadowCount: Integer;               // number of shadows in BoxShadows
     ObjectFit: string;     // 'fill' (default), 'cover', 'contain', 'none', 'scale-down'
+    ObjectPosition: string; // '' (=center) or 'x y' keywords/percent for the fitted image
     BackgroundImage: string; // URL from background-image: url(...)
     BackgroundSize: string;  // 'auto', 'cover', 'contain', or explicit size
     CSSPosition: string;   // 'static', 'relative', 'absolute', 'fixed', 'sticky'
@@ -393,6 +394,11 @@ type
     GridArea: string;             // item's named area (or line shorthand)
     RowGap: Single;               // grid row / column gaps (independent)
     ColGap: Single;
+    ColumnCount: Integer;         // CSS multicol: 0 = auto/none, else N columns
+    ColumnWidth: Single;          // multicol ideal column width, -1 = auto
+    ColumnRuleWidth: Single;      // rule between columns: 0 = none
+    ColumnRuleColor: TAlphaColor;
+    ColumnRuleStyle: string;      // 'none' (default) / solid / dashed / dotted / double
     // text-shadow: offsetX offsetY [blur] color
     TextShadowOffsetX: Single;
     TextShadowOffsetY: Single;
@@ -682,7 +688,8 @@ begin
     FHasPseudo := True;   // covers ::before/::after too (they end with :before/:after)
   if (Rule.Declarations <> nil) and
      (Rule.Declarations.ContainsKey('counter-reset') or
-      Rule.Declarations.ContainsKey('counter-increment')) then
+      Rule.Declarations.ContainsKey('counter-increment') or
+      Rule.Declarations.ContainsKey('counter-set')) then
     FHasCounters := True;
 
   // Routing key comes from the subject (last simple selector). Deriving it from
@@ -2694,6 +2701,7 @@ begin
   Result.BoxShadow.Active := False;
   Result.BoxShadowCount := 0;
   Result.ObjectFit := 'fill';
+  Result.ObjectPosition := '';
   Result.BackgroundImage := '';
   Result.BackgroundSize := 'auto';
   Result.CSSPosition := 'static';
@@ -2720,6 +2728,8 @@ begin
   Result.GridTemplateColumns := ''; Result.GridTemplateRows := ''; Result.GridAutoRows := '';
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
+  Result.ColumnCount := 0; Result.ColumnWidth := -1;
+  Result.ColumnRuleWidth := 0; Result.ColumnRuleColor := TAlphaColors.Null; Result.ColumnRuleStyle := 'none';
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
   Result.BgPosY := 0;
@@ -3261,6 +3271,7 @@ begin
   Result.OverflowY := 'visible';
   Result.TextOverflow := 'clip'; Result.LineClamp := 0;
   Result.ObjectFit := 'fill';
+  Result.ObjectPosition := '';
   Result.BackgroundImage := '';
   Result.BackgroundSize := 'auto';
   Result.CSSPosition := 'static';
@@ -3287,6 +3298,8 @@ begin
   Result.GridTemplateColumns := ''; Result.GridTemplateRows := ''; Result.GridAutoRows := '';
   Result.GridColumn := ''; Result.GridRow := ''; Result.GridTemplateAreas := ''; Result.GridArea := '';
   Result.RowGap := 0; Result.ColGap := 0;
+  Result.ColumnCount := 0; Result.ColumnWidth := -1;
+  Result.ColumnRuleWidth := 0; Result.ColumnRuleColor := TAlphaColors.Null; Result.ColumnRuleStyle := 'none';
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
   Result.BgPosY := 0;
@@ -4497,6 +4510,8 @@ begin
 
   if Decls.TryGetValue('object-fit', Temp) and not ShouldSkip(Temp) then
     Style.ObjectFit := Temp.Trim.ToLower;
+  if Decls.TryGetValue('object-position', Temp) and not ShouldSkip(Temp) then
+    Style.ObjectPosition := Temp.Trim.ToLower;
   if Decls.TryGetValue('background-image', Temp) and not ShouldSkip(Temp) then
     ExtractBgImageUrl(Temp, Style.BackgroundImage);
   if Decls.TryGetValue('background-size', Temp) and not ShouldSkip(Temp) then
@@ -4906,6 +4921,55 @@ begin
   begin Style.FlexGap := ParseLength(Temp, Style.FontSize); Style.ColGap := Style.FlexGap; end;
   if Decls.TryGetValue('row-gap', Temp) and not ShouldSkip(Temp) then
   begin Style.FlexGap := ParseLength(Temp, Style.FontSize); Style.RowGap := Style.FlexGap; end;
+  // CSS multi-column: column-count / column-width, and the `columns` shorthand
+  // ("<width> || <count>", either order; a unitless number is the count).
+  if Decls.TryGetValue('column-count', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'auto') then Style.ColumnCount := 0
+    else Style.ColumnCount := StrToIntDef(Trim(Temp), 0);
+  end;
+  if Decls.TryGetValue('column-width', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'auto') then Style.ColumnWidth := -1
+    else Style.ColumnWidth := ParseLength(Temp, Style.FontSize);
+  end;
+  if Decls.TryGetValue('columns', Temp) and not ShouldSkip(Temp) then
+  begin
+    Style.ColumnCount := 0; Style.ColumnWidth := -1;
+    for OvPart in Trim(Temp).Split([' '], TStringSplitOptions.ExcludeEmpty) do
+    begin
+      if SameText(OvPart, 'auto') then Continue;
+      if (Pos('n', LowerCase(OvPart)) = 0) and (StrToIntDef(OvPart, -999) <> -999) then
+        Style.ColumnCount := StrToIntDef(OvPart, 0)      // unitless integer = count
+      else
+        Style.ColumnWidth := ParseLength(OvPart, Style.FontSize);  // a length = width
+    end;
+  end;
+  // column-rule (width || style || color), like the outline shorthand
+  if Decls.TryGetValue('column-rule', Temp) and not ShouldSkip(Temp) then
+  begin
+    Style.ColumnRuleStyle := 'solid';
+    Style.ColumnRuleColor := Style.Color;
+    Style.ColumnRuleWidth := 3;   // 'medium'
+    for OP in Temp.Trim.ToLower.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+    begin
+      OT := OP.Trim;
+      if (OT = 'none') or (OT = 'hidden') then Style.ColumnRuleStyle := 'none'
+      else if (OT = 'solid') or (OT = 'dashed') or (OT = 'dotted') or (OT = 'double') then
+        Style.ColumnRuleStyle := OT
+      else if OT.EndsWith('px') or OT.EndsWith('em') or OT.EndsWith('rem') or (OT = '0') or
+              (StrToFloatDef(OT, Single.MaxValue) <> Single.MaxValue) then
+        Style.ColumnRuleWidth := ParseLength(OT, Style.FontSize)
+      else
+        Style.ColumnRuleColor := ParseColor(OT);
+    end;
+  end;
+  if Decls.TryGetValue('column-rule-width', Temp) and not ShouldSkip(Temp) then
+    Style.ColumnRuleWidth := ParseLength(Temp, Style.FontSize);
+  if Decls.TryGetValue('column-rule-style', Temp) and not ShouldSkip(Temp) then
+    Style.ColumnRuleStyle := Temp.Trim.ToLower;
+  if Decls.TryGetValue('column-rule-color', Temp) and not ShouldSkip(Temp) then
+    Style.ColumnRuleColor := ParseColor(Temp);
   // CSS Grid templates + item placement
   if Decls.TryGetValue('grid-template-columns', Temp) and not ShouldSkip(Temp) then
     Style.GridTemplateColumns := Temp.Trim.ToLower;

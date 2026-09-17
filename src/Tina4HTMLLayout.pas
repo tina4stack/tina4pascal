@@ -68,6 +68,9 @@ type
                                    // height, painted rotated 90° CW into right-to-left columns
     VerticalLR: Boolean;           // writing-mode:vertical-lr — same CW rotation, but the
                                    // column order is reversed in layout so columns read L→R
+    ColRuleGaps: Integer;          // multicol: number of column gaps (ncols-1); 0 = no rule
+    ColRuleColW, ColRuleGap: Single;   // column width and gap, for placing column-rules
+    ColRuleX0, ColRuleY0, ColRuleH: Single;  // content origin + tallest column height
     constructor Create;
     destructor Destroy; override;
   end;
@@ -117,6 +120,10 @@ type
       const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
     function LayoutGrid(Parent: TLayoutBox; Tag: THTMLTag;
       const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
+    { CSS multi-column: lay children into one narrow column, then balance them
+      across N columns. Returns the used height (the tallest column). }
+    function LayoutColumns(box: TLayoutBox; Tag: THTMLTag;
+      const st: TComputedStyle; contentX, contentY, contentW: Single): Single;
     procedure CollectInlineText(Tag: THTMLTag; SB: TStringBuilder);
     procedure FreeSynthTags;
     function MakeAnonTextItem(Parent: THTMLTag; const S: string): THTMLTag;
@@ -128,6 +135,7 @@ type
     procedure ResetCounterState;
     function CounterStack(const Name: string): TList<Integer>;
     function CounterApplyReset(const Spec: string): TStringList;
+    function CounterApplySet(const Spec: string): TStringList;
     procedure CounterApplyIncrement(const Spec: string);
     procedure CounterPop(Names: TStringList);
     function ResolveContentValue(Tag: THTMLTag; const CV: string): string;
@@ -706,6 +714,25 @@ begin
   finally names.Free; vals.Free; end;
 end;
 
+{ counter-set: set the innermost value of each named counter. If the counter
+  has no level yet one is created (and returned so the caller pops it when the
+  element scope ends); an existing level is overwritten in place. }
+function TLayoutEngine.CounterApplySet(const Spec: string): TStringList;
+var names: TStringList; vals: TList<Integer>; i: Integer; st: TList<Integer>;
+begin
+  Result := TStringList.Create;
+  names := TStringList.Create; vals := TList<Integer>.Create;
+  try
+    ParseCounterPairs(Spec, 0, names, vals);
+    for i := 0 to names.Count - 1 do
+    begin
+      st := CounterStack(names[i]);
+      if st.Count = 0 then begin st.Add(vals[i]); Result.Add(names[i]); end
+      else st[st.Count - 1] := vals[i];
+    end;
+  finally names.Free; vals.Free; end;
+end;
+
 { counter-increment: add to the innermost value (auto-creating at 0). }
 procedure TLayoutEngine.CounterApplyIncrement(const Spec: string);
 var names: TStringList; vals: TList<Integer>; i: Integer; st: TList<Integer>;
@@ -880,7 +907,7 @@ var
   kids: TList<THTMLTag>;
   edecls: TCSSDeclarations;
   spec: string;
-  pushed: TStringList;
+  pushed, setPushed: TStringList;
   isElem: Boolean;
 begin
   if Tag = nil then Exit;
@@ -903,6 +930,12 @@ begin
     try
       FSheet.ApplyTo(Tag, edecls);
       if edecls.TryGetValue('counter-reset', spec) then pushed := CounterApplyReset(spec);
+      if edecls.TryGetValue('counter-set', spec) then
+      begin
+        setPushed := CounterApplySet(spec);
+        if pushed = nil then pushed := setPushed
+        else begin pushed.AddStrings(setPushed); setPushed.Free; end;
+      end;
       if edecls.TryGetValue('counter-increment', spec) then CounterApplyIncrement(spec);
     finally
       edecls.Free;
@@ -4556,6 +4589,84 @@ begin
   UsedH := y - CY;
 end;
 
+function TLayoutEngine.LayoutColumns(box: TLayoutBox; Tag: THTMLTag;
+  const st: TComputedStyle; contentX, contentY, contentW: Single): Single;
+var
+  ncols, i, k, col, fcount: Integer;
+  colW, gap, usedH, target, colH, dx, dy, maxColH, cp: Single;
+  flow: array of TLayoutBox;
+  outerTop, slotBottom: array of Single;
+  colStartTop: array of Single;
+  colOf: array of Integer;
+  pos: string;
+begin
+  gap := st.ColGap; if gap < 0 then gap := 0;
+  if st.ColumnCount > 0 then ncols := st.ColumnCount
+  else if st.ColumnWidth > 0 then
+    ncols := Max(1, Floor((contentW + gap) / (st.ColumnWidth + gap)))
+  else ncols := 1;
+  if ncols < 1 then ncols := 1;
+  colW := (contentW - gap * (ncols - 1)) / ncols;
+  if colW < 1 then colW := 1;
+
+  // lay every child into a single column of the reduced width
+  usedH := 0;
+  LayoutChildren(box, Tag, st, contentX, contentY, colW, usedH);
+  if (ncols = 1) or (box.Children.Count = 0) then Exit(usedH);
+
+  // collect in-flow children (absolutely-positioned / fixed ones stay put)
+  SetLength(flow, box.Children.Count);
+  fcount := 0;
+  for i := 0 to box.Children.Count - 1 do
+  begin
+    pos := LowerCase(box.Children[i].Style.CSSPosition);
+    if (pos = 'absolute') or (pos = 'fixed') then Continue;
+    flow[fcount] := box.Children[i]; Inc(fcount);
+  end;
+  if fcount = 0 then Exit(usedH);
+  SetLength(flow, fcount);
+
+  // outer top of each flow child and the bottom of its vertical slot
+  SetLength(outerTop, fcount); SetLength(slotBottom, fcount);
+  for k := 0 to fcount - 1 do
+    outerTop[k] := flow[k].Y - Max(0, flow[k].Style.Margin.Top);
+  for k := 0 to fcount - 2 do slotBottom[k] := outerTop[k + 1];
+  slotBottom[fcount - 1] := contentY + usedH;
+
+  // greedily fill columns up to the balanced target height
+  SetLength(colStartTop, ncols); SetLength(colOf, fcount);
+  target := usedH / ncols;
+  col := 0; colStartTop[0] := outerTop[0];
+  for k := 0 to fcount - 1 do
+  begin
+    colOf[k] := col;
+    colH := slotBottom[k] - colStartTop[col];
+    if (col < ncols - 1) and (colH >= target) and (k < fcount - 1) then
+    begin Inc(col); colStartTop[col] := outerTop[k + 1]; end;
+  end;
+
+  // shift each column into place and measure the tallest
+  maxColH := 0;
+  for k := 0 to fcount - 1 do
+  begin
+    col := colOf[k];
+    dx := col * (colW + gap);
+    dy := contentY - colStartTop[col];
+    ShiftBoxTree(flow[k], dx, dy);
+    cp := slotBottom[k] - colStartTop[col];   // this child's bottom within its column
+    if cp > maxColH then maxColH := cp;
+  end;
+
+  // record geometry so PaintBoxEx can draw column-rules in the gaps
+  if (st.ColumnRuleWidth > 0) and (LowerCase(st.ColumnRuleStyle) <> 'none') then
+  begin
+    box.ColRuleGaps := ncols - 1;
+    box.ColRuleColW := colW; box.ColRuleGap := gap;
+    box.ColRuleX0 := contentX; box.ColRuleY0 := contentY; box.ColRuleH := maxColH;
+  end;
+  Result := maxColH;
+end;
+
 function TLayoutEngine.LayoutBlock(Parent: TLayoutBox; Tag: THTMLTag;
   const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
 var
@@ -4668,7 +4779,13 @@ begin
     and ((Pos('vertical', st.WritingMode) > 0) or (Pos('sideways', st.WritingMode) > 0))
     and (Pos('lr', st.WritingMode) > 0);
   if box.VerticalRL or box.VerticalLR then contentW := Max(1, FContainingH);  // wrap against the content height
-  LayoutChildren(box, Tag, st, contentX, contentY, contentW, usedH);
+  // CSS multi-column: balance block children across N columns (column-count /
+  // column-width / columns). Falls back to normal flow for a single column.
+  if ((st.ColumnCount > 0) or (st.ColumnWidth > 0)) and
+     not (box.VerticalRL or box.VerticalLR) then
+    usedH := LayoutColumns(box, Tag, st, contentX, contentY, contentW)
+  else
+    LayoutChildren(box, Tag, st, contentX, contentY, contentW, usedH);
   FContainingH := savedCH;
   // width: fit-content / min-content / max-content (the -3 sentinel from
   // ParseLength) → shrink the block to its content width (approximated by
@@ -5674,6 +5791,67 @@ begin
   Canvas.ClearClip;
 end;
 
+{ Parse object-position into x/y alignment fractions (0=left/top, 1=right/
+  bottom). Keywords (left/right/top/bottom/center) resolve to their axis in any
+  order; positional percentages fill x then y; '' / center => 0.5, 0.5. }
+procedure ParseObjectPosition(const S: string; out fx, fy: Single);
+var
+  parts: TArray<string>; i, posIdx: Integer; t: string; fs: TFormatSettings;
+begin
+  fx := 0.5; fy := 0.5;
+  if Trim(S) = '' then Exit;
+  fs := DefaultFormatSettings; fs.DecimalSeparator := '.';
+  parts := Trim(S).Split([' '], TStringSplitOptions.ExcludeEmpty);
+  posIdx := 0;
+  for i := 0 to High(parts) do
+  begin
+    t := parts[i];
+    if t = 'left' then fx := 0
+    else if t = 'right' then fx := 1
+    else if t = 'top' then fy := 0
+    else if t = 'bottom' then fy := 1
+    else if t = 'center' then Inc(posIdx)
+    else if (Length(t) > 0) and (t[Length(t)] = '%') then
+    begin
+      if posIdx = 0 then fx := StrToFloatDef(Copy(t, 1, Length(t) - 1), 50, fs) / 100
+      else fy := StrToFloatDef(Copy(t, 1, Length(t) - 1), 50, fs) / 100;
+      Inc(posIdx);
+    end
+    else Inc(posIdx);   // px / unknown: leave the axis centred, consume a slot
+  end;
+end;
+
+{ Destination rect for drawing an image of intrinsic IntrW×IntrH into the box
+  [BX,BY,BW,BH] under object-fit + object-position. 'fill' (and any unknown)
+  stretches to the box; contain/cover/none/scale-down scale uniformly and
+  object-position places the result (which may overflow, for cover/none). }
+procedure ComputeObjectFitRect(const Fit, Position: string;
+  BX, BY, BW, BH: Single; IntrW, IntrH: Single; out DX, DY, DW, DH: Single);
+var scale, sContain, fx, fy: Single;
+begin
+  DX := BX; DY := BY; DW := BW; DH := BH;
+  if (IntrW <= 0) or (IntrH <= 0) or (BW <= 0) or (BH <= 0) then Exit;
+  if (Fit = '') or (Fit = 'fill') then Exit;   // non-uniform stretch to the box
+
+  sContain := BW / IntrW; if BH / IntrH < sContain then sContain := BH / IntrH;
+  if Fit = 'contain' then scale := sContain
+  else if Fit = 'cover' then
+  begin
+    scale := BW / IntrW; if BH / IntrH > scale then scale := BH / IntrH;
+  end
+  else if Fit = 'none' then scale := 1
+  else if Fit = 'scale-down' then
+  begin
+    scale := sContain; if scale > 1 then scale := 1;
+  end
+  else Exit;   // unknown keyword: leave as fill
+
+  DW := IntrW * scale; DH := IntrH * scale;
+  ParseObjectPosition(Position, fx, fy);
+  DX := BX + (BW - DW) * fx;   // free space (negative when the image overflows)
+  DY := BY + (BH - DH) * fy;
+end;
+
 procedure PaintBoxEx(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single;
   Opacity: Single; Hidden: Boolean);
 var
@@ -5715,6 +5893,10 @@ var
   mcr: Single;   // resolved max border-radius (px; % resolved against this box)
   olStyle: string; olw, olx, oly, olrw, olrh: Single;   // dashed/dotted/double outline edges
   shi: Integer;   // box-shadow list index
+  ofIW, ofIH: Single;                  // intrinsic image size for object-fit
+  ofDX, ofDY, ofDW, ofDH: Single;      // object-fit destination rect
+  ofClipped: Boolean;                  // did we set a clip for the fitted image?
+  crI: Integer; crX, crTop: Single; crCol: TTina4Color;   // column-rule painting
 begin
   st := Box.Style;
   vRotSaved := False;
@@ -5842,15 +6024,25 @@ begin
   begin
     if Box.ImageHandle >= 0 then
     begin
+      // object-fit: scale the photo uniformly (cover/contain/none/scale-down)
+      // inside its box and place it per object-position, instead of stretching.
+      ofDX := Box.X; ofDY := y; ofDW := Box.W; ofDH := Box.H;
+      if (st.ObjectFit <> '') and (st.ObjectFit <> 'fill') and
+         Canvas.ImageSize(Box.ImageHandle, ofIW, ofIH) and (ofIW > 0) and (ofIH > 0) then
+        ComputeObjectFitRect(st.ObjectFit, st.ObjectPosition,
+          Box.X, y, Box.W, Box.H, ofIW, ofIH, ofDX, ofDY, ofDW, ofDH);
+      // border-radius clips to the rounded box; otherwise clip only when the
+      // fitted image overflows (cover/none), so contain/fill draw unclipped.
+      ofClipped := True;
       if mcr > 0 then
-      begin
-        // border-radius on <img>: clip the photo to the rounded box (50% → circle)
-        Canvas.ClipRoundRect(Box.X, y, Box.W, Box.H, mcr);
-        Canvas.DrawImage(Box.ImageHandle, Box.X, y, Box.W, Box.H);
-        Canvas.ClearClip;
-      end
+        Canvas.ClipRoundRect(Box.X, y, Box.W, Box.H, mcr)
+      else if (ofDX < Box.X - 0.5) or (ofDY < y - 0.5) or
+              (ofDX + ofDW > Box.X + Box.W + 0.5) or (ofDY + ofDH > y + Box.H + 0.5) then
+        Canvas.ClipRoundRect(Box.X, y, Box.W, Box.H, 0)   // rectangular clip
       else
-        Canvas.DrawImage(Box.ImageHandle, Box.X, y, Box.W, Box.H);
+        ofClipped := False;
+      Canvas.DrawImage(Box.ImageHandle, ofDX, ofDY, ofDW, ofDH);
+      if ofClipped then Canvas.ClearClip;
       Exit;
     end;
     Canvas.FillRect(Box.X, y, Box.W, Box.H, IMG_PLACEHOLDER_BG);
@@ -6343,6 +6535,29 @@ begin
         Dec(zj);
       end;
     end;
+  // multicol column-rule: a vertical line centred in each column gap
+  if Box.ColRuleGaps > 0 then
+  begin
+    crCol := st.ColumnRuleColor;
+    if (crCol and $FF000000) = 0 then crCol := st.Color;   // unset → currentColor
+    for crI := 0 to Box.ColRuleGaps - 1 do
+    begin
+      crX := Box.ColRuleX0 + (crI + 1) * Box.ColRuleColW
+             + crI * Box.ColRuleGap + Box.ColRuleGap / 2;
+      crTop := Box.ColRuleY0 - innerOfs;
+      if LowerCase(st.ColumnRuleStyle) = 'double' then
+      begin
+        Canvas.FillRect(crX - st.ColumnRuleWidth / 2, crTop,
+          Max(1, st.ColumnRuleWidth / 3), Box.ColRuleH, crCol);
+        Canvas.FillRect(crX + st.ColumnRuleWidth / 2 - Max(1, st.ColumnRuleWidth / 3), crTop,
+          Max(1, st.ColumnRuleWidth / 3), Box.ColRuleH, crCol);
+      end
+      else
+        Canvas.FillRect(crX - st.ColumnRuleWidth / 2, crTop,
+          Max(1, st.ColumnRuleWidth), Box.ColRuleH, crCol);
+    end;
+  end;
+
   for zi := 0 to High(zorder) do
   begin
     i := zorder[zi];
