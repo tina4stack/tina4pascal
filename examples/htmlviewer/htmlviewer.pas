@@ -1108,6 +1108,7 @@ begin
   Viewer.Shell := TCocoaShell.Create;            // created early: fetches remote <link> CSS
   Tina4SetNotifyHandler(@NotifyBridge);          // notify.show(...) → native banner
   Tina4InstallLinkOpener;                        // <a href=tel:/mailto:/http…> → the OS
+  Tina4InstallClipboard;                         // Cmd+C on a user-select:text drag → pbcopy
   RegisterCanvasPainter('demo', @CanvasDemo);   // <canvas id="demo"> → the Pascal painter
   RegisterCanvasPainter('lottie', @LottiePainter);
 

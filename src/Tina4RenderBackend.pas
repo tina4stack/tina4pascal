@@ -317,6 +317,16 @@ type
 procedure Tina4SetLinkHandler(P: TTina4LinkProc);
 function Tina4InvokeLink(const Href, Target: string): Boolean;
 
+  { A decoupled clipboard hook: the host wires this to its shell's OS clipboard
+    (NSPasteboard, X11 CLIPBOARD, Win32, …) and the core calls Tina4SetClipboard
+    to copy the current text selection. The core never touches the OS clipboard
+    itself. Returns True only when a handler ran and the text was non-empty. }
+type
+  TTina4ClipboardProc = procedure(const Text: string);
+
+procedure Tina4SetClipboardHandler(P: TTina4ClipboardProc);
+function Tina4SetClipboard(const Text: string): Boolean;
+
 { Remote-push registration: the shell hands the OS device token (APNs on iOS,
   Firebase Cloud Messaging (FCM) on Android) to the core, which forwards it to
   whatever the app wired - typically a POST to the Tina4 backend so the server
@@ -394,6 +404,7 @@ end;
 var GNotifyHook: TTina4NotifyProc = nil;
     GPushHook: TTina4PushProc = nil;
     GLinkHook: TTina4LinkProc = nil;
+    GClipboardHook: TTina4ClipboardProc = nil;
 
 procedure Tina4SetNotifyHandler(P: TTina4NotifyProc);
 begin
@@ -414,6 +425,17 @@ function Tina4InvokeLink(const Href, Target: string): Boolean;
 begin
   Result := Assigned(GLinkHook) and (Trim(Href) <> '');
   if Result then GLinkHook(Href, Target);
+end;
+
+procedure Tina4SetClipboardHandler(P: TTina4ClipboardProc);
+begin
+  GClipboardHook := P;
+end;
+
+function Tina4SetClipboard(const Text: string): Boolean;
+begin
+  Result := Assigned(GClipboardHook) and (Text <> '');
+  if Result then GClipboardHook(Text);
 end;
 
 procedure Tina4SetPushTokenHandler(P: TTina4PushProc);

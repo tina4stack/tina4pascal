@@ -1315,6 +1315,12 @@ var
 begin
   ns := event.charactersIgnoringModifiers;
   if (ns <> nil) and (ns.length > 0) then chars := string(ns.UTF8String) else chars := '';
+  // Cmd+C copies the current text selection to the pasteboard (via the hook)
+  if ((event.modifierFlags and NSCommandKeyMask) <> 0) and (LowerCase(chars) = 'c') then
+  begin
+    TinaCopySelection;
+    Exit;
+  end;
   case event.keyCode of
     36, 76: code := TK_RETURN;
     51:     code := TK_BACKSPACE;
