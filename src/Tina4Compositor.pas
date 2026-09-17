@@ -445,12 +445,14 @@ end;
   (intrinsic — the CSS default). posX/posY 0..1 (left/top .. right/bottom),
   default 0,0 (top-left, the CSS default). }
 procedure ParseMaskGeom(const Spec: string; out fit: Integer;
-  out posX, posY: Single; out norepeat, luminance: Boolean);
+  out posX, posY: Single; out norepeat, luminance: Boolean;
+  out sw, sh: Single; out swPct, shPct: Boolean);
 var s, sizePart, tok: string; toks: TStringArray; i, slash, pctSeen: Integer;
-  v: Single; code: Integer;
+  v: Single; code: Integer; nval: Single; nerr: Integer; hasNum: Boolean;
 begin
   fit := 3; posX := 0; posY := 0; norepeat := False; luminance := False;
-  pctSeen := 0;
+  sw := -1; sh := -1; swPct := False; shPct := False;
+  pctSeen := 0; hasNum := False;
   s := LowerCase(Spec);
   // drop the url(...) blob so its inner text isn't scanned as keywords
   i := Pos('url(', s);
@@ -468,16 +470,43 @@ begin
     sizePart := Copy(s, slash + 1, Length(s));
     s := Copy(s, 1, slash - 1);
   end;
-  // size slot: contain / cover / 100% (stretch) / auto (intrinsic)
+  // size slot: contain / cover / auto (intrinsic) as keywords, or one-two
+  // explicit <length>/<percentage>/auto values (fit 4, resolved in ApplyImageMask).
   toks := Trim(sizePart).Split([' '], TStringSplitOptions.ExcludeEmpty);
   for i := 0 to High(toks) do
   begin
     tok := toks[i];
     if tok = 'contain' then fit := 1
     else if tok = 'cover' then fit := 2
-    else if tok = 'auto' then fit := 3
-    else if tok = '100%' then fit := 0;   // full box ⇒ stretch
+    else if tok = 'auto' then
+    begin
+      // an explicit-position 'auto' (leaves that axis to the aspect ratio)
+      if i = 0 then sw := -1 else sh := -1;
+    end
+    else if (Length(tok) > 1) and (tok[Length(tok)] = '%') then
+    begin
+      Val(Copy(tok, 1, Length(tok) - 1), nval, nerr);
+      if nerr = 0 then
+      begin
+        hasNum := True;
+        if i = 0 then begin sw := nval; swPct := True; end
+        else begin sh := nval; shPct := True; end;
+      end;
+    end
+    else
+    begin
+      // a length: strip a trailing 'px' (other units are treated as px)
+      tok := StringReplace(tok, 'px', '', [rfReplaceAll]);
+      Val(tok, nval, nerr);
+      if nerr = 0 then
+      begin
+        hasNum := True;
+        if i = 0 then begin sw := nval; swPct := False; end
+        else begin sh := nval; shPct := False; end;
+      end;
+    end;
   end;
+  if hasNum and (fit <> 1) and (fit <> 2) then fit := 4;   // explicit sizing
   // position / repeat / mode slot
   toks := Trim(s).Split([' '], TStringSplitOptions.ExcludeEmpty);
   for i := 0 to High(toks) do
@@ -509,7 +538,8 @@ end;
   mask's alpha (or luminance*alpha). Scale maps intrinsic CSS px → buffer px. }
 procedure ApplyImageMask(buf: PSingleBuf; pw, ph: Integer;
   MaskPix: PCardinalBuf; mw, mh: Integer; luminance: Boolean;
-  fit: Integer; posX, posY: Single; norepeat: Boolean; Scale: Single);
+  fit: Integer; posX, posY: Single; norepeat: Boolean; Scale: Single;
+  sw, sh: Single; swPct, shPct: Boolean);
 var x, y, mx, my, o: Integer; mc: Cardinal; mv, r, g, b: Single;
   dw, dh, dx0, dy0, ratio, u, w2: Single;
 begin
@@ -520,6 +550,15 @@ begin
     2: begin ratio := pw / mw; if ph / mh > ratio then ratio := ph / mh;   // cover
          dw := mw * ratio; dh := mh * ratio; end;
     3: begin dw := mw * Scale; dh := mh * Scale; end;                      // auto/intrinsic
+    4: begin                                                               // explicit sizes
+         if sw >= 0 then begin if swPct then dw := sw / 100 * pw else dw := sw * Scale; end
+         else dw := -1;
+         if sh >= 0 then begin if shPct then dh := sh / 100 * ph else dh := sh * Scale; end
+         else dh := -1;
+         if (dw < 0) and (dh < 0) then begin dw := mw * Scale; dh := mh * Scale; end
+         else if dw < 0 then dw := dh * mw / mh    // width auto ⇒ keep aspect
+         else if dh < 0 then dh := dw * mh / mw;   // height auto ⇒ keep aspect
+       end;
   else begin dw := pw; dh := ph; end;                                      // stretch
   end;
   if dw <= 0 then dw := 1; if dh <= 0 then dh := 1;
@@ -562,6 +601,7 @@ var
   s, fn, arg: string; p, q, depth: Integer;
   toks: TStringArray; sdx, sdy, sblur, i2: Integer; sr, sg, sb, sa2: Single; col: string;
   mfit: Integer; mpx, mpy: Single; mnorep, mlum: Boolean;
+  msw, msh: Single; mswp, mshp: Boolean;
 begin
   s := LowerCase(FilterSpec); p := 1;
   while p <= Length(s) do
@@ -609,9 +649,9 @@ begin
       ApplyGradientMask(buf, pw, ph, MaskSpec)
     else if (MaskPix <> nil) and (Pos('url(', LowerCase(MaskSpec)) > 0) then
     begin
-      ParseMaskGeom(MaskSpec, mfit, mpx, mpy, mnorep, mlum);
+      ParseMaskGeom(MaskSpec, mfit, mpx, mpy, mnorep, mlum, msw, msh, mswp, mshp);
       ApplyImageMask(buf, pw, ph, MaskPix, MaskW, MaskH,
-        MaskLuminance or mlum, mfit, mpx, mpy, mnorep, Scale);
+        MaskLuminance or mlum, mfit, mpx, mpy, mnorep, Scale, msw, msh, mswp, mshp);
     end;
   end;
 end;
