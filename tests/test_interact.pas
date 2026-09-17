@@ -49,6 +49,12 @@ var LastLink: string = '';
 procedure LinkCap(const Href, Target: string);
 begin LastLink := Href; end;
 
+{ Captures what the clipboard hook receives, standing in for the shell's OS
+  pasteboard, so the test can assert Cmd+C copied the exact selection. }
+var LastClip: string = '';
+procedure ClipCap(const Text: string);
+begin LastClip := Text; end;
+
 { Depth-first search of the box-tree JSON for a node carrying "id":Id. }
 function FindNode(N: TJSONData; const Id: string): TJSONObject;
 var o: TJSONObject; kids: TJSONArray; i: Integer; r: TJSONObject;
@@ -160,6 +166,7 @@ begin
   try
     TinaInit(Canvas);
     Tina4SetLinkHandler(@LinkCap);   // <a href> clicks land here (stands in for the OS opener)
+    Tina4SetClipboardHandler(@ClipCap);   // Cmd+C copy lands here (stands in for the OS pasteboard)
     TinaSetHtml(PAGE);
     Frame;   // first Build injects the ::before/::after pseudo nodes
 
@@ -251,6 +258,10 @@ begin
       Check(Length(TinaSelectedText) > 0, 'a user-select:text drag selects text');
       Check(Pos(TinaSelectedText, 'ABCDEFGHIJKL') = 1,
         'selection is a left-anchored prefix of the paragraph');
+      // Cmd+C copies the selection to the OS clipboard via the handler
+      LastClip := '';
+      Check(TinaCopySelection, 'copy reports a selection was copied');
+      Check(LastClip = TinaSelectedText, 'clipboard got exactly the selected text');
     end;
     // dragging over a user-select:none paragraph selects nothing (and clears)
     BoxRect('nosel', selX, selY, selW, selH, ok);

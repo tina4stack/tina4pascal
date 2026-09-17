@@ -148,6 +148,10 @@ function TinaHitTestInfo(X, Y: Single): string;
 { The text currently selected by a user-select:text/all drag (gathered on the
   last paint; '' when nothing is selected). The shell uses it for copy. }
 function TinaSelectedText: string;
+{ Copy the current selection to the OS clipboard via the registered clipboard
+  handler (Tina4SetClipboardHandler). The shell calls this on Cmd/Ctrl+C. Returns
+  True when there was a selection and a handler ran. }
+function TinaCopySelection: Boolean;
 { Live DOM attribute of the element with the given id, AFTER interaction has
   mutated it (e.g. a checkbox's 'checked' set/cleared by a tap). Returns '' when
   the element or attribute is absent — use TinaHasAttr to tell an empty-valued
@@ -1409,6 +1413,11 @@ end;
 function TinaSelectedText: string;
 begin
   Result := SelectedText;
+end;
+
+function TinaCopySelection: Boolean;
+begin
+  Result := Tina4SetClipboard(SelectedText);
 end;
 
 function TinaHitTestInfo(X, Y: Single): string;
