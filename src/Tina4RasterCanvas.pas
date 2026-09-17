@@ -728,6 +728,7 @@ var
   lw, lh, lox, loy, n, bx, by, dpx, dpy, dbx, dby: Integer;
   c, dst: Cardinal; srcA: Single; blended: TTina4Color; useBlend: Boolean;
   fbuf: array of Single; i, rr, gg, bb: Integer; fa: Single;
+  mPix: TTina4Pixels; mW, mH: Integer; mPtr: PCardinalBuf;
 begin
   n := Length(FLayers);
   if n = 0 then Exit;
@@ -754,7 +755,11 @@ begin
       fbuf[i*4+2] := ( c         and $FF) / 255 * fa;
       fbuf[i*4+3] := fa;
     end;
-    ApplyFilterChainF(PSingleBuf(@fbuf[0]), lw, lh, FilterSpec, MaskSpec, 1);
+    mPtr := nil; mW := 0; mH := 0;
+    if (Pos('url(', LowerCase(MaskSpec)) > 0) and
+       DecodeMaskImage(MaskSpec, mW, mH, mPix) and (Length(mPix) > 0) then
+      mPtr := PCardinalBuf(@mPix[0]);
+    ApplyFilterChainF(PSingleBuf(@fbuf[0]), lw, lh, FilterSpec, MaskSpec, 1, mPtr, mW, mH);
     for i := 0 to lw * lh - 1 do
     begin
       fa := fbuf[i*4+3];

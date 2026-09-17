@@ -18,6 +18,7 @@ const
 
 type
   TTina4Color = Cardinal; // $AARRGGBB
+  TTina4Pixels = array of Cardinal;  // straight $AARRGGBB image pixels (mask decode)
 
   // tfsOverline has no native font attribute — the layer paints it manually,
   // so shells may ignore it in DrawText (they draw underline/strike natively).
@@ -144,6 +145,12 @@ type
     function LoadImage(const Src: string): Integer; virtual;
     function ImageSize(Handle: Integer; out W, H: Single): Boolean; virtual;
     procedure DrawImage(Handle: Integer; X, Y, W, H: Single); virtual;
+    { Decode a mask-image `url(...)` to straight $AARRGGBB pixels for the
+      compositor. The base class handles WebP + data: URIs via DecodeToBaseStore;
+      shells override to add their native decoders (PNG/JPEG). False = undecodable
+      (the mask is then skipped, a safe degrade). }
+    function DecodeMaskImage(const Src: string; out W, H: Integer;
+      out Pix: TTina4Pixels): Boolean; virtual;
     { Offscreen compositing for CSS filter / mix-blend-mode. BeginLayer redirects
       all subsequent drawing into an offscreen buffer covering the doc-space rect
       (X,Y,W,H) grown by Pad on every side (Pad gives blur/shadow room). It
@@ -335,6 +342,10 @@ function GradSample(t: Single; const Colors: array of TTina4Color; const Positio
   Alpha is taken from Src. Shared by background-blend-mode and the raster
   mix-blend-mode compositor. }
 function BlendRGB(Src, Dst: TTina4Color; const Mode: string): TTina4Color;
+
+{ Pull the inner URL out of a `url(...)` / `url("...")` mask-image spec ('' if
+  none). Exposed so shells can reuse it in their DecodeMaskImage override. }
+function ExtractMaskUrl(const Spec: string): string;
 
 implementation
 
@@ -1119,6 +1130,42 @@ begin
   Result := WEBP_HANDLE_BASE + FBaseCount;
   FBaseSrc.AddObject(Src, TObject(PtrInt(Result)));
   Inc(FBaseCount);
+end;
+
+{ Pull the inner URL out of a `url(...)` / `url("...")` mask-image spec. }
+function ExtractMaskUrl(const Spec: string): string;
+var p, q: Integer; s: string;
+begin
+  Result := '';
+  s := Trim(Spec);
+  p := Pos('url(', LowerCase(s));
+  if p = 0 then Exit;
+  q := p + 4;
+  Result := Copy(s, q, Length(s));
+  p := LastDelimiter(')', Result);
+  if p > 0 then Result := Copy(Result, 1, p - 1);
+  Result := Trim(Result);
+  if (Length(Result) >= 2) and ((Result[1] = '"') or (Result[1] = '''')) then
+    Result := Copy(Result, 2, Length(Result) - 2);
+end;
+
+function TTina4Canvas.DecodeMaskImage(const Src: string; out W, H: Integer;
+  out Pix: TTina4Pixels): Boolean;
+var url: string; h2, n: Integer;
+begin
+  Result := False; W := 0; H := 0; Pix := nil;
+  url := ExtractMaskUrl(Src);
+  if url = '' then Exit;
+  h2 := DecodeToBaseStore(url);           // base class: WebP + data:/file URIs
+  if h2 < WEBP_HANDLE_BASE then Exit;
+  h2 := h2 - WEBP_HANDLE_BASE;
+  if (h2 < 0) or (h2 >= FBaseCount) then Exit;
+  W := FBaseW[h2]; H := FBaseH[h2];
+  n := W * H;
+  if n <= 0 then Exit;
+  SetLength(Pix, n);
+  Move(FBasePix[h2][0], Pix[0], n * SizeOf(Cardinal));
+  Result := True;
 end;
 
 function TTina4Canvas.LoadImage(const Src: string): Integer;
