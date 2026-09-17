@@ -982,7 +982,8 @@ procedure ApplyFilterToRep(rep: NSBitmapImageRep; const Spec, MaskSpec: string; 
 var
   data: PByte; buf: PSingle;
   pw, ph, bpr, bps, n, i, o, so: Integer;
-  premult, isFloat: Boolean;
+  rO, gO, bO, aO: Integer;                       // per-channel byte offsets in a pixel
+  premult, isFloat, alphaFirst: Boolean;
 
   function ReadSample(byteOff: Integer): Single;
   begin
@@ -1003,14 +1004,23 @@ begin
   isFloat := (rep.bitmapFormat and 4) <> 0;   // NSBitmapFormatFloatingPointSamples
   premult := (rep.bitmapFormat and 2) = 0;     // clear Nonpremultiplied bit
   bps := (rep.bitsPerPixel div 8) div 4;       // bytes per sample (1 or 2)
+  // NSBitmapFormatAlphaFirst (bit 0): the rep is ARGB, not RGBA — CGImageForProposedRect
+  // hands back whichever the display/OS prefers, and it flipped to alpha-first. Read and
+  // write each channel at its real offset instead of assuming R,G,B,A order, or filters
+  // (grayscale, blend, drop-shadow…) operate on the wrong channels.
+  alphaFirst := (rep.bitmapFormat and 1) <> 0;
+  if alphaFirst then
+  begin aO := 0; rO := bps; gO := bps*2; bO := bps*3; end
+  else
+  begin rO := 0; gO := bps; bO := bps*2; aO := bps*3; end;
   n := pw * ph;
   GetMem(buf, n * 4 * SizeOf(Single));
   try
     for i := 0 to n - 1 do
     begin
       o := (i div pw) * bpr + (i mod pw) * bps * 4; so := i * 4;
-      buf[so]   := ReadSample(o);         buf[so+1] := ReadSample(o + bps);
-      buf[so+2] := ReadSample(o + bps*2); buf[so+3] := ReadSample(o + bps*3);
+      buf[so]   := ReadSample(o + rO); buf[so+1] := ReadSample(o + gO);
+      buf[so+2] := ReadSample(o + bO); buf[so+3] := ReadSample(o + aO);
       if not premult then
       begin buf[so] := buf[so]*buf[so+3]; buf[so+1] := buf[so+1]*buf[so+3]; buf[so+2] := buf[so+2]*buf[so+3]; end;
     end;
@@ -1021,18 +1031,18 @@ begin
       o := (i div pw) * bpr + (i mod pw) * bps * 4; so := i * 4;
       if premult then
       begin
-        WriteSample(o, buf[so]); WriteSample(o + bps, buf[so+1]);
-        WriteSample(o + bps*2, buf[so+2]); WriteSample(o + bps*3, buf[so+3]);
+        WriteSample(o + rO, buf[so]); WriteSample(o + gO, buf[so+1]);
+        WriteSample(o + bO, buf[so+2]); WriteSample(o + aO, buf[so+3]);
       end
       else
       begin
         if buf[so+3] > 0 then
         begin
-          WriteSample(o, buf[so]/buf[so+3]); WriteSample(o + bps, buf[so+1]/buf[so+3]);
-          WriteSample(o + bps*2, buf[so+2]/buf[so+3]);
+          WriteSample(o + rO, buf[so]/buf[so+3]); WriteSample(o + gO, buf[so+1]/buf[so+3]);
+          WriteSample(o + bO, buf[so+2]/buf[so+3]);
         end
-        else begin WriteSample(o, 0); WriteSample(o + bps, 0); WriteSample(o + bps*2, 0); end;
-        WriteSample(o + bps*3, buf[so+3]);
+        else begin WriteSample(o + rO, 0); WriteSample(o + gO, 0); WriteSample(o + bO, 0); end;
+        WriteSample(o + aO, buf[so+3]);
       end;
     end;
   finally
@@ -1059,7 +1069,7 @@ end;
 
 procedure TCocoaCanvas.EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string);
 var
-  img: NSImage; rep: NSBitmapImageRep;
+  img: NSImage; rep, srgb: NSBitmapImageRep;
   ox, oy, bw, bh, sc: Single;
   cg: CGContextRef;
   mPix: TTina4Pixels; mW, mH: Integer; mPtr: PCardinalBuf;
@@ -1075,6 +1085,15 @@ begin
     img.CGImageForProposedRect_context_hints(nil, nil, nil)));
   if rep <> nil then
   begin
+    // Normalise to sRGB before touching pixels. The CGImage carries the display's
+    // colour space (Display P3 on a wide-gamut Mac), so a filter/blend computed on
+    // its raw bytes operates on P3-encoded values and comes out wrong (e.g. a
+    // grayscale blue lands too dark). Convert to sRGB so the maths matches CSS —
+    // the same normalisation TCocoaShell.Snapshot does for the final PNG.
+    srgb := NSBitmapImageRep(rep.bitmapImageRepByConvertingToColorSpace_renderingIntent(
+      NSColorSpace.sRGBColorSpace, 0));
+    if (srgb <> nil) and (srgb <> rep) then
+    begin srgb.retain; rep.release; rep := srgb; end;
     if bw > 0 then sc := rep.pixelsWide / bw else sc := 1;
     if (FilterSpec <> '') or (MaskSpec <> '') then
     begin
@@ -1109,10 +1128,11 @@ end;
 
 procedure TCocoaCanvas.EndLayer3D(Handle: Integer; const Corners: array of Single);
 var
-  img: NSImage; srcRep: NSBitmapImageRep;
+  img: NSImage; srcRep, srgb: NSBitmapImageRep;
   src: PSingle; dst: PByte;
   pw, ph, bps, i, dpw, dph, sxi: Integer;
-  premult, isFloat: Boolean; sdata: PByte; sbpr: Integer;
+  chOff: array[0..3] of Integer;                 // R,G,B,A byte offsets within a pixel
+  premult, isFloat, alphaFirst: Boolean; sdata: PByte; sbpr: Integer;
   bw, sc, minx, miny, maxx, maxy, a0: Single;
   o00: Integer;
   quad: array[0..7] of Single;
@@ -1125,20 +1145,29 @@ begin
   srcRep := NSBitmapImageRep(NSBitmapImageRep.alloc.initWithCGImage(
     img.CGImageForProposedRect_context_hints(nil, nil, nil)));
   if srcRep = nil then begin img.release; SetLength(FLayers, Handle); Exit; end;
+  // normalise to sRGB (the CGImage is in the display's space — P3 on wide-gamut)
+  srgb := NSBitmapImageRep(srcRep.bitmapImageRepByConvertingToColorSpace_renderingIntent(
+    NSColorSpace.sRGBColorSpace, 0));
+  if (srgb <> nil) and (srgb <> srcRep) then begin srgb.retain; srcRep.release; srcRep := srgb; end;
   pw := srcRep.pixelsWide; ph := srcRep.pixelsHigh;
   if bw > 0 then sc := pw / bw else sc := 1;
   // decode the element texture into a premultiplied Single buffer
   sdata := PByte(srcRep.bitmapData); sbpr := srcRep.bytesPerRow;
   isFloat := (srcRep.bitmapFormat and 4) <> 0;
   premult := (srcRep.bitmapFormat and 2) = 0;
+  alphaFirst := (srcRep.bitmapFormat and 1) <> 0;   // ARGB vs RGBA byte order
   bps := (srcRep.bitsPerPixel div 8) div 4;
+  if alphaFirst then
+  begin chOff[0] := bps; chOff[1] := bps*2; chOff[2] := bps*3; chOff[3] := 0; end
+  else
+  begin chOff[0] := 0; chOff[1] := bps; chOff[2] := bps*2; chOff[3] := bps*3; end;
   GetMem(src, pw * ph * 4 * SizeOf(Single));
   for i := 0 to pw * ph - 1 do
   begin
     o00 := (i div pw) * sbpr + (i mod pw) * bps * 4;
     for sxi := 0 to 3 do
-      if isFloat then src[i*4+sxi] := Half2Single(PWord(sdata + o00 + sxi*bps)^)
-      else src[i*4+sxi] := sdata[o00 + sxi*bps] / 255;
+      if isFloat then src[i*4+sxi] := Half2Single(PWord(sdata + o00 + chOff[sxi])^)
+      else src[i*4+sxi] := sdata[o00 + chOff[sxi]] / 255;
     if not premult then
     begin
       a0 := src[i*4+3];
@@ -1184,13 +1213,18 @@ begin
 end;
 
 procedure TCocoaCanvas.BackdropFilter(X, Y, W, H: Single; const FilterSpec: string);
-var rep: NSBitmapImageRep; sc: Single;
+var rep, srgb: NSBitmapImageRep; sc: Single;
 begin
   if (W <= 0) or (H <= 0) or (FilterSpec = '') then Exit;
   // grab what has already been painted under the element from the focused view
   rep := NSBitmapImageRep(NSBitmapImageRep.alloc.initWithFocusedViewRect(NSMakeRect(X, Y, W, H)));
   if rep <> nil then
   begin
+    // normalise to sRGB before filtering — the focused view is in the display's
+    // colour space (P3 on wide-gamut), which would skew the filter maths
+    srgb := NSBitmapImageRep(rep.bitmapImageRepByConvertingToColorSpace_renderingIntent(
+      NSColorSpace.sRGBColorSpace, 0));
+    if (srgb <> nil) and (srgb <> rep) then begin srgb.retain; rep.release; rep := srgb; end;
     if W > 0 then sc := rep.pixelsWide / W else sc := 1;
     ApplyFilterToRep(rep, FilterSpec, '', sc);
     rep.drawInRect_fromRect_operation_fraction_respectFlipped_hints(
