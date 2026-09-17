@@ -129,6 +129,9 @@ type
     function MakeAnonTextItem(Parent: THTMLTag; const S: string): THTMLTag;
     function PseudoTag(Tag: THTMLTag; const Which: string): THTMLTag;
     procedure InjectPseudo(Tag: THTMLTag);
+    { ::first-letter: slice the first letter of Tag's first text into a synthetic
+      floated/inline pseudo carrying the rule's style (the drop-cap pattern). }
+    procedure InjectFirstLetter(Tag: THTMLTag);
     { CSS counters. FCounters holds a nesting stack per name; document-order
       traversal in InjectPseudo pushes on counter-reset, adds on
       counter-increment, and pops the element's resets on exit. }
@@ -900,6 +903,105 @@ begin
   end;
 end;
 
+{ Byte length of the UTF-8 codepoint starting at byte B. }
+function UTF8Len(B: Byte): Integer;
+begin
+  if B < $80 then Result := 1
+  else if B >= $F0 then Result := 4
+  else if B >= $E0 then Result := 3
+  else if B >= $C0 then Result := 2
+  else Result := 1;
+end;
+
+{ First #text descendant of Tag with a non-whitespace character (document order,
+  skipping already-injected tina4:: nodes). Nil if the subtree has no real text. }
+function FirstFlowTextNode(Tag: THTMLTag): THTMLTag;
+var c, r: THTMLTag;
+begin
+  Result := nil;
+  for c in Tag.Children do
+  begin
+    if c.TagName.StartsWith('tina4::') then Continue;
+    if c.TagName = '#text' then
+    begin
+      if Trim(c.Text) <> '' then Exit(c);
+    end
+    else
+    begin
+      r := FirstFlowTextNode(c);
+      if r <> nil then Exit(r);
+    end;
+  end;
+end;
+
+{ Split S into its ::first-letter slice (leading opening punctuation + the first
+  letter grapheme, leading whitespace dropped) and the remainder. False when S
+  has no letter. }
+function SliceFirstLetter(const S: string; out Letter, Rest: string): Boolean;
+const PUNCT = ['(', ')', '[', ']', '{', '}', '"', '''', '`', '<', '>', '*', '_', '#'];
+var p, q, n: Integer;
+begin
+  Result := False; Letter := ''; Rest := S;
+  n := Length(S);
+  p := 1;
+  while (p <= n) and ((S[p] = ' ') or (S[p] = #9) or (S[p] = #10) or (S[p] = #13)) do Inc(p);
+  if p > n then Exit;
+  q := p;
+  while (q <= n) and (Ord(S[q]) < $80) and CharInSet(S[q], PUNCT) do Inc(q);   // leading punctuation
+  if q > n then Exit;
+  q := q + UTF8Len(Ord(S[q]));    // one grapheme (the letter)
+  Letter := Copy(S, p, q - p);
+  Rest := Copy(S, q, n);
+  Result := Letter <> '';
+end;
+
+{ Inject a synthetic floated/inline pseudo carrying the ::first-letter style,
+  holding Tag's first letter sliced out of its first text node. Idempotent: the
+  strip phase in InjectPseudo restores the letter before the next injection. }
+procedure TLayoutEngine.InjectFirstLetter(Tag: THTMLTag);
+var
+  decls: TCSSDeclarations;
+  cv, k, v, letter, rest: string;
+  src, synth, tx: THTMLTag;
+  idx: Integer;
+begin
+  if FSheet = nil then Exit;
+  decls := TCSSDeclarations.Create;
+  try
+    if not FSheet.CollectPseudoStyle(Tag, 'first-letter', decls) then Exit;
+    src := FirstFlowTextNode(Tag);
+    if (src = nil) or (src.Parent = nil) then Exit;
+    if not SliceFirstLetter(src.Text, letter, rest) then Exit;
+
+    synth := THTMLTag.Create;
+    synth.TagName := 'tina4::first-letter';
+    synth.Parent := src.Parent;
+    synth.FLetterSrc := src;
+    // ::first-letter with no display defaults to inline; a float makes it a block
+    if not decls.ContainsKey('display') then
+    begin
+      if decls.TryGetValue('float', cv) and
+         (SameText(Trim(cv), 'left') or SameText(Trim(cv), 'right')) then
+        synth.Style.AddOrSetValue('display', 'block')
+      else
+        synth.Style.AddOrSetValue('display', 'inline-block');
+    end;
+    for k in decls.Keys do
+      if decls.TryGetValue(k, v) then synth.Style.AddOrSetValue(k, v);
+
+    tx := THTMLTag.Create;
+    tx.TagName := '#text'; tx.Text := letter; tx.Parent := synth;
+    synth.Children.Add(tx);
+
+    idx := src.Parent.Children.IndexOf(src);
+    if idx < 0 then begin synth.Free; Exit; end;
+    src.Parent.Children.Insert(idx, synth);
+    src.Text := rest;
+  finally
+    decls.Free;
+  end;
+end;
+
 { Recursively inject ::before/::after generated-content elements into the real
   DOM tree. Runs every layout: previously injected 'tina4::' children are freed
   first so re-layout stays idempotent, then real children are recursed, then
@@ -918,9 +1020,17 @@ begin
   // strip previously-injected pseudo children. THTMLTag.Destroy self-detaches
   // from its parent's Children (Parent.Children.Remove), so Free already removes
   // it from this list — an extra Delete(i) would double-remove (out of range).
+  // A ::first-letter synth first hands its letter back to the text it sliced,
+  // so the split does not compound across rebuilds.
   for i := Tag.Children.Count - 1 downto 0 do
     if Tag.Children[i].TagName.StartsWith('tina4::') then
+    begin
+      if (Tag.Children[i].TagName = 'tina4::first-letter') and
+         (Tag.Children[i].FLetterSrc <> nil) and (Tag.Children[i].Children.Count > 0) then
+        Tag.Children[i].FLetterSrc.Text :=
+          Tag.Children[i].Children[0].Text + Tag.Children[i].FLetterSrc.Text;
       Tag.Children[i].Free;
+    end;
 
   isElem := (Tag.TagName <> '#text') and (Tag.TagName <> 'root');
   pushed := nil;
@@ -970,6 +1080,9 @@ begin
     pa := PseudoTag(Tag, 'after');
     if pa <> nil then Tag.Children.Add(pa);
     if pushed <> nil then begin CounterPop(pushed); pushed.Free; end;
+    // ::first-letter last: children are already recursed (their strip phase ran),
+    // so the synth we insert into a descendant survives until the next rebuild.
+    if (FSheet <> nil) and FSheet.HasFirstLetter then InjectFirstLetter(Tag);
   end;
 end;
 

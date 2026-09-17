@@ -90,6 +90,10 @@ type
     IsHovered: Boolean;
     IsActive: Boolean;
     IsFocused: Boolean;
+    /// <summary>::first-letter bookkeeping: on a `tina4::first-letter` synth node
+    /// this points at the #text node its letter was sliced from, so InjectPseudo
+    /// can prepend the letter back and stay idempotent across rebuilds.</summary>
+    FLetterSrc: THTMLTag;
     /// <summary>Creates an empty tag with initialised dictionaries and child list.</summary>
     constructor Create;
     /// <summary>Frees all children recursively and the internal dictionaries.</summary>
@@ -183,6 +187,7 @@ type
     FOnParseError: TCSSStyleSheetParseError;
     FHasInteractiveSelectors: Boolean;  // any rule uses :hover/:active/:focus?
     FHasPseudo: Boolean;                // any rule targets ::before / ::after
+    FHasFirstLetter: Boolean;           // any rule targets ::first-letter
     FHasCounters: Boolean;              // any rule sets counter-reset/counter-increment
     // Indexed cascade — rules grouped by their routing key so a tag
     // with class "btn" only checks rules that could plausibly match it.
@@ -252,6 +257,7 @@ type
     /// </summary>
     property HasInteractiveSelectors: Boolean read FHasInteractiveSelectors;
     property HasPseudo: Boolean read FHasPseudo;
+    property HasFirstLetter: Boolean read FHasFirstLetter;
     property HasCounters: Boolean read FHasCounters;
     property CustomProps: TDictionary<string, string> read FCustomProps;
     { @import URLs found while parsing (in encounter order). The host fetches
@@ -684,8 +690,11 @@ begin
   // descendant ' ', child '>', adjacent '+', general-sibling '~').
   Rule.SelectorLower := Rule.Selector.Trim.ToLower;
   TokenizeSelector(Rule.SelectorLower, Rule.SelectorParts, Rule.SelectorCombs);
-  if Rule.SelectorLower.EndsWith(':before') or Rule.SelectorLower.EndsWith(':after') then
-    FHasPseudo := True;   // covers ::before/::after too (they end with :before/:after)
+  if Rule.SelectorLower.EndsWith(':before') or Rule.SelectorLower.EndsWith(':after') or
+     Rule.SelectorLower.EndsWith(':first-letter') then
+    FHasPseudo := True;   // covers ::before/::after/::first-letter (InjectPseudo runs)
+  if Rule.SelectorLower.EndsWith(':first-letter') then
+    FHasFirstLetter := True;
   if (Rule.Declarations <> nil) and
      (Rule.Declarations.ContainsKey('counter-reset') or
       Rule.Declarations.ContainsKey('counter-increment') or
