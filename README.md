@@ -71,7 +71,10 @@ tina4pascal doctor          # see the whole toolchain
 
 One of these is Chrome. The other is a **~1.4 MB native binary** with no browser,
 no WebView, no HTML/CSS engine but its own — the same `kitchen-sink.html`,
-rendered by pure Free Pascal. Which is which?
+rendered by pure Free Pascal. Which is which? (The second row leans on the
+engine: `::first-letter` drop caps, a tinted `::first-line`, CSS counters,
+multi-column with a `column-rule`, a `:nth-child` zebra table and a
+`place-items` grid — plus `object-fit: cover` on the photo.)
 
 <table>
 <tr>
@@ -86,7 +89,10 @@ rendered by pure Free Pascal. Which is which?
 **A is Tina4Pascal** (native Free Pascal); **B is Chrome.** Gradients, the
 web-loaded photo, bold/italic/monospace type, linear + radial swatches,
 gradient/solid/outline buttons, the `<select>`, the checkbox, the
-`font-weight:800` heading and the whole card layout all match. The only tells
+`font-weight:800` heading and the whole card layout all match — and so does the
+second row: the drop cap and tinted first line (`::first-letter` / `::first-line`),
+the CSS-counter step badges, the two-column list with its rule, the zebra table
+(`:nth-child`) and the centred `place-items` grid. The only tells
 are the platform form widgets: the `<input type="date">` (Tina4 formats it
 `06 Sep 2026` with a calendar glyph; Chrome shows the OS `2026/09/06` spinner)
 and the `<select>` chevron — Tina4 draws both itself, so they follow **your
@@ -293,7 +299,7 @@ environment / token, never the repo.
 The GDI+ shell renders shapes, ClearType text, clipping, `clip-path`, 2D
 transforms, the full compositing pipeline, **AA gradients (linear/radial),
 `<img>` decode/draw, per-pixel `rgba()` alpha and `background-size: cover`** —
-the [comparison above](#guess-the-browser) exercises them. Reftests: **130/130**
+the [comparison above](#guess-the-browser) exercises them. Reftests: **205/205**
 pass. What's left:
 
 1. **Advanced blend modes** — `color-dodge`/`burn`, `hue`/`saturation`/`color`/
