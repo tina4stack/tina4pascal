@@ -23,21 +23,19 @@ var
   GCls: jclass = nil;
   GShow: jmethodID = nil;
 
-function Env: PJNIEnv;
-begin
-  Result := nil;
-  if GVM = nil then Exit;
-  GVM^^.GetEnv(GVM, @Result, JNI_VERSION_1_6);
-  if Result = nil then
-    if GVM^^.AttachCurrentThread(GVM, @Result, nil) <> JNI_OK then Result := nil;
-end;
-
 procedure AndroidNotify(const Title, Body, Tag: string);
 var
   env: PJNIEnv; cls: jclass;
   jT, jB, jG: jstring; a: array[0..2] of jvalue;
 begin
-  env := Env;
+  // Fetch the JNIEnv inline (a separate parameterless Env() function got
+  // elided by -O2 and env aliased to the first string param — SIGSEGV in
+  // FindClass). Keep GetEnv here so env is always a real interface pointer.
+  env := nil;
+  if GVM = nil then Exit;
+  GVM^^.GetEnv(GVM, @env, JNI_VERSION_1_6);
+  if env = nil then
+    if GVM^^.AttachCurrentThread(GVM, @env, nil) <> JNI_OK then env := nil;
   if env = nil then Exit;
   if GCls = nil then
   begin
