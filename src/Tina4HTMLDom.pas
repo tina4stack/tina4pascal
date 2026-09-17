@@ -5364,10 +5364,30 @@ begin
   end;
   if Decls.TryGetValue('mask', Temp) and not ShouldSkip(Temp) then
   begin
-    // shorthand: take the image (gradient/url) part; ignore position/size/repeat
+    // shorthand keeps the whole value; the compositor parses image + geometry
     if SameText(Trim(Temp), 'none') then Style.MaskImage := ''
     else if (Pos('gradient(', LowerCase(Temp)) > 0) or (Pos('url(', LowerCase(Temp)) > 0) then
       Style.MaskImage := Trim(Temp);
+  end;
+  if Decls.TryGetValue('-webkit-mask', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.MaskImage := ''
+    else if (Pos('gradient(', LowerCase(Temp)) > 0) or (Pos('url(', LowerCase(Temp)) > 0) then
+      Style.MaskImage := Trim(Temp);
+  end;
+  // mask-mode / -size / -position / -repeat longhands: fold onto the image spec
+  // so the compositor's geometry parser (ParseMaskGeom) sees their keywords.
+  // Only for url() image masks — a gradient spec must reach ApplyGradientMask clean.
+  if (Style.MaskImage <> '') and (Pos('url(', LowerCase(Style.MaskImage)) > 0) then
+  begin
+    if (Decls.TryGetValue('mask-mode', Temp) or Decls.TryGetValue('-webkit-mask-mode', Temp))
+       and not ShouldSkip(Temp) then Style.MaskImage := Style.MaskImage + ' ' + Trim(Temp);
+    if (Decls.TryGetValue('mask-position', Temp) or Decls.TryGetValue('-webkit-mask-position', Temp))
+       and not ShouldSkip(Temp) then Style.MaskImage := Style.MaskImage + ' ' + Trim(Temp);
+    if (Decls.TryGetValue('mask-size', Temp) or Decls.TryGetValue('-webkit-mask-size', Temp))
+       and not ShouldSkip(Temp) then Style.MaskImage := Style.MaskImage + ' / ' + Trim(Temp);
+    if (Decls.TryGetValue('mask-repeat', Temp) or Decls.TryGetValue('-webkit-mask-repeat', Temp))
+       and not ShouldSkip(Temp) then Style.MaskImage := Style.MaskImage + ' ' + Trim(Temp);
   end;
   if Decls.TryGetValue('mix-blend-mode', Temp) and not ShouldSkip(Temp) then
   begin

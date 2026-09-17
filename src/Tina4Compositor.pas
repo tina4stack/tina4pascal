@@ -439,26 +439,115 @@ begin
     end;
 end;
 
-{ url() image mask: stretch the MaskW x MaskH bitmap over the pw x ph layer and
-  multiply each premultiplied pixel by the mask's alpha (or luminance*alpha). }
+{ Pull mask geometry keywords out of a `mask`/`-webkit-mask` spec string. The
+  part before a `/` carries mask-image / position / repeat / mode; the part after
+  carries mask-size. fit: 0=stretch (100% 100%), 1=contain, 2=cover, 3=auto
+  (intrinsic — the CSS default). posX/posY 0..1 (left/top .. right/bottom),
+  default 0,0 (top-left, the CSS default). }
+procedure ParseMaskGeom(const Spec: string; out fit: Integer;
+  out posX, posY: Single; out norepeat, luminance: Boolean);
+var s, sizePart, tok: string; toks: TStringArray; i, slash, pctSeen: Integer;
+  v: Single; code: Integer;
+begin
+  fit := 3; posX := 0; posY := 0; norepeat := False; luminance := False;
+  pctSeen := 0;
+  s := LowerCase(Spec);
+  // drop the url(...) blob so its inner text isn't scanned as keywords
+  i := Pos('url(', s);
+  if i > 0 then
+  begin
+    tok := Copy(s, i + 4, Length(s));
+    slash := Pos(')', tok);
+    s := Copy(s, 1, i - 1) + ' ' + Copy(tok, slash + 1, Length(tok));
+  end;
+  // split mask-size (after the last '/') from the position/repeat/mode part
+  sizePart := '';
+  slash := Pos('/', s);
+  if slash > 0 then
+  begin
+    sizePart := Copy(s, slash + 1, Length(s));
+    s := Copy(s, 1, slash - 1);
+  end;
+  // size slot: contain / cover / 100% (stretch) / auto (intrinsic)
+  toks := Trim(sizePart).Split([' '], TStringSplitOptions.ExcludeEmpty);
+  for i := 0 to High(toks) do
+  begin
+    tok := toks[i];
+    if tok = 'contain' then fit := 1
+    else if tok = 'cover' then fit := 2
+    else if tok = 'auto' then fit := 3
+    else if tok = '100%' then fit := 0;   // full box ⇒ stretch
+  end;
+  // position / repeat / mode slot
+  toks := Trim(s).Split([' '], TStringSplitOptions.ExcludeEmpty);
+  for i := 0 to High(toks) do
+  begin
+    tok := toks[i];
+    if tok = 'luminance' then luminance := True
+    else if tok = 'alpha' then luminance := False
+    else if tok = 'no-repeat' then norepeat := True
+    else if (tok = 'repeat') or (tok = 'repeat-x') or (tok = 'repeat-y') or (tok = 'round') or (tok = 'space') then norepeat := False
+    else if tok = 'left' then posX := 0
+    else if tok = 'right' then posX := 1
+    else if tok = 'top' then posY := 0
+    else if tok = 'bottom' then posY := 1
+    else if tok = 'center' then begin posX := 0.5; posY := 0.5; end
+    else if (Length(tok) > 1) and (tok[Length(tok)] = '%') then
+    begin
+      Val(Copy(tok, 1, Length(tok) - 1), v, code);
+      if code = 0 then
+      begin
+        if pctSeen = 0 then posX := v / 100 else posY := v / 100;
+        Inc(pctSeen);
+      end;
+    end;
+  end;
+end;
+
+{ url() image mask: place the MaskW x MaskH bitmap over the pw x ph layer per the
+  fit/position/repeat geometry and multiply each premultiplied pixel by the
+  mask's alpha (or luminance*alpha). Scale maps intrinsic CSS px → buffer px. }
 procedure ApplyImageMask(buf: PSingleBuf; pw, ph: Integer;
-  MaskPix: PCardinalBuf; mw, mh: Integer; luminance: Boolean);
+  MaskPix: PCardinalBuf; mw, mh: Integer; luminance: Boolean;
+  fit: Integer; posX, posY: Single; norepeat: Boolean; Scale: Single);
 var x, y, mx, my, o: Integer; mc: Cardinal; mv, r, g, b: Single;
+  dw, dh, dx0, dy0, ratio, u, w2: Single;
 begin
   if (MaskPix = nil) or (mw <= 0) or (mh <= 0) or (pw <= 0) or (ph <= 0) then Exit;
+  case fit of
+    1: begin ratio := pw / mw; if ph / mh < ratio then ratio := ph / mh;   // contain
+         dw := mw * ratio; dh := mh * ratio; end;
+    2: begin ratio := pw / mw; if ph / mh > ratio then ratio := ph / mh;   // cover
+         dw := mw * ratio; dh := mh * ratio; end;
+    3: begin dw := mw * Scale; dh := mh * Scale; end;                      // auto/intrinsic
+  else begin dw := pw; dh := ph; end;                                      // stretch
+  end;
+  if dw <= 0 then dw := 1; if dh <= 0 then dh := 1;
+  dx0 := (pw - dw) * posX; dy0 := (ph - dh) * posY;
   for y := 0 to ph - 1 do
     for x := 0 to pw - 1 do
     begin
-      mx := (x * mw) div pw; if mx >= mw then mx := mw - 1;
-      my := (y * mh) div ph; if my >= mh then my := mh - 1;
-      mc := MaskPix[my * mw + mx];
-      if luminance then
-      begin
-        r := ((mc shr 16) and $FF) / 255; g := ((mc shr 8) and $FF) / 255; b := (mc and $FF) / 255;
-        mv := (0.2126 * r + 0.7152 * g + 0.0722 * b) * (((mc shr 24) and $FF) / 255);
-      end
+      u := (x - dx0) / dw * mw;
+      if norepeat and ((u < 0) or (u >= mw)) then mv := 0
       else
-        mv := ((mc shr 24) and $FF) / 255;   // alpha channel (the -webkit-mask default)
+      begin
+        w2 := (y - dy0) / dh * mh;
+        if norepeat and ((w2 < 0) or (w2 >= mh)) then mv := 0
+        else
+        begin
+          mx := Trunc(u) mod mw; if mx < 0 then Inc(mx, mw);
+          my := Trunc(w2) mod mh; if my < 0 then Inc(my, mh);
+          if mx >= mw then mx := mw - 1; if my >= mh then my := mh - 1;
+          mc := MaskPix[my * mw + mx];
+          if luminance then
+          begin
+            r := ((mc shr 16) and $FF) / 255; g := ((mc shr 8) and $FF) / 255; b := (mc and $FF) / 255;
+            mv := (0.2126 * r + 0.7152 * g + 0.0722 * b) * (((mc shr 24) and $FF) / 255);
+          end
+          else
+            mv := ((mc shr 24) and $FF) / 255;   // alpha channel (the -webkit-mask default)
+        end;
+      end;
       o := (y * pw + x) * 4;
       buf[o] := buf[o] * mv; buf[o+1] := buf[o+1] * mv;
       buf[o+2] := buf[o+2] * mv; buf[o+3] := buf[o+3] * mv;
@@ -472,6 +561,7 @@ procedure ApplyFilterChainF(buf: PSingleBuf; pw, ph: Integer;
 var
   s, fn, arg: string; p, q, depth: Integer;
   toks: TStringArray; sdx, sdy, sblur, i2: Integer; sr, sg, sb, sa2: Single; col: string;
+  mfit: Integer; mpx, mpy: Single; mnorep, mlum: Boolean;
 begin
   s := LowerCase(FilterSpec); p := 1;
   while p <= Length(s) do
@@ -518,7 +608,11 @@ begin
     if Pos('gradient(', LowerCase(MaskSpec)) > 0 then
       ApplyGradientMask(buf, pw, ph, MaskSpec)
     else if (MaskPix <> nil) and (Pos('url(', LowerCase(MaskSpec)) > 0) then
-      ApplyImageMask(buf, pw, ph, MaskPix, MaskW, MaskH, MaskLuminance);
+    begin
+      ParseMaskGeom(MaskSpec, mfit, mpx, mpy, mnorep, mlum);
+      ApplyImageMask(buf, pw, ph, MaskPix, MaskW, MaskH,
+        MaskLuminance or mlum, mfit, mpx, mpy, mnorep, Scale);
+    end;
   end;
 end;
 
