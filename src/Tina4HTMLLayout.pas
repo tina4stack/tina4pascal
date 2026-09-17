@@ -299,8 +299,12 @@ begin
   if t = 'circle' then Exit(#$E2#$97#$A6)         // ◦
   else if t = 'square' then Exit(#$E2#$96#$AA)    // ▪
   else if t = 'decimal' then Exit(IntToStr(Idx) + '.')
-  else if t = 'lower-alpha' then Exit(Chr(Ord('a') + (Idx - 1) mod 26) + '.')
-  else if t = 'upper-alpha' then Exit(Chr(Ord('A') + (Idx - 1) mod 26) + '.')
+  else if t = 'decimal-leading-zero' then
+  begin
+    if (Idx >= 0) and (Idx < 10) then Exit('0' + IntToStr(Idx) + '.') else Exit(IntToStr(Idx) + '.');
+  end
+  else if (t = 'lower-alpha') or (t = 'lower-latin') then Exit(Chr(Ord('a') + (Idx - 1) mod 26) + '.')
+  else if (t = 'upper-alpha') or (t = 'upper-latin') then Exit(Chr(Ord('A') + (Idx - 1) mod 26) + '.')
   else if t = 'lower-roman' then Exit(ToRoman(Idx) + '.')
   else if t = 'upper-roman' then Exit(UpperCase(ToRoman(Idx)) + '.')
   else Exit(#$E2#$80#$A2);                        // • disc (default)
@@ -3749,10 +3753,11 @@ var
     c: THTMLTag;
     cs: TComputedStyle;
     words: TStringList;
-    i: Integer;
+    i, qDepth: Integer;
     it: TInlineItem;
     m: TTina4TextMetrics;
-    disp, txt, qrText, wsMode: string;
+    disp, txt, qrText, wsMode, qOpen, qClose: string;
+    anc: THTMLTag;
     leadingSpace: Boolean;
     iw, ih: Single;
   begin
@@ -4064,13 +4069,23 @@ var
       EmitInlineMarginRight(cs);
       Exit;
     end;
-    // <q> gets automatic quotation marks around its content
+    // <q> gets automatic quotation marks; nested <q> switch to the inner pair
     if SameText(T.TagName, 'q') then
     begin
-      AddQuoteWord(#$E2#$80#$9C, cs, pendingSpace);   // “
+      qDepth := 0; anc := T.Parent;
+      while anc <> nil do
+      begin
+        if SameText(anc.TagName, 'q') then Inc(qDepth);
+        anc := anc.Parent;
+      end;
+      if Odd(qDepth) then
+      begin qOpen := #$E2#$80#$98; qClose := #$E2#$80#$99; end   // ‘ ’ (inner)
+      else
+      begin qOpen := #$E2#$80#$9C; qClose := #$E2#$80#$9D; end;  // “ ” (outer)
+      AddQuoteWord(qOpen, cs, pendingSpace);
       pendingSpace := False;
       for c in T.Children do GatherInline(c, cs);
-      AddQuoteWord(#$E2#$80#$9D, cs, False);          // ”
+      AddQuoteWord(qClose, cs, False);
       Exit;
     end;
     // plain inline (b, i, span, a, small...) — recurse with its style

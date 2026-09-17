@@ -55,7 +55,7 @@ Status: ✅ Rendered correctly · 🟡 Partial · ⬜ Intentionally not rendered
 | strike | ✅ | line-through (legacy alias of s/del) |
 | small, mark, code, kbd, samp, var | ✅ | mark = yellow bg; code/kbd/samp mono |
 | sub, sup | ✅ | baseline shift + smaller |
-| abbr, cite, dfn, q, br | ✅ | q = auto quotes |
+| abbr, cite, dfn, q, br | ✅ | q = auto quotes; nested `<q>` switch to the inner ‘ ’ pair (reftest `css-q-nested`) |
 | wbr | ✅ | zero-width break opportunity (line wraps there when needed) |
 | bdi, bdo | ✅ | `<bdo dir>` overrides direction (characters reverse + mirror); `<bdi>` isolates content with auto-detected direction. Built on the bidi reorder; verified matching Chrome. Reftest `bdo-override` |
 | time, data | ✅ | inline text (no visual difference required; value/datetime are metadata) |
