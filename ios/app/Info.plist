@@ -17,5 +17,8 @@
   <!-- the <camera> control uses the camera + saves the shot -->
   <key>NSCameraUsageDescription</key>
   <string>Take a photo to show it in the page.</string>
+  <!-- the <recorder> control captures microphone audio -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Record audio for the page.</string>
 </dict>
 </plist>

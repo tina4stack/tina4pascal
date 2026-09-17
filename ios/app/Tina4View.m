@@ -7,7 +7,8 @@
 @interface Tina4View () <UIImagePickerControllerDelegate,
                          UINavigationControllerDelegate,
                          UIDocumentPickerDelegate,
-                         AVCaptureMetadataOutputObjectsDelegate>
+                         AVCaptureMetadataOutputObjectsDelegate,
+                         AVAudioPlayerDelegate>
 @property (strong, nonatomic) CADisplayLink *fling;
 @property (strong, nonatomic) NSTimer *caret;
 @property (strong, nonatomic) CADisplayLink *pump;   // redraws while HTTP is in flight
@@ -26,6 +27,14 @@
 @property (strong, nonatomic) NSMutableDictionary<NSString *, AVPlayerViewController *> *videoControllers;
 @property (strong, nonatomic) NSMutableDictionary<NSString *, id> *videoLoopObservers;
 @property (strong, nonatomic) NSMutableDictionary<NSString *, NSNumber *> *videoFlags;   // bit0 controls·1 autoplay·2 loop·3 muted
+// native <recorder>: mic capture to an AAC .m4a in the temp dir
+@property (strong, nonatomic) AVAudioRecorder *audioRecorder;
+@property (strong, nonatomic) NSString *audioRecPath;
+// engine-drawn <audio controls>: one AVAudioPlayer for the clip the user toggled,
+// with a display link pushing the elapsed fraction back so the bar advances.
+@property (strong, nonatomic) AVAudioPlayer *audioPlayer;
+@property (strong, nonatomic) NSString *audioSrc;          // src currently loaded (for resume)
+@property (strong, nonatomic) CADisplayLink *audioTick;    // progress pump while playing
 @end
 
 @implementation Tina4View
@@ -141,7 +150,10 @@
 
         AVPlayerViewController *vc = self.videoControllers[src];
         if (!vc) {
-            NSURL *url = [NSURL URLWithString:src];
+            // a local file path (the <recorder> hands back a temp-dir .m4a) needs
+            // fileURLWithPath; only http(s)/other schemes go through URLWithString
+            NSURL *url = [src hasPrefix:@"/"] ? [NSURL fileURLWithPath:src]
+                                              : [NSURL URLWithString:src];
             if (!url) continue;
             int flags = tina4_embed_flags(i);   // 1 controls·2 autoplay·4 loop·8 muted
             BOOL wantControls = (flags & 1) != 0;
@@ -337,6 +349,9 @@
     else if (r == TINA_FLING)    [self startFling];
     else if (r == TINA_PICK_FILE)[self pickFile];
     else if (r == TINA_CAPTURE)  [self capturePhoto];
+    else if (r == TINA_RECORD_START) [self startRecording];
+    else if (r == TINA_RECORD_STOP)  [self stopRecording];
+    else if (r == TINA_AUDIO_TOGGLE) [self toggleAudio];
     // deterministic keyboard: up only while a text field is focused
     if (r != TINA_SHOW_KBD && tina4_focus_kind() == 0) [self hideKeyboard];
     [self setNeedsDisplay];
@@ -483,5 +498,121 @@
 
 - (void)setPickedFile:(NSString *)name { tina4_set_file(name.UTF8String); [self setNeedsDisplay]; }
 - (void)setPickedPhoto:(NSString *)path { tina4_set_photo(path.UTF8String); [self setNeedsDisplay]; }
+
+// ---- <recorder>: microphone capture -----------------------------------
+// The engine fires TINA_RECORD_START when an idle <recorder> is tapped and
+// TINA_RECORD_STOP on the next tap. We record to an AAC .m4a and hand the path
+// back with tina4_set_recording (or '' if permission/record fails, which rolls
+// the control back to idle). AVAudioSession is the iOS-only bit vs macOS.
+
+- (void)startRecording {
+    AVAudioSession *sess = [AVAudioSession sharedInstance];
+    [sess setCategory:AVAudioSessionCategoryPlayAndRecord error:nil];
+    [sess setActive:YES error:nil];
+    // record only after the mic permission is granted (first run shows the prompt)
+    [sess requestRecordPermission:^(BOOL granted) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!granted) { tina4_set_recording(""); [self setNeedsDisplay]; return; }
+            NSString *dir = NSTemporaryDirectory();
+            NSString *fn = [NSString stringWithFormat:@"tina4-rec-%.0f.m4a",
+                            [[NSDate date] timeIntervalSince1970]];
+            self.audioRecPath = [dir stringByAppendingPathComponent:fn];
+            NSDictionary *settings = @{
+                AVFormatIDKey: @(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: @44100.0,
+                AVNumberOfChannelsKey: @1,
+                AVEncoderAudioQualityKey: @(AVAudioQualityHigh) };
+            NSError *err = nil;
+            self.audioRecorder = [[AVAudioRecorder alloc]
+                initWithURL:[NSURL fileURLWithPath:self.audioRecPath]
+                settings:settings error:&err];
+            if (!self.audioRecorder || err || ![self.audioRecorder record]) {
+                self.audioRecorder = nil;
+                tina4_set_recording("");   // failed → roll the <recorder> back to idle
+            }
+            [self setNeedsDisplay];
+        });
+    }];
+}
+
+- (void)stopRecording {
+    if (!self.audioRecorder) { tina4_set_recording(""); [self setNeedsDisplay]; return; }
+    [self.audioRecorder stop];
+    self.audioRecorder = nil;
+    // leave the record session: PlayAndRecord routes playback to the quiet
+    // earpiece, so switch to Playback (speaker) before the clip plays back
+    AVAudioSession *sess = [AVAudioSession sharedInstance];
+    [sess setCategory:AVAudioSessionCategoryPlayback error:nil];
+    [sess setActive:YES error:nil];
+    NSString *path = self.audioRecPath;
+    tina4_set_recording(path ? path.UTF8String : "");
+    self.audioRecPath = nil;
+    // The clip lands in the <audio id="rec" controls> element, which the engine
+    // now draws as a real play/pause bar. The user taps ▶ to hear it — one
+    // playback path (-toggleAudio), no black video surface to fight with.
+    [self setNeedsDisplay];
+}
+
+// ---- engine-drawn <audio controls>: play / pause ----------------------
+// The engine fires TINA_AUDIO_TOGGLE when the play/pause button is tapped and
+// has already flipped the control's state. We read which way it flipped, drive
+// an AVAudioPlayer, and push the elapsed fraction back each frame.
+- (void)toggleAudio {
+    char buf[2048] = {0};
+    tina4_audio_src(buf, (int)sizeof(buf));
+    NSString *src = [NSString stringWithUTF8String:buf];
+    if (!tina4_audio_wantplay()) {                 // paused
+        [self.audioPlayer pause];
+        [self stopAudioTick];
+        double dur = self.audioPlayer.duration; if (dur < 0.001) dur = 0.001;
+        tina4_set_audio_progress(self.audioPlayer ? (float)(self.audioPlayer.currentTime / dur) : 0.0f, 0);
+        [self setNeedsDisplay];
+        return;
+    }
+    if (src.length == 0) { tina4_set_audio_progress(0.0f, 0); [self setNeedsDisplay]; return; }
+    // route to the speaker (a prior record left the session in record mode)
+    AVAudioSession *sess = [AVAudioSession sharedInstance];
+    [sess setCategory:AVAudioSessionCategoryPlayback error:nil];
+    [sess setActive:YES error:nil];
+    if (!(self.audioPlayer && [self.audioSrc isEqualToString:src])) {   // load a new clip
+        NSURL *url = [src hasPrefix:@"/"] ? [NSURL fileURLWithPath:src] : [NSURL URLWithString:src];
+        NSError *perr = nil;
+        self.audioPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:url error:&perr];
+        if (!self.audioPlayer || perr) { self.audioSrc = nil; tina4_set_audio_progress(0.0f, 0); [self setNeedsDisplay]; return; }
+        self.audioPlayer.delegate = self;
+        self.audioSrc = src;
+        [self.audioPlayer prepareToPlay];
+    }
+    [self.audioPlayer play];      // resumes from currentTime if the same clip was paused
+    [self startAudioTick];
+    [self setNeedsDisplay];
+}
+
+- (void)audioTickFire {
+    if (!self.audioPlayer) { [self stopAudioTick]; return; }
+    double dur = self.audioPlayer.duration; if (dur < 0.001) dur = 0.001;
+    BOOL playing = self.audioPlayer.isPlaying;
+    tina4_set_audio_progress((float)(self.audioPlayer.currentTime / dur), playing ? 1 : 0);
+    [self setNeedsDisplay];
+    if (!playing) [self stopAudioTick];
+}
+
+- (void)startAudioTick {
+    if (self.audioTick) return;
+    self.audioTick = [CADisplayLink displayLinkWithTarget:self selector:@selector(audioTickFire)];
+    if (@available(iOS 15.0, *)) self.audioTick.preferredFrameRateRange = CAFrameRateRangeMake(6, 20, 15);
+    else self.audioTick.preferredFramesPerSecond = 15;
+    [self.audioTick addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+}
+
+- (void)stopAudioTick { [self.audioTick invalidate]; self.audioTick = nil; }
+
+// clip reached its end → reset the control to idle (progress full, not playing)
+- (void)audioPlayerDidFinishPlaying:(AVAudioPlayer *)player successfully:(BOOL)flag {
+    tina4_set_audio_progress(0.0f, 0);
+    self.audioSrc = nil;                 // next play reloads from the top
+    [self stopAudioTick];
+    [self setNeedsDisplay];
+}
 
 @end

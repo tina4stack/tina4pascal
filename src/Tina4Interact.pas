@@ -40,6 +40,7 @@ const
   TINA_CAPTURE   = 5;   // a <camera> was tapped — open the capture UI
   TINA_RECORD_START = 6; // a <recorder> was tapped idle — start mic capture
   TINA_RECORD_STOP  = 7; // a <recorder> was tapped while armed — stop + get file
+  TINA_AUDIO_TOGGLE = 8; // an <audio controls> play/pause button was tapped
 
 { Wire up the engine to a shell canvas. Call once, before the first frame. }
 procedure TinaInit(Canvas: TTina4Canvas);
@@ -111,6 +112,17 @@ procedure TinaSetPhoto(const Path: string);
   recorder's `onrecord` action. Pass '' if capture failed/produced nothing — the
   control simply disarms. The host calls this after StopAudioCapture returns. }
 procedure TinaSetRecording(const Path: string);
+
+{ <audio controls> playback — the engine draws the control (play/pause + progress)
+  and, on a tap, returns TINA_AUDIO_TOGGLE. The shell then reads the source URL to
+  play/pause with TinaAudioSrc, checks TinaAudioWantPlay to know which way the tap
+  toggled (True = the user just asked it to play), and pushes the elapsed fraction
+  and sounding state back with TinaSetAudioProgress each frame so the bar advances
+  and the glyph flips. A shell with no audio out simply never calls back — the
+  control then paints an idle, ready-to-play bar. }
+function TinaAudioSrc: string;
+function TinaAudioWantPlay: Boolean;
+procedure TinaSetAudioProgress(Fraction: Single; Playing: Boolean);
 
 { Set a default HTTP header sent on every request — Http:Get, API calls, and
   <include> fetches. Call once after login, e.g.
@@ -256,6 +268,7 @@ var
   GLastDownX: Single = -1e9; GLastDownY: Single = -1e9;
   GClickCount: Integer = 0;
   GFileTag: THTMLTag = nil;            // <input type=file>/<camera> awaiting a result
+  GAudioTag: THTMLTag = nil;           // <audio controls> the shell is playing/paused
   GOptCount: Integer = 0;
   GOptTop: array[0..63] of Single;    // screen-y of each option row
   GOptRowH: Single = 44;
@@ -1748,6 +1761,22 @@ begin
         // swallow its own click)
         if Ctrl.HasAttribute('onclick') then DispatchAction(Ctrl.GetAttribute('onclick'));
       end;
+    ckAudio:
+      begin
+        // stateful play/pause toggle. The 'playing' attribute drives the glyph
+        // and lets a second tap pause. Optimistic — the shell reads the new state
+        // (TinaAudioWantPlay) and either starts playback or pauses; it then pushes
+        // progress + the true sounding state back via TinaSetAudioProgress.
+        BlurAll;
+        if Ctrl.HasAttribute('playing') then DelAttr(Ctrl, 'playing')
+        else
+        begin
+          // only one clip sounds at a time — silence any other playing control
+          if (GAudioTag <> nil) and (GAudioTag <> Ctrl) then DelAttr(GAudioTag, 'playing');
+          SetAttr(Ctrl, 'playing', '');
+        end;
+        GAudioTag := Ctrl; GLayoutDirty := True; Result := TINA_AUDIO_TOGGLE;
+      end;
   end;
 end;
 
@@ -2178,6 +2207,45 @@ begin
   GLayoutDirty := True;
 end;
 
+{ Effective source URL of an <audio> tag: its `src`, else the first <source src>. }
+function AudioSrcOf(Tag: THTMLTag): string;
+var sc: THTMLTag;
+begin
+  Result := '';
+  if Tag = nil then Exit;
+  Result := Tag.GetAttribute('src');
+  if Result <> '' then Exit;
+  for sc in Tag.Children do
+    if SameText(sc.TagName, 'source') then
+    begin Result := sc.GetAttribute('src'); if Result <> '' then Exit; end;
+end;
+
+function TinaAudioSrc: string;
+begin
+  Result := AudioSrcOf(GAudioTag);
+end;
+
+function TinaAudioWantPlay: Boolean;
+begin
+  Result := (GAudioTag <> nil) and GAudioTag.HasAttribute('playing');
+end;
+
+procedure TinaSetAudioProgress(Fraction: Single; Playing: Boolean);
+begin
+  if GAudioTag = nil then Exit;
+  if Fraction < 0 then Fraction := 0; if Fraction > 1 then Fraction := 1;
+  SetAttr(GAudioTag, 'progress', FloatToStr(Fraction));
+  // the shell is the source of truth for whether sound is actually coming out —
+  // when a clip reaches its end it reports Playing=False so the glyph resets.
+  if Playing then
+  begin
+    if not GAudioTag.HasAttribute('playing') then SetAttr(GAudioTag, 'playing', '');
+  end
+  else
+    if GAudioTag.HasAttribute('playing') then DelAttr(GAudioTag, 'playing');
+  GLayoutDirty := True;
+end;
+
 procedure TinaSetHeader(const Name, Value: string);
 begin
   HttpSetHeader(Name, Value);
@@ -2206,9 +2274,8 @@ procedure CollectEmbeds(Box: TLayoutBox);
 var c, sc: THTMLTag; b: TLayoutBox; src: string; n: Integer;
 begin
   if Box = nil then Exit;
-  if (Box.Tag <> nil) and
-     (SameText(Box.Tag.TagName, 'video') or SameText(Box.Tag.TagName, 'audio')) then
-  begin
+  if (Box.Tag <> nil) and SameText(Box.Tag.TagName, 'video') then
+  begin  // <audio> is now an engine-drawn control (ckAudio), not a native overlay
     c := Box.Tag;
     src := c.GetAttribute('src');
     if src = '' then                      // else the first <source src>

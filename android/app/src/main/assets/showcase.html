@@ -100,6 +100,13 @@
     <p>A native <span class="tag">&lt;video&gt;</span> — the core lays out the box, the iOS shell overlays an AVPlayer (Apple BipBop HLS test stream) with native controls.</p>
     <video controls autoplay muted loop width="320" height="180" src="https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_4x3/bipbop_4x3_variant.m3u8"></video>
 
+    <h2>Audio recorder</h2>
+    <p>A native <span class="tag">&lt;recorder&gt;</span> — tap to record from the mic (MediaRecorder → .m4a), tap again to stop; the clip loads into the player below.</p>
+    <div class="card">
+      <recorder id="mic" onrecord="notify.show('Saved a recording','ok')" style="display:inline-block;padding:12px 20px;border-radius:12px;background:#2b41e6;color:#fff;font-weight:700"></recorder>
+      <audio id="rec" controls style="display:block;margin-top:10px;width:100%;height:44px"></audio>
+    </div>
+
     <h2>Typography</h2>
     <div class="card">
       <p style="font-family:'Gabarito',sans-serif;font-size:22px;color:var(--ink)">Gabarito display heading</p>

@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -26,7 +27,11 @@ public class MainActivity extends Activity {
     private static final int REQ_PICK_FILE = 42;
     private static final int REQ_CAPTURE   = 43;
     private static final int REQ_CAMERA    = 4711;   // Tina4Scanner.ensurePermission
+    private static final int REQ_MIC       = 4713;   // <recorder> RECORD_AUDIO
     private Tina4View view;
+    private MediaRecorder recorder;                  // live <recorder> capture, null when idle
+    private String recPath;
+    private boolean pendingRecord;                   // waiting on the mic permission dialog
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -114,6 +119,51 @@ public class MainActivity extends Activity {
         } catch (Exception e) { /* no camera app */ }
     }
 
+    /** <recorder> tapped idle: start MIC capture to an AAC .m4a (asking for the
+     *  RECORD_AUDIO permission first if needed). On any failure the view rolls the
+     *  control back to idle via onRecordingDone(""). */
+    void startRecording(Tina4View from) {
+        this.view = from;
+        if (Build.VERSION.SDK_INT >= 23
+                && checkSelfPermission("android.permission.RECORD_AUDIO")
+                   != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            pendingRecord = true;
+            requestPermissions(new String[]{"android.permission.RECORD_AUDIO"}, REQ_MIC);
+            return;
+        }
+        beginRecording();
+    }
+
+    private void beginRecording() {
+        try {
+            recPath = new File(getFilesDir(),
+                "tina4-rec-" + System.currentTimeMillis() + ".m4a").getAbsolutePath();
+            recorder = new MediaRecorder();
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+            recorder.setOutputFile(recPath);
+            recorder.prepare();
+            recorder.start();
+        } catch (Exception e) {
+            if (recorder != null) { try { recorder.release(); } catch (Exception ignore) {} recorder = null; }
+            recPath = null;
+            if (view != null) view.onRecordingDone("");   // roll back to idle
+        }
+    }
+
+    /** <recorder> tapped while armed: stop + hand the file back. */
+    void stopRecording() {
+        String path = "";
+        if (recorder != null) {
+            try { recorder.stop(); path = recPath != null ? recPath : ""; }
+            catch (Exception e) { path = ""; }
+            try { recorder.release(); } catch (Exception ignore) {}
+            recorder = null; recPath = null;
+        }
+        if (view != null) view.onRecordingDone(path);
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -140,6 +190,14 @@ public class MainActivity extends Activity {
         if (requestCode == REQ_CAMERA && view != null
                 && grantResults.length > 0 && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
             view.onCameraGranted();
+        }
+        if (requestCode == REQ_MIC && pendingRecord) {
+            pendingRecord = false;
+            if (grantResults.length > 0
+                    && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED)
+                beginRecording();
+            else if (view != null)
+                view.onRecordingDone("");   // denied → roll back to idle
         }
     }
 

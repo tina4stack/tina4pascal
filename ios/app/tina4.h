@@ -8,7 +8,8 @@ extern void PASCALMAIN(void);
 
 // Touch return codes (match TINA_* in Tina4Interact).
 enum { TINA_NONE = 0, TINA_SHOW_KBD = 1, TINA_HIDE_KBD = 2, TINA_FLING = 3,
-       TINA_PICK_FILE = 4, TINA_CAPTURE = 5 };
+       TINA_PICK_FILE = 4, TINA_CAPTURE = 5, TINA_RECORD_START = 6, TINA_RECORD_STOP = 7,
+       TINA_AUDIO_TOGGLE = 8 };
 
 void tina4_set_html(const char *html);
 void tina4_set_asset_base(const char *dir);        // base for relative <img src="assets/…">
@@ -30,6 +31,14 @@ int  tina4_focus_kind(void);                       // 0 none 1 text 2 textarea
 int  tina4_focus_next(void);
 void tina4_set_file(const char *name);
 void tina4_set_photo(const char *path);
+void tina4_set_recording(const char *path);   // hand back the recorded audio ('' = failed)
+
+// Engine-drawn <audio controls>: on a TINA_AUDIO_TOGGLE touch, read the source
+// URL + which way the tap toggled, drive an AVAudioPlayer, and push the elapsed
+// fraction + sounding state back each frame so the bar advances / glyph flips.
+int  tina4_audio_src(char *buf, int cap);              // src of the toggled control
+int  tina4_audio_wantplay(void);                       // 1 = play, 0 = pause
+void tina4_set_audio_progress(float fraction, int playing);
 
 // Native media embeds (<video>): after a frame, ask the engine which <video>
 // boxes are laid out and where (screen points, scroll applied), to overlay a
