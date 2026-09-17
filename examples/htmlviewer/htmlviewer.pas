@@ -112,6 +112,7 @@ type
     LastDragX, LastDragY: Single;
     MomentumBox: TLayoutBox;      // flick inertia target, nil = none
     MomVX, MomVY: Single;         // velocity (px per tick)
+    AudioTag: THTMLTag;           // <audio controls> currently playing, nil = none
     HoverOpt: Integer;            // hovered option row in the open dropdown, -1 none
     Script: TStringList;          // --script: one driver command per tick
     ScriptPos: Integer;
@@ -545,12 +546,25 @@ end;
 procedure TViewer.MomentumTick;
 const
   DECAY = 0.92;
+var
+  AudioProgFrac: Single;
+  AudioProgPlaying: Boolean;
 begin
   // live data (SSE/WS): fire queued messages onto their DOM elements, relayout
   LiveDrain;
   if BuiltinsDirty then begin BuiltinsDirty := False; Rebuild; Shell.Invalidate; end;
   // CSS animation / <lottie>: advance the shared clock + repaint while active
   if AnimActive then begin AnimAdvance(1 / 60); Shell.Invalidate; end;
+  // <audio controls>: advance the played fraction from the shell player; when the
+  // clip ends the shell reports Playing=False and the glyph resets to ▶.
+  if AudioTag <> nil then
+  begin
+    AudioProgFrac := Shell.AudioProgress(AudioProgPlaying);
+    AudioTag.Attributes.AddOrSetValue('progress', FloatToStr(AudioProgFrac));
+    if not AudioProgPlaying then
+    begin AudioTag.Attributes.Remove('playing'); AudioTag := nil; end;
+    Rebuild; Shell.Invalidate;
+  end;
   if MomentumBox = nil then Exit;
   if MomentumBox.ScrollableX and (MomentumBox.MaxScrollX > 0) then
     MomentumBox.ScrollLeft := Max(0, Min(MomentumBox.MaxScrollX,
@@ -697,6 +711,32 @@ begin
     begin
       SetFocus(t);
       OpenSelect := t;
+      Rebuild;
+      Exit;
+    end;
+    if SameText(t.TagName, 'audio') and t.HasAttribute('controls') then
+    begin
+      // engine-drawn <audio controls>: a stateful play/pause toggle driven by
+      // the shell's AVAudioPlayer. The 'playing'/'progress' attributes drive the
+      // control's glyph + bar (progress is polled from the shell each tick).
+      if t.HasAttribute('playing') then
+      begin
+        t.Attributes.Remove('playing');
+        Shell.AudioPause;
+        AudioTag := nil;
+      end
+      else
+      begin
+        v := t.GetAttribute('src');
+        if v = '' then
+          for au in t.Children do
+            if SameText(au.TagName, 'source') and (v = '') then v := au.GetAttribute('src');
+        if Shell.AudioPlay(v) then
+        begin
+          t.Attributes.AddOrSetValue('playing', 'playing');
+          AudioTag := t;            // the tick loop polls its progress
+        end;
+      end;
       Rebuild;
       Exit;
     end;

@@ -241,6 +241,35 @@ begin
   TinaSetRecording(string(Path));
 end;
 
+{ ---- engine-drawn <audio controls> playback -------------------------- }
+
+{ Source URL of the audio control the user last toggled (empty if none). }
+function tina4_audio_src(Buf: PAnsiChar; Cap: cint): cint; cdecl;
+var s: AnsiString;
+begin
+  s := TinaAudioSrc;
+  Result := Length(s);
+  if (Buf <> nil) and (Cap > 0) then
+  begin
+    if Result > Cap - 1 then Result := Cap - 1;
+    if Result > 0 then Move(s[1], Buf^, Result);
+    Buf[Result] := #0;
+  end;
+end;
+
+{ 1 if the last toggle asked the clip to play, 0 if it asked to pause. }
+function tina4_audio_wantplay: cint; cdecl;
+begin
+  if TinaAudioWantPlay then Result := 1 else Result := 0;
+end;
+
+{ Push the elapsed fraction (0..1) + whether sound is still coming out, so the
+  engine advances the progress bar and flips the play/pause glyph. }
+procedure tina4_set_audio_progress(Fraction: single; Playing: cint); cdecl;
+begin
+  TinaSetAudioProgress(Fraction, Playing <> 0);
+end;
+
 { ---- native media embeds (<video>) ----------------------------------- }
 
 function tina4_embed_count: cint; cdecl;
@@ -322,7 +351,8 @@ exports
   tina4_focus_kind, tina4_focus_next, tina4_set_file, tina4_set_photo, tina4_set_recording,
   tina4_embed_count, tina4_embed_rect, tina4_embed_src,
   tina4_embed_flags, tina4_embed_poster, tina4_embed_kind,
-  tina4_embed_formats, tina4_scan_result;
+  tina4_embed_formats, tina4_scan_result,
+  tina4_audio_src, tina4_audio_wantplay, tina4_set_audio_progress;
 
 begin
 end.

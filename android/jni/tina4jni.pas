@@ -230,6 +230,26 @@ begin
   TinaSetRecording(JToStr(Env, Path));   // '' rolls a failed capture back to idle
 end;
 
+{ engine-drawn <audio controls>: the Java side plays/pauses a MediaPlayer and
+  pushes progress back — the engine draws the play/pause bar. }
+function Java_com_tina4_pascal_Tina4View_nativeAudioSrc(Env: PJNIEnv; This: jobject): jstring; cdecl;
+var s: AnsiString;
+begin
+  s := TinaAudioSrc;
+  Result := Env^.NewStringUTF(Env, PAnsiChar(s));
+end;
+
+function Java_com_tina4_pascal_Tina4View_nativeAudioWantPlay(Env: PJNIEnv; This: jobject): jint; cdecl;
+begin
+  if TinaAudioWantPlay then Result := 1 else Result := 0;
+end;
+
+procedure Java_com_tina4_pascal_Tina4View_nativeSetAudioProgress(Env: PJNIEnv; This: jobject;
+  Fraction: jfloat; Playing: jint); cdecl;
+begin
+  TinaSetAudioProgress(Fraction, Playing <> 0);
+end;
+
 { ---- native media embeds (<video>) ----------------------------------- }
 
 function Java_com_tina4_pascal_Tina4View_nativeEmbedCount(Env: PJNIEnv;
@@ -303,6 +323,9 @@ exports
   Java_com_tina4_pascal_Tina4View_nativeSetFile,
   Java_com_tina4_pascal_Tina4View_nativeSetPhoto,
   Java_com_tina4_pascal_Tina4View_nativeSetRecording,
+  Java_com_tina4_pascal_Tina4View_nativeAudioSrc,
+  Java_com_tina4_pascal_Tina4View_nativeAudioWantPlay,
+  Java_com_tina4_pascal_Tina4View_nativeSetAudioProgress,
   Java_com_tina4_pascal_Tina4View_nativeEmbedCount,
   Java_com_tina4_pascal_Tina4View_nativeEmbedRect,
   Java_com_tina4_pascal_Tina4View_nativeEmbedSrc,

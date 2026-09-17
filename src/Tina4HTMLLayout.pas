@@ -38,7 +38,8 @@ type
     lives in the DOM: input/textarea in 'value', checkbox/radio in 'checked',
     select in 'value'. The app mutates attributes and rebuilds. }
   TControlKind = (ckNone, ckTextInput, ckTextarea, ckCheckbox, ckRadio,
-    ckSelect, ckButton, ckFile, ckDate, ckRange, ckColor, ckProgress, ckMeter);
+    ckSelect, ckButton, ckFile, ckDate, ckRange, ckColor, ckProgress, ckMeter,
+    ckAudio);
 
   TLayoutBox = class
   public
@@ -335,7 +336,8 @@ begin
   Result := SameText(Name, 'input') or SameText(Name, 'textarea') or
     SameText(Name, 'select') or SameText(Name, 'button') or
     SameText(Name, 'camera') or SameText(Name, 'recorder') or
-    SameText(Name, 'progress') or SameText(Name, 'meter');
+    SameText(Name, 'progress') or SameText(Name, 'meter') or
+    SameText(Name, 'audio');
 end;
 
 function ToRoman(N: Integer): string;
@@ -1356,6 +1358,7 @@ begin
   else if SameText(Tag.TagName, 'button') then Result := ckButton
   else if SameText(Tag.TagName, 'progress') then Result := ckProgress
   else if SameText(Tag.TagName, 'meter') then Result := ckMeter
+  else if SameText(Tag.TagName, 'audio') then Result := ckAudio
   else if typ = 'checkbox' then Result := ckCheckbox
   else if typ = 'radio' then Result := ckRadio
   else if (typ = 'file') or SameText(Tag.TagName, 'camera')
@@ -2290,6 +2293,16 @@ begin
         if ew >= 0 then Result.W := ew else Result.W := 48;
         Result.H := ResolveSize(St.ExplicitHeight, 0);
         if Result.H < 0 then Result.H := Max(24, lineH);
+        Exit;
+      end;
+    ckAudio:
+      begin
+        // <audio controls>: an engine-drawn play/pause bar (PaintAudioControl).
+        // The shell owns playback; a bare <audio> (no controls) is display:none.
+        ew := ResolveSize(St.ExplicitWidth, AvailW);
+        if ew >= 0 then Result.W := ew else Result.W := Min(300, AvailW);
+        Result.H := ResolveSize(St.ExplicitHeight, 0);
+        if Result.H < 0 then Result.H := 54;
         Exit;
       end;
   else // ckTextInput
@@ -6189,6 +6202,56 @@ begin
   else Result := TC_ACCENT;
 end;
 
+{ <audio controls>: a light rounded bar with a round play/pause button on the
+  left and a progress track. The shell owns playback and pushes state back into
+  two attributes read here — 'playing' (present while sounding) and 'progress'
+  (0..1 of the clip elapsed). With neither, it paints an idle ready-to-play bar. }
+procedure PaintAudioControl(Canvas: TTina4Canvas; Box: TLayoutBox; y: Single);
+var
+  d, bx, by, cx, cy, tx, tw, ty, frac, gw, gh: Single;
+  accent, glyph: TTina4Color;
+  playing: Boolean;
+  tri: TTina4PointArray;
+begin
+  accent := AccentOf(Box);
+  glyph := $FFFFFFFF;
+  playing := Box.Tag.HasAttribute('playing');
+  frac := StrToFloatDef(Box.Tag.GetAttribute('progress'), 0);
+  if frac < 0 then frac := 0; if frac > 1 then frac := 1;
+
+  // light bar backing
+  Canvas.FillRoundRect(Box.X, y, Box.W, Box.H, Min(Box.H / 2, 12), $FFEFF1F4);
+
+  // round button, left, vertically centred
+  d := Box.H - 12; if d > 40 then d := 40; if d < 20 then d := 20;
+  bx := Box.X + 6; by := y + (Box.H - d) / 2;
+  cx := bx + d / 2; cy := by + d / 2;
+  Canvas.FillRoundRect(bx, by, d, d, d / 2, accent);
+  if playing then
+  begin                                   // two pause bars
+    gw := d * 0.12; gh := d * 0.36;
+    Canvas.FillRect(cx - d * 0.18, cy - gh / 2, gw, gh, glyph);
+    Canvas.FillRect(cx + d * 0.06, cy - gh / 2, gw, gh, glyph);
+  end
+  else
+  begin                                   // play triangle (nudged right to look centred)
+    SetLength(tri, 3);
+    tri[0].X := cx - d * 0.16; tri[0].Y := cy - d * 0.20;
+    tri[1].X := cx - d * 0.16; tri[1].Y := cy + d * 0.20;
+    tri[2].X := cx + d * 0.22; tri[2].Y := cy;
+    Canvas.FillPolygon([tri], glyph);
+  end;
+
+  // progress track to the right of the button
+  tx := bx + d + 12; tw := Box.X + Box.W - 12 - tx;
+  if tw > 8 then
+  begin
+    ty := y + Box.H / 2 - 2;
+    Canvas.FillRoundRect(tx, ty, tw, 4, 2, TC_BORDER);
+    if frac > 0 then Canvas.FillRoundRect(tx, ty, tw * frac, 4, 2, accent);
+  end;
+end;
+
 { <progress>/<meter>: a rounded track with a filled portion from value/max. }
 procedure PaintBarControl(Canvas: TTina4Canvas; Box: TLayoutBox; y: Single);
 var val, mx, frac, r: Single; fill: TTina4Color;
@@ -6788,6 +6851,14 @@ begin
   if (Box.ControlKind = ckRange) and (Box.Tag <> nil) then
   begin
     PaintRangeControl(Canvas, Box, y);
+    Exit;
+  end;
+  // audio: a light bar with a round play/pause button and a progress track. The
+  // shell owns playback; it pushes the played fraction ('progress' attr) and the
+  // playing state ('playing' attr), both read here at paint time.
+  if (Box.ControlKind = ckAudio) and (Box.Tag <> nil) then
+  begin
+    PaintAudioControl(Canvas, Box, y);
     Exit;
   end;
   // color: a rounded swatch of the value colour with a subtle border.

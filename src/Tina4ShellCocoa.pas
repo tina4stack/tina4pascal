@@ -117,6 +117,8 @@ type
     FRecPath: string;            // temp file the current recording writes to
     FMeter: AVAudioRecorder;     // metering-only mic session, nil when idle
     FMeterPath: string;          // throwaway temp file the meter session writes
+    FAudioPlayer: AVAudioPlayer; // <audio controls> playback, nil when none loaded
+    FAudioSrc: string;           // src currently loaded (so a re-play resumes)
   public
     { When non-empty, the next completed paint is written to this PNG path
       (then cleared). Seed of the headless render-to-image mode. }
@@ -144,6 +146,9 @@ type
     function StartAudioMeter: Boolean; override;
     procedure StopAudioMeter; override;
     function AudioLevel: Single; override;
+    function AudioPlay(const Src: string): Boolean; override;
+    procedure AudioPause; override;
+    function AudioProgress(out Playing: Boolean): Single; override;
     function GetMeasuringCanvas: TTina4Canvas; override;
   end;
 
@@ -1691,6 +1696,53 @@ begin
   FRecorder.stop;                                // flushes + closes the file
   Result := FRecPath;
   FRecorder.release; FRecorder := nil; FRecPath := '';
+end;
+
+{ <audio controls> playback for the engine-drawn control. AVAudioPlayer is a
+  plain file/URL player — no video surface. Reloading only when the src changes
+  lets a pause/resume keep its position. }
+function TCocoaShell.AudioPlay(const Src: string): Boolean;
+var url: NSURL; err: NSError;
+begin
+  Result := False;
+  if Src = '' then Exit;
+  if (FAudioPlayer <> nil) and (FAudioSrc = Src) then
+  begin
+    FAudioPlayer.play; Result := FAudioPlayer.isPlaying; Exit;   // resume in place
+  end;
+  if FAudioPlayer <> nil then begin FAudioPlayer.stop; FAudioPlayer.release; FAudioPlayer := nil; end;
+  FAudioSrc := '';
+  if (Length(Src) > 0) and (Src[1] = '/') then url := NSURL.fileURLWithPath(NSStr(Src))
+  else url := NSURL.URLWithString(NSStr(Src));
+  err := nil;
+  FAudioPlayer := AVAudioPlayer.alloc.initWithContentsOfURL_error(url, @err);
+  if (FAudioPlayer = nil) or (err <> nil) then
+  begin
+    if FAudioPlayer <> nil then begin FAudioPlayer.release; FAudioPlayer := nil; end;
+    Exit;
+  end;
+  FAudioSrc := Src;
+  FAudioPlayer.prepareToPlay;
+  FAudioPlayer.play;
+  Result := FAudioPlayer.isPlaying;
+end;
+
+procedure TCocoaShell.AudioPause;
+begin
+  if FAudioPlayer <> nil then FAudioPlayer.pause;
+end;
+
+function TCocoaShell.AudioProgress(out Playing: Boolean): Single;
+var dur: Double;
+begin
+  Playing := False;
+  Result := 0.0;
+  if FAudioPlayer = nil then Exit;
+  Playing := FAudioPlayer.isPlaying;
+  dur := FAudioPlayer.duration;
+  if dur < 0.001 then dur := 0.001;
+  Result := FAudioPlayer.currentTime / dur;
+  if Result < 0 then Result := 0; if Result > 1 then Result := 1;
 end;
 
 procedure TTina4Ticker.tick(t: NSTimer);

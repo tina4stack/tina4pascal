@@ -28,7 +28,8 @@ import java.util.Map;
  * the Pascal core lays out the HTML and paints straight onto it. Touches drive
  * scrolling / onclick natively; typed characters are forwarded to nativeKey.
  */
-public class Tina4View extends View implements Runnable {
+public class Tina4View extends View implements Runnable,
+        MediaPlayer.OnPreparedListener, MediaPlayer.OnCompletionListener {
 
     static { System.loadLibrary("tina4"); }
 
@@ -54,6 +55,9 @@ public class Tina4View extends View implements Runnable {
     private native void nativeSetFile(String name);   // picked filename → the <input type=file>
     private native void nativeSetPhoto(String path);  // captured image path → <img id="shot">
     private native void nativeSetRecording(String path); // recorded audio path → <recorder>/<audio id="rec">
+    private native String nativeAudioSrc();              // src of the toggled <audio controls>
+    private native int    nativeAudioWantPlay();         // 1 = the tap asked to play, 0 = pause
+    private native void   nativeSetAudioProgress(float fraction, int playing); // elapsed 0..1 + sounding
     private native int    nativeEmbedCount();          // laid-out <video> boxes
     private native float[] nativeEmbedRect(int index); // [x,y,w,h] in CSS px (scroll applied)
     private native String  nativeEmbedSrc(int index);  // the video source URL
@@ -79,6 +83,87 @@ public class Tina4View extends View implements Runnable {
     }
     /** Called by MainActivity when capture finishes (path, or "" on failure). */
     void onRecordingDone(String path) { nativeSetRecording(path); invalidate(); }
+
+    // engine-drawn <audio controls>: one MediaPlayer for the clip the user toggled,
+    // with a static-nested ticker pushing the elapsed fraction back (the engine
+    // draws the play/pause bar). Static nested + explicit listeners keep d8 happy.
+    private MediaPlayer audioPlayer;    // null when none loaded
+    private String audioSrc;            // src currently loaded (so a re-play resumes)
+    private final AudioTicker audioTicker = new AudioTicker(this);
+
+    /** The engine fired TINA_AUDIO_TOGGLE and already flipped the control's state;
+     *  read which way and drive the MediaPlayer to match. */
+    private void toggleAudio() {
+        String src = nativeAudioSrc();
+        if (nativeAudioWantPlay() == 0) {                 // pause
+            if (audioPlayer != null) { try { audioPlayer.pause(); } catch (Exception ignore) {} }
+            removeCallbacks(audioTicker);
+            pushAudioProgress(false);
+            invalidate();
+            return;
+        }
+        if (src == null || src.isEmpty()) { nativeSetAudioProgress(0f, 0); invalidate(); return; }
+        // resolve a relative asset src (e.g. "tone.m4a") against the extracted
+        // APK assets dir, the same base a relative <img src> uses; an absolute
+        // path (the recorder clip) or a URL is used as-is.
+        if (!src.startsWith("/") && !src.contains("://"))
+            src = new java.io.File(new java.io.File(getContext().getFilesDir(), "assets"), src).getAbsolutePath();
+        try {
+            if (audioPlayer != null && src.equals(audioSrc)) {
+                audioPlayer.start();                      // resume in place
+                post(audioTicker);
+            } else {
+                if (audioPlayer != null) { audioPlayer.release(); audioPlayer = null; }
+                audioPlayer = new MediaPlayer();
+                audioPlayer.setDataSource(src);           // local path or URL
+                audioPlayer.setOnPreparedListener(this);
+                audioPlayer.setOnCompletionListener(this);
+                audioSrc = src;
+                audioPlayer.prepareAsync();               // starts in onPrepared (no UI block)
+            }
+        } catch (Exception e) {
+            if (audioPlayer != null) { try { audioPlayer.release(); } catch (Exception ignore) {} audioPlayer = null; }
+            audioSrc = null;
+            nativeSetAudioProgress(0f, 0);
+        }
+        invalidate();
+    }
+
+    @Override public void onPrepared(MediaPlayer mp) { mp.start(); post(audioTicker); invalidate(); }
+
+    @Override public void onCompletion(MediaPlayer mp) {
+        nativeSetAudioProgress(0f, 0);                    // clip ended → glyph resets to play
+        audioSrc = null;
+        removeCallbacks(audioTicker);
+        invalidate();
+    }
+
+    /** Push the elapsed fraction + sounding state to the engine (drives the bar). */
+    void pushAudioProgress(boolean playing) {
+        if (audioPlayer == null) { nativeSetAudioProgress(0f, playing ? 1 : 0); return; }
+        int dur = 1, pos = 0;
+        try { dur = Math.max(1, audioPlayer.getDuration()); } catch (Exception ignore) {}
+        try { pos = audioPlayer.getCurrentPosition(); } catch (Exception ignore) {}
+        float frac = pos / (float) dur;
+        if (frac < 0f) frac = 0f; if (frac > 1f) frac = 1f;
+        nativeSetAudioProgress(frac, playing ? 1 : 0);
+        invalidate();
+    }
+
+    private boolean audioIsPlaying() {
+        try { return audioPlayer != null && audioPlayer.isPlaying(); } catch (Exception e) { return false; }
+    }
+
+    // ~15fps progress pump while a clip sounds (static nested — d8/JDK-25 safe)
+    private static final class AudioTicker implements Runnable {
+        private final Tina4View v;
+        AudioTicker(Tina4View v) { this.v = v; }
+        public void run() {
+            boolean playing = v.audioIsPlaying();
+            v.pushAudioProgress(playing);
+            if (playing) v.postDelayed(this, 66);
+        }
+    }
 
     // IME "Done": drop focus + hide the keyboard
     void imeDone() { nativeBlur(); hideKeyboard(); stopCaret(); invalidate(); }
@@ -325,6 +410,7 @@ public class Tina4View extends View implements Runnable {
         else if (r == 5) captureCamera();
         else if (r == 6) startRecording();   // TINA_RECORD_START
         else if (r == 7) stopRecording();    // TINA_RECORD_STOP
+        else if (r == 8) toggleAudio();      // TINA_AUDIO_TOGGLE
         // Deterministic keyboard rule: it is up only while a text field is
         // focused. Any touch that leaves nothing focused (checkbox, radio,
         // select, button, empty space) dismisses it — no stray pop-ups.

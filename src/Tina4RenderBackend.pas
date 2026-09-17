@@ -275,6 +275,16 @@ type
     function StartAudioMeter: Boolean; virtual;
     procedure StopAudioMeter; virtual;
     function AudioLevel: Single; virtual;
+    { <audio controls> playback — the engine draws the control (play/pause bar)
+      and the host drives sound through these. AudioPlay starts or resumes Src
+      (a file path or URL) and returns True if it is sounding; AudioPause pauses
+      the current clip keeping its position; AudioProgress reports the elapsed
+      fraction 0..1 and sets Playing to whether sound is still coming out (False
+      once a clip ends). Defaults: silent — AudioPlay False, AudioProgress 0 /
+      Playing False — so a shell with no audio out draws an idle control. }
+    function AudioPlay(const Src: string): Boolean; virtual;
+    procedure AudioPause; virtual;
+    function AudioProgress(out Playing: Boolean): Single; virtual;
     { Live camera preview, the video analogue of the <video> overlay: the shell
       overlays a native preview layer over element ElementId's layout box.
       Facing is 'front' or 'back'. StartCameraPreview returns True if the camera
@@ -505,6 +515,22 @@ end;
 
 function TTina4Shell.AudioLevel: Single;
 begin
+  Result := 0.0;
+end;
+
+function TTina4Shell.AudioPlay(const Src: string): Boolean;
+begin
+  Result := False;
+end;
+
+procedure TTina4Shell.AudioPause;
+begin
+  // optional per shell
+end;
+
+function TTina4Shell.AudioProgress(out Playing: Boolean): Single;
+begin
+  Playing := False;
   Result := 0.0;
 end;
 
