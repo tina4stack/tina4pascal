@@ -1154,7 +1154,7 @@ begin
   if St.LineHeight > 0 then
     Result := St.FontSize * St.LineHeight
   else
-    Result := St.FontSize * 1.4;
+    Result := St.FontSize * 1.2;
 end;
 
 procedure TLayoutEngine.CollectInlineText(Tag: THTMLTag; SB: TStringBuilder);
@@ -5504,7 +5504,7 @@ begin
   base := TComputedStyle.Default;
   base.FontFamily := 'Helvetica';
   base.FontSize := 16;       // web default; Delphi default is 14
-  base.LineHeight := 1.5;    // bootstrap body line-height
+  base.LineHeight := 1.2;    // bootstrap body line-height (CSS normal ~1.2)
   FBaseStyle := base;
   FViewportW := ViewportW;
   SetLength(FFloats, 0);   // fresh float context per layout
