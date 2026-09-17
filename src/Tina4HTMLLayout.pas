@@ -3749,10 +3749,11 @@ var
     c: THTMLTag;
     cs: TComputedStyle;
     words: TStringList;
-    i: Integer;
+    i, qDepth: Integer;
     it: TInlineItem;
     m: TTina4TextMetrics;
-    disp, txt, qrText, wsMode: string;
+    disp, txt, qrText, wsMode, qOpen, qClose: string;
+    anc: THTMLTag;
     leadingSpace: Boolean;
     iw, ih: Single;
   begin
@@ -4064,13 +4065,23 @@ var
       EmitInlineMarginRight(cs);
       Exit;
     end;
-    // <q> gets automatic quotation marks around its content
+    // <q> gets automatic quotation marks; nested <q> switch to the inner pair
     if SameText(T.TagName, 'q') then
     begin
-      AddQuoteWord(#$E2#$80#$9C, cs, pendingSpace);   // “
+      qDepth := 0; anc := T.Parent;
+      while anc <> nil do
+      begin
+        if SameText(anc.TagName, 'q') then Inc(qDepth);
+        anc := anc.Parent;
+      end;
+      if Odd(qDepth) then
+      begin qOpen := #$E2#$80#$98; qClose := #$E2#$80#$99; end   // ‘ ’ (inner)
+      else
+      begin qOpen := #$E2#$80#$9C; qClose := #$E2#$80#$9D; end;  // “ ” (outer)
+      AddQuoteWord(qOpen, cs, pendingSpace);
       pendingSpace := False;
       for c in T.Children do GatherInline(c, cs);
-      AddQuoteWord(#$E2#$80#$9D, cs, False);          // ”
+      AddQuoteWord(qClose, cs, False);
       Exit;
     end;
     // plain inline (b, i, span, a, small...) — recurse with its style
