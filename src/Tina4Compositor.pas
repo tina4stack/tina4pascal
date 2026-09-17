@@ -16,17 +16,23 @@ uses SysUtils, Classes, Math;
 
 type
   PSingleBuf = ^Single;
+  PCardinalBuf = ^Cardinal;
 
 { IEEE-754 binary16 (half) <-> single, for shells whose offscreen buffer is
   16-bit float (macOS lockFocus hands one back). }
 function Half2Single(h: Word): Single;
 function Single2Half(s: Single): Word;
 
-{ Apply a CSS `filter` chain and an optional `mask-image` gradient to a
-  premultiplied planar RGBA Single buffer, in place. Scale = device px per CSS px
-  (blur/shadow radii are multiplied by it). }
+{ Apply a CSS `filter` chain and an optional `mask-image` to a premultiplied
+  planar RGBA Single buffer, in place. Scale = device px per CSS px (blur/shadow
+  radii are multiplied by it). MaskSpec may be a gradient (handled internally) or
+  a `url()`; for a url() the decoded mask bitmap is passed in MaskPix (straight
+  $AARRGGBB, MaskW x MaskH) and stretched over the layer — alpha channel by
+  default, luminance when MaskLuminance is set. }
 procedure ApplyFilterChainF(buf: PSingleBuf; pw, ph: Integer;
-  const FilterSpec, MaskSpec: string; Scale: Single);
+  const FilterSpec, MaskSpec: string; Scale: Single;
+  MaskPix: PCardinalBuf = nil; MaskW: Integer = 0; MaskH: Integer = 0;
+  MaskLuminance: Boolean = False);
 
 { Map a CSS mix-blend-mode name to a CoreGraphics CGBlendMode integer (both
   shells use CoreGraphics; '' / 'normal' -> 0 = kCGBlendModeNormal). }
@@ -433,8 +439,36 @@ begin
     end;
 end;
 
+{ url() image mask: stretch the MaskW x MaskH bitmap over the pw x ph layer and
+  multiply each premultiplied pixel by the mask's alpha (or luminance*alpha). }
+procedure ApplyImageMask(buf: PSingleBuf; pw, ph: Integer;
+  MaskPix: PCardinalBuf; mw, mh: Integer; luminance: Boolean);
+var x, y, mx, my, o: Integer; mc: Cardinal; mv, r, g, b: Single;
+begin
+  if (MaskPix = nil) or (mw <= 0) or (mh <= 0) or (pw <= 0) or (ph <= 0) then Exit;
+  for y := 0 to ph - 1 do
+    for x := 0 to pw - 1 do
+    begin
+      mx := (x * mw) div pw; if mx >= mw then mx := mw - 1;
+      my := (y * mh) div ph; if my >= mh then my := mh - 1;
+      mc := MaskPix[my * mw + mx];
+      if luminance then
+      begin
+        r := ((mc shr 16) and $FF) / 255; g := ((mc shr 8) and $FF) / 255; b := (mc and $FF) / 255;
+        mv := (0.2126 * r + 0.7152 * g + 0.0722 * b) * (((mc shr 24) and $FF) / 255);
+      end
+      else
+        mv := ((mc shr 24) and $FF) / 255;   // alpha channel (the -webkit-mask default)
+      o := (y * pw + x) * 4;
+      buf[o] := buf[o] * mv; buf[o+1] := buf[o+1] * mv;
+      buf[o+2] := buf[o+2] * mv; buf[o+3] := buf[o+3] * mv;
+    end;
+end;
+
 procedure ApplyFilterChainF(buf: PSingleBuf; pw, ph: Integer;
-  const FilterSpec, MaskSpec: string; Scale: Single);
+  const FilterSpec, MaskSpec: string; Scale: Single;
+  MaskPix: PCardinalBuf; MaskW: Integer; MaskH: Integer;
+  MaskLuminance: Boolean);
 var
   s, fn, arg: string; p, q, depth: Integer;
   toks: TStringArray; sdx, sdy, sblur, i2: Integer; sr, sg, sb, sa2: Single; col: string;
@@ -479,8 +513,13 @@ begin
       DropShadow(buf, pw, ph, sdx, sdy, sblur, sr, sg, sb, sa2);
     end;
   end;
-  if (MaskSpec <> '') and (Pos('gradient(', LowerCase(MaskSpec)) > 0) then
-    ApplyGradientMask(buf, pw, ph, MaskSpec);
+  if MaskSpec <> '' then
+  begin
+    if Pos('gradient(', LowerCase(MaskSpec)) > 0 then
+      ApplyGradientMask(buf, pw, ph, MaskSpec)
+    else if (MaskPix <> nil) and (Pos('url(', LowerCase(MaskSpec)) > 0) then
+      ApplyImageMask(buf, pw, ph, MaskPix, MaskW, MaskH, MaskLuminance);
+  end;
 end;
 
 procedure WarpQuad(src: PSingleBuf; pw, ph: Integer;

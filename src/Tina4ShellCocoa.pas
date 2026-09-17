@@ -39,6 +39,8 @@ type
     constructor Create;
     destructor Destroy; override;
     function LoadImage(const Src: string): Integer; override;
+    function DecodeMaskImage(const Src: string; out W, H: Integer;
+      out Pix: TTina4Pixels): Boolean; override;
     function RegisterFont(const Family, Src: string): Boolean; override;
     function ImageSize(Handle: Integer; out W, H: Single): Boolean; override;
     procedure DrawImage(Handle: Integer; X, Y, W, H: Single); override;
@@ -390,6 +392,58 @@ begin
   FImages.Add(img);
   Result := FImages.Count - 1;
   FImageBySrc.AddObject(Src, TObject(PtrInt(Result)));
+end;
+
+{ Decode a mask-image url() to straight $AARRGGBB pixels via CoreGraphics, so
+  PNG/JPEG masks work (the base class only decodes WebP). Falls back to the base
+  class for formats NSImage can't take. }
+function TCocoaCanvas.DecodeMaskImage(const Src: string; out W, H: Integer;
+  out Pix: TTina4Pixels): Boolean;
+var
+  url: string; hImg, pw, ph, x, y, srcRow, o: Integer;
+  img: NSImage; cg: CGImageRef; csp: CGColorSpaceRef; cgctx: CGContextRef;
+  buf: PByte;
+begin
+  Result := False; W := 0; H := 0; Pix := nil;
+  url := ExtractMaskUrl(Src);
+  if url = '' then Exit;
+  hImg := LoadImage(url);
+  if not ((hImg >= 0) and (hImg < FImages.Count) and (FImages[hImg] <> nil)) then
+    Exit(inherited DecodeMaskImage(Src, W, H, Pix));   // WebP / base fallback
+  img := NSImage(FImages[hImg]);
+  cg := img.CGImageForProposedRect_context_hints(nil, nil, nil);
+  if cg = nil then Exit;
+  pw := CGImageGetWidth(cg); ph := CGImageGetHeight(cg);
+  if (pw <= 0) or (ph <= 0) then Exit;
+  buf := GetMem(pw * ph * 4);
+  try
+    FillChar(buf^, pw * ph * 4, 0);
+    csp := CGColorSpaceCreateDeviceRGB;
+    // RGBA, premultiplied, big-endian byte order → R,G,B,A in memory
+    cgctx := CGBitmapContextCreate(buf, pw, ph, 8, pw * 4, csp,
+      CGBitmapInfo(Cardinal(kCGImageAlphaPremultipliedLast) or Cardinal(kCGBitmapByteOrder32Big)));
+    if cgctx <> nil then
+    begin
+      CGContextDrawImage(cgctx, CGRectMake(0, 0, pw, ph), cg);
+      W := pw; H := ph; SetLength(Pix, pw * ph);
+      // CG's bitmap origin is bottom-left, so buf row 0 is the image's bottom row
+      for y := 0 to ph - 1 do
+      begin
+        srcRow := ph - 1 - y;
+        for x := 0 to pw - 1 do
+        begin
+          o := (srcRow * pw + x) * 4;
+          Pix[y * pw + x] := (Cardinal(buf[o+3]) shl 24) or (Cardinal(buf[o]) shl 16)
+                          or (Cardinal(buf[o+1]) shl 8) or Cardinal(buf[o+2]);
+        end;
+      end;
+      CGContextRelease(cgctx);
+      Result := True;
+    end;
+    CGColorSpaceRelease(csp);
+  finally
+    FreeMem(buf);
+  end;
 end;
 
 function TCocoaCanvas.ImageSize(Handle: Integer; out W, H: Single): Boolean;
@@ -908,7 +962,8 @@ end;
 
 { Decode a rep (8-bit or 16-bit float, pre-/non-premultiplied RGBA) into a planar
   premultiplied Single buffer, run the shared filter+mask chain, write it back. }
-procedure ApplyFilterToRep(rep: NSBitmapImageRep; const Spec, MaskSpec: string; Scale: Single);
+procedure ApplyFilterToRep(rep: NSBitmapImageRep; const Spec, MaskSpec: string; Scale: Single;
+  MaskPix: PCardinalBuf = nil; MaskW: Integer = 0; MaskH: Integer = 0);
 var
   data: PByte; buf: PSingle;
   pw, ph, bpr, bps, n, i, o, so: Integer;
@@ -944,7 +999,7 @@ begin
       if not premult then
       begin buf[so] := buf[so]*buf[so+3]; buf[so+1] := buf[so+1]*buf[so+3]; buf[so+2] := buf[so+2]*buf[so+3]; end;
     end;
-    ApplyFilterChainF(PSingleBuf(buf), pw, ph, Spec, MaskSpec, Scale);
+    ApplyFilterChainF(PSingleBuf(buf), pw, ph, Spec, MaskSpec, Scale, MaskPix, MaskW, MaskH);
     for i := 0 to n - 1 do
     begin
       o := (i div pw) * bpr + (i mod pw) * bps * 4; so := i * 4;
@@ -991,6 +1046,7 @@ var
   img: NSImage; rep: NSBitmapImageRep;
   ox, oy, bw, bh, sc: Single;
   cg: CGContextRef;
+  mPix: TTina4Pixels; mW, mH: Integer; mPtr: PCardinalBuf;
 begin
   if (Handle < 0) or (Handle > High(FLayers)) then Exit;
   img := NSImage(FLayers[Handle].ctx);
@@ -1004,7 +1060,15 @@ begin
   if rep <> nil then
   begin
     if bw > 0 then sc := rep.pixelsWide / bw else sc := 1;
-    if (FilterSpec <> '') or (MaskSpec <> '') then ApplyFilterToRep(rep, FilterSpec, MaskSpec, sc);
+    if (FilterSpec <> '') or (MaskSpec <> '') then
+    begin
+      mPtr := nil; mW := 0; mH := 0;
+      // decode a url() mask once so ApplyFilterToRep can stretch it over the layer
+      if (Pos('url(', LowerCase(MaskSpec)) > 0) and
+         DecodeMaskImage(MaskSpec, mW, mH, mPix) and (Length(mPix) > 0) then
+        mPtr := PCardinalBuf(@mPix[0]);
+      ApplyFilterToRep(rep, FilterSpec, MaskSpec, sc, mPtr, mW, mH);
+    end;
     if BlendMode <> '' then
     begin
       // mix-blend-mode: draw the CGImage directly so CGContextSetBlendMode is
