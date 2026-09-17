@@ -4649,7 +4649,9 @@ begin
         // (CSS: the width resolves to containing-block − left − right). Same for
         // top+bottom → stretch the height. This is what `inset:Npx` relies on.
         if (ResolveSize(cs.ExplicitWidth, CW) < 0) and (cs.CSSLeft > -9998) and (cs.CSSRight > -9998) then
-          absBox.W := Max(0, CW - cs.CSSLeft - cs.CSSRight)
+          // stretch across the containing block's PADDING box (content + padding)
+          absBox.W := Max(0, (CW + ParentStyle.Padding.Left + ParentStyle.Padding.Right)
+                             - cs.CSSLeft - cs.CSSRight)
         // Shrink-to-fit: an out-of-flow box with no explicit width sizes to its
         // content (CSS "shrink-to-fit"), not the full container — e.g. a pill
         // pinned with `right` only should hug its text, not span the row.
@@ -4662,7 +4664,8 @@ begin
         begin
           absCH := ResolveSize(ParentStyle.ExplicitHeight, 0);
           if absCH < 0 then absCH := Box.NaturalH;
-          absBox.H := Max(0, absCH - cs.CSSTop - cs.CSSBottom);
+          absBox.H := Max(0, (absCH + ParentStyle.Padding.Top + ParentStyle.Padding.Bottom)
+                             - cs.CSSTop - cs.CSSBottom);
         end;
         // fixed is viewport-relative (origin 0,0); absolute is container-relative.
         // Paint (PaintBoxEx) drops the scroll offset for fixed so it stays put.
@@ -4677,17 +4680,23 @@ begin
           ShiftBoxTree(absBox, absX - absBox.X, absY - absBox.Y);
           Continue;
         end;
+        // An absolute box is positioned against its containing block's PADDING
+        // box (CSS), not its content box — so `left:0`/`top:0` sit at the inner
+        // border edge, clearing the padding (the common badge-in-a-padded-card
+        // pattern). CX/CY/CW are the content box; back out the padding to reach
+        // the padding box. Auto left/top keep the static-position approximation.
         absX := CX; absY := CY;
-        if cs.CSSLeft > -9998 then absX := CX + cs.CSSLeft
-        else if cs.CSSRight > -9998 then absX := CX + CW - absBox.W - cs.CSSRight;
-        if cs.CSSTop > -9998 then absY := CY + cs.CSSTop
+        if cs.CSSLeft > -9998 then absX := (CX - ParentStyle.Padding.Left) + cs.CSSLeft
+        else if cs.CSSRight > -9998 then
+          absX := (CX + CW + ParentStyle.Padding.Right) - absBox.W - cs.CSSRight;
+        if cs.CSSTop > -9998 then absY := (CY - ParentStyle.Padding.Top) + cs.CSSTop
         else if cs.CSSBottom > -9998 then
         begin
           // bottom needs the container content height — use its explicit
           // height (known now via the container's own style)
           absCH := ResolveSize(ParentStyle.ExplicitHeight, 0);
           if absCH < 0 then absCH := Box.NaturalH;
-          absY := CY + absCH - absBox.H - cs.CSSBottom;
+          absY := (CY + absCH + ParentStyle.Padding.Bottom) - absBox.H - cs.CSSBottom;
         end;
         ShiftBoxTree(absBox, absX - absBox.X, absY - absBox.Y);
         Continue;  // no flow advance
@@ -4856,12 +4865,14 @@ begin
     if cp > maxColH then maxColH := cp;
   end;
 
-  // record geometry so PaintBoxEx can draw column-rules in the gaps
+  // record geometry so PaintBoxEx can draw column-rules in the gaps. Store the
+  // content origin as an OFFSET from box.X/Y (not absolute) so it survives a
+  // later ShiftBoxTree — e.g. this container being positioned as a flex item.
   if (st.ColumnRuleWidth > 0) and (LowerCase(st.ColumnRuleStyle) <> 'none') then
   begin
     box.ColRuleGaps := ncols - 1;
     box.ColRuleColW := colW; box.ColRuleGap := gap;
-    box.ColRuleX0 := contentX; box.ColRuleY0 := contentY; box.ColRuleH := maxColH;
+    box.ColRuleX0 := contentX - box.X; box.ColRuleY0 := contentY - box.Y; box.ColRuleH := maxColH;
   end;
   Result := maxColH;
 end;
@@ -6767,9 +6778,9 @@ begin
     if (crCol and $FF000000) = 0 then crCol := st.Color;   // unset → currentColor
     for crI := 0 to Box.ColRuleGaps - 1 do
     begin
-      crX := Box.ColRuleX0 + (crI + 1) * Box.ColRuleColW
+      crX := Box.X + Box.ColRuleX0 + (crI + 1) * Box.ColRuleColW
              + crI * Box.ColRuleGap + Box.ColRuleGap / 2;
-      crTop := Box.ColRuleY0 - innerOfs;
+      crTop := Box.Y + Box.ColRuleY0 - innerOfs;
       if LowerCase(st.ColumnRuleStyle) = 'double' then
       begin
         Canvas.FillRect(crX - st.ColumnRuleWidth / 2, crTop,

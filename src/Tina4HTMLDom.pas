@@ -4752,8 +4752,14 @@ begin
     begin
       if (OvPart = 'inside') or (OvPart = 'outside') then
         Style.ListStyleInside := (OvPart = 'inside')
-      else if OvPart.StartsWith('url(') or OvPart.StartsWith('none') then
-        // image handled above; 'none' leaves type/image cleared
+      else if OvPart = 'none' then
+      begin
+        // `list-style: none` suppresses the marker (both type and image)
+        Style.ListStyleType := 'none';
+        Style.ListStyleImage := '';
+      end
+      else if OvPart.StartsWith('url(') then
+        // image handled above (ExtractFontSrcUrl)
       else
         Style.ListStyleType := OvPart;
     end;
