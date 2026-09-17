@@ -294,6 +294,18 @@ begin
 end;
 
 { List-item marker text for a given list-style-type and 1-based index. }
+{ n-th lowercase Greek letter (1-based) for list-style-type: lower-greek —
+  α..ω, skipping final sigma (ς), wrapping after 24. UTF-8 (2-byte) encoded. }
+function LowerGreekLetter(Idx: Integer): string;
+var pos, cp: Integer;
+begin
+  if Idx < 1 then Exit(IntToStr(Idx));
+  pos := (Idx - 1) mod 24;
+  cp := $03B1 + pos;
+  if cp >= $03C2 then Inc(cp);          // step over ς (final sigma)
+  Result := Chr($C0 or (cp shr 6)) + Chr($80 or (cp and $3F));
+end;
+
 function MarkerFor(const ListStyleType: string; Idx: Integer): string;
 var t: string;
 begin
@@ -310,6 +322,7 @@ begin
   else if (t = 'upper-alpha') or (t = 'upper-latin') then Exit(Chr(Ord('A') + (Idx - 1) mod 26) + '.')
   else if t = 'lower-roman' then Exit(ToRoman(Idx) + '.')
   else if t = 'upper-roman' then Exit(UpperCase(ToRoman(Idx)) + '.')
+  else if t = 'lower-greek' then Exit(LowerGreekLetter(Idx) + '.')
   else Exit(#$E2#$80#$A2);                        // • disc (default)
 end;
 
@@ -3515,6 +3528,8 @@ var
   pendingSpace: Boolean;   // trailing whitespace carried across inline nodes
   noWrapFlow: Boolean;     // white-space:nowrap → keep inline items on one line
   firstInlineLine: Boolean; // text-indent applies to the first formatted line only
+  flHasColor, flUnderline, flStrike, flOverline: Boolean;  // ::first-line overrides
+  flColor: TTina4Color;
   FloatBase: Integer;      // index in FFloats where this container's floats begin
   MaxFloatY: Single;       // lowest float bottom, so the container can enclose them
 
@@ -3866,10 +3881,11 @@ var
     c: THTMLTag;
     cs: TComputedStyle;
     words: TStringList;
-    i, qDepth: Integer;
+    i, qDepth, qPi: Integer;
     it: TInlineItem;
     m: TTina4TextMetrics;
     disp, txt, qrText, wsMode, qOpen, qClose: string;
+    qParts: TStringArray;
     anc: THTMLTag;
     leadingSpace: Boolean;
     iw, ih: Single;
@@ -4182,7 +4198,8 @@ var
       EmitInlineMarginRight(cs);
       Exit;
     end;
-    // <q> gets automatic quotation marks; nested <q> switch to the inner pair
+    // <q> gets automatic quotation marks; nested <q> switch to the inner pair,
+    // or the pairs from the CSS `quotes` property when set (none => no marks)
     if SameText(T.TagName, 'q') then
     begin
       qDepth := 0; anc := T.Parent;
@@ -4191,10 +4208,26 @@ var
         if SameText(anc.TagName, 'q') then Inc(qDepth);
         anc := anc.Parent;
       end;
-      if Odd(qDepth) then
-      begin qOpen := #$E2#$80#$98; qClose := #$E2#$80#$99; end   // ‘ ’ (inner)
-      else
-      begin qOpen := #$E2#$80#$9C; qClose := #$E2#$80#$9D; end;  // “ ” (outer)
+      qOpen := ''; qClose := '';
+      if SameText(cs.Quotes, 'none') then
+      begin
+        for c in T.Children do GatherInline(c, cs);   // quotes:none → content only
+        Exit;
+      end;
+      if (cs.Quotes <> '') and not SameText(cs.Quotes, 'auto') then
+      begin
+        qParts := cs.Quotes.Split([' '], TStringSplitOptions.ExcludeEmpty);
+        if Length(qParts) >= 2 then
+        begin
+          qPi := (qDepth mod (Length(qParts) div 2)) * 2;
+          qOpen := StripQuotes(qParts[qPi]); qClose := StripQuotes(qParts[qPi + 1]);
+        end;
+      end;
+      if qOpen = '' then
+        if Odd(qDepth) then
+        begin qOpen := #$E2#$80#$98; qClose := #$E2#$80#$99; end   // ‘ ’ (inner)
+        else
+        begin qOpen := #$E2#$80#$9C; qClose := #$E2#$80#$9D; end;  // “ ” (outer)
       AddQuoteWord(qOpen, cs, pendingSpace);
       pendingSpace := False;
       for c in T.Children do GatherInline(c, cs);
@@ -4317,6 +4350,7 @@ var
     j: Integer;
     effAlign: TTextAlign;
     tal: string;
+    wasFirstLine: Boolean;
   begin
     if lineItems.Count = 0 then Exit;
     // hyphens: if the last item on this line is a soft-hyphen break point, the
@@ -4395,6 +4429,8 @@ var
       if it.Ascent > maxAscent then maxAscent := it.Ascent;
     end;
     x := flx0 + xShift;
+    // ::first-line applies to this line only when it is the block's first
+    wasFirstLine := firstInlineLine;
     // text-indent: shift the first formatted line of the block
     if firstInlineLine and (ParentStyle.TextIndent <> 0) and
        (ParentStyle.TextAlign = TTextAlign.Leading) then
@@ -4443,6 +4479,14 @@ var
         run.FontWeight := it.FontWeight;
         run.ShadowDX := it.ShadowDX; run.ShadowDY := it.ShadowDY; run.ShadowColor := it.ShadowColor;
         run.DecorLines := it.DecorLines; run.DecorStyle := it.DecorStyle; run.DecorColor := it.DecorColor;
+        // ::first-line — recolour / decorate the first line's runs (non-metric)
+        if wasFirstLine then
+        begin
+          if flHasColor then run.Color := flColor;
+          if flUnderline then Include(run.Styles, tfsUnderline);
+          if flStrike then Include(run.Styles, tfsStrike);
+          if flOverline then Include(run.Styles, tfsOverline);
+        end;
         Box.Runs.Add(run);
       end;
       x := x + it.W;
@@ -4530,12 +4574,39 @@ var
   hadInline: Boolean;
   absBox, fltBox: TLayoutBox;
   savedFloats: array of TFloatBand;
+  flDecls: TCSSDeclarations;
+  flVal: string;
 begin
   y := CY;
   prevMB := 0;
   hadInline := False;
   pendingSpace := False;
   firstInlineLine := True;
+  // ::first-line — collect the non-metric properties (colour + text-decoration
+  // line) applied to the block's first formatted line. Font/size changes are
+  // deliberately not applied: they would alter line breaking after the fact.
+  flHasColor := False; flUnderline := False; flStrike := False; flOverline := False;
+  if (FSheet <> nil) and FSheet.HasFirstLine then
+  begin
+    flDecls := TCSSDeclarations.Create;
+    try
+      if FSheet.CollectPseudoStyle(Tag, 'first-line', flDecls) then
+      begin
+        if flDecls.TryGetValue('color', flVal) then
+        begin flColor := TComputedStyle.ParseColor(flVal); flHasColor := True; end;
+        if flDecls.TryGetValue('text-decoration', flVal) or
+           flDecls.TryGetValue('text-decoration-line', flVal) then
+        begin
+          flVal := LowerCase(flVal);
+          flUnderline := Pos('underline', flVal) > 0;
+          flStrike := Pos('line-through', flVal) > 0;
+          flOverline := Pos('overline', flVal) > 0;
+        end;
+      end;
+    finally
+      flDecls.Free;
+    end;
+  end;
   FloatBase := Length(FFloats); MaxFloatY := CY;   // this container's floats append here
   noWrapFlow := SameText(ParentStyle.WhiteSpace, 'nowrap') or
                 SameText(ParentStyle.WhiteSpace, 'pre');

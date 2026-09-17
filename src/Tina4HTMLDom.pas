@@ -188,6 +188,7 @@ type
     FHasInteractiveSelectors: Boolean;  // any rule uses :hover/:active/:focus?
     FHasPseudo: Boolean;                // any rule targets ::before / ::after
     FHasFirstLetter: Boolean;           // any rule targets ::first-letter
+    FHasFirstLine: Boolean;             // any rule targets ::first-line
     FHasCounters: Boolean;              // any rule sets counter-reset/counter-increment
     // Indexed cascade — rules grouped by their routing key so a tag
     // with class "btn" only checks rules that could plausibly match it.
@@ -258,6 +259,7 @@ type
     property HasInteractiveSelectors: Boolean read FHasInteractiveSelectors;
     property HasPseudo: Boolean read FHasPseudo;
     property HasFirstLetter: Boolean read FHasFirstLetter;
+    property HasFirstLine: Boolean read FHasFirstLine;
     property HasCounters: Boolean read FHasCounters;
     property CustomProps: TDictionary<string, string> read FCustomProps;
     { @import URLs found while parsing (in encounter order). The host fetches
@@ -346,6 +348,7 @@ type
     WordSpacing: Single;        // extra px added to each inter-word space
     ListStyleInside: Boolean;   // list-style-position: inside
     TextIndent: Single;
+    Quotes: string;             // CSS `quotes` (inherited): space-separated pairs for <q>
     Visibility: string;
     ListStyleType: string;
     ListStyleImage: string;     // list-style-image url (raw), '' = none
@@ -695,6 +698,8 @@ begin
     FHasPseudo := True;   // covers ::before/::after/::first-letter (InjectPseudo runs)
   if Rule.SelectorLower.EndsWith(':first-letter') then
     FHasFirstLetter := True;
+  if Rule.SelectorLower.EndsWith(':first-line') then
+    FHasFirstLine := True;
   if (Rule.Declarations <> nil) and
      (Rule.Declarations.ContainsKey('counter-reset') or
       Rule.Declarations.ContainsKey('counter-increment') or
@@ -2697,6 +2702,7 @@ begin
   Result.WordSpacing := 0;
   Result.ListStyleInside := False;
   Result.TextIndent := 0;
+  Result.Quotes := '';
   Result.Visibility := 'visible';
   Result.ListStyleType := '';
   Result.ListStyleImage := '';
@@ -3236,6 +3242,7 @@ begin
   Result.WordSpacing := ParentStyle.WordSpacing;
   Result.ListStyleInside := ParentStyle.ListStyleInside;
   Result.TextIndent := ParentStyle.TextIndent;
+  Result.Quotes := ParentStyle.Quotes;   // inherited
   Result.Visibility := ParentStyle.Visibility;
   Result.WordBreak := ParentStyle.WordBreak;
   Result.OverflowWrap := ParentStyle.OverflowWrap;
@@ -4717,6 +4724,11 @@ begin
 
   if Decls.TryGetValue('text-indent', Temp) and not ShouldSkip(Temp) then
     Style.TextIndent := ParseLength(Temp, Style.FontSize);
+  if Decls.TryGetValue('quotes', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') or SameText(Trim(Temp), 'auto') then Style.Quotes := Trim(Temp)
+    else Style.Quotes := Temp.Trim;   // raw pairs, parsed at <q> layout time
+  end;
 
   if Decls.TryGetValue('visibility', Temp) and not ShouldSkip(Temp) then
     Style.Visibility := Temp.ToLower;
