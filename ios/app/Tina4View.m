@@ -144,7 +144,10 @@
 
         AVPlayerViewController *vc = self.videoControllers[src];
         if (!vc) {
-            NSURL *url = [NSURL URLWithString:src];
+            // a local file path (the <recorder> hands back a temp-dir .m4a) needs
+            // fileURLWithPath; only http(s)/other schemes go through URLWithString
+            NSURL *url = [src hasPrefix:@"/"] ? [NSURL fileURLWithPath:src]
+                                              : [NSURL URLWithString:src];
             if (!url) continue;
             int flags = tina4_embed_flags(i);   // 1 controls·2 autoplay·4 loop·8 muted
             BOOL wantControls = (flags & 1) != 0;
