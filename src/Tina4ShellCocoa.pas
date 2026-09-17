@@ -1049,6 +1049,59 @@ begin
     FreeMem(buf);
   end;
 end;
+{ mix-blend-mode in software (sRGB). CGContextSetBlendMode blends in the view's
+  colour space — Display P3 on a wide-gamut Mac — which gives the wrong result
+  (a blue×yellow multiply comes out muddy red, not teal). Both reps must be sRGB
+  8-bit RGBA of equal size; `src` is overwritten with `src` blended over `bd`
+  (backdrop treated as opaque — the common case). Returns False if it cannot run
+  (float samples, size mismatch), so the caller falls back to the OS blend. }
+function SoftBlendRepOver(src, bd: NSBitmapImageRep; const Mode: string): Boolean;
+var
+  sd, dd: PByte; sbpr, dbpr, pw, ph, bpw, bph, x, y, o, oo: Integer;
+  sOff, dOff: array[0..3] of Integer; sPM, dPM: Boolean;
+  sa, sr, sg, sb, br, bg, bb, rr, rg, rb: Single; blended: TTina4Color;
+begin
+  Result := False;
+  if (src = nil) or (bd = nil) then Exit;
+  if (src.bitsPerPixel <> 32) or (bd.bitsPerPixel <> 32) then Exit;   // 8-bit RGBA only
+  pw := src.pixelsWide; ph := src.pixelsHigh;
+  bpw := bd.pixelsWide; bph := bd.pixelsHigh;
+  if (pw = 0) or (ph = 0) or (bpw = 0) or (bph = 0) then Exit;   // backdrop may be at a different scale
+  sd := PByte(src.bitmapData); dd := PByte(bd.bitmapData);
+  if (sd = nil) or (dd = nil) then Exit;
+  sbpr := src.bytesPerRow; dbpr := bd.bytesPerRow;
+  if (src.bitmapFormat and 1) <> 0 then begin sOff[0]:=1;sOff[1]:=2;sOff[2]:=3;sOff[3]:=0; end
+  else begin sOff[0]:=0;sOff[1]:=1;sOff[2]:=2;sOff[3]:=3; end;
+  if (bd.bitmapFormat and 1) <> 0 then begin dOff[0]:=1;dOff[1]:=2;dOff[2]:=3;dOff[3]:=0; end
+  else begin dOff[0]:=0;dOff[1]:=1;dOff[2]:=2;dOff[3]:=3; end;
+  sPM := (src.bitmapFormat and 2) = 0; dPM := (bd.bitmapFormat and 2) = 0;
+  for y := 0 to ph - 1 do
+    for x := 0 to pw - 1 do
+    begin
+      o := y*sbpr + x*4;
+      oo := (y*bph div ph)*dbpr + (x*bpw div pw)*4;   // sample backdrop at matching position
+      sr := sd[o+sOff[0]]/255; sg := sd[o+sOff[1]]/255; sb := sd[o+sOff[2]]/255; sa := sd[o+sOff[3]]/255;
+      if sPM and (sa > 0) then begin sr:=sr/sa; sg:=sg/sa; sb:=sb/sa; end;
+      br := dd[oo+dOff[0]]/255; bg := dd[oo+dOff[1]]/255; bb := dd[oo+dOff[2]]/255;
+      if dPM then ;   // backdrop alpha assumed 1 → straight == premult
+      blended := BlendRGB(
+        $FF000000 or (Round(sr*255) shl 16) or (Round(sg*255) shl 8) or Round(sb*255),
+        $FF000000 or (Round(br*255) shl 16) or (Round(bg*255) shl 8) or Round(bb*255), Mode);
+      // composite the blended colour over the backdrop by the source's coverage
+      rr := sa*(((blended shr 16) and $FF)/255) + (1-sa)*br;
+      rg := sa*(((blended shr 8)  and $FF)/255) + (1-sa)*bg;
+      rb := sa*(( blended         and $FF)/255) + (1-sa)*bb;
+      if rr < 0 then rr := 0 else if rr > 1 then rr := 1;
+      if rg < 0 then rg := 0 else if rg > 1 then rg := 1;
+      if rb < 0 then rb := 0 else if rb > 1 then rb := 1;
+      sd[o+sOff[0]] := Round(rr*255);
+      sd[o+sOff[1]] := Round(rg*255);
+      sd[o+sOff[2]] := Round(rb*255);
+      sd[o+sOff[3]] := 255;                       // opaque result over an opaque backdrop
+    end;
+  Result := True;
+end;
+
 function TCocoaCanvas.BeginLayer(X, Y, W, H, Pad: Single): Integer;
 var img: NSImage; t: NSAffineTransform; ox, oy, bw, bh: Single; n: Integer;
 begin
@@ -1069,9 +1122,9 @@ end;
 
 procedure TCocoaCanvas.EndLayerFiltered(Handle: Integer; const FilterSpec, BlendMode, MaskSpec: string);
 var
-  img: NSImage; rep, srgb: NSBitmapImageRep;
+  img: NSImage; rep, srgb, bdRep, srgbBd: NSBitmapImageRep;
   ox, oy, bw, bh, sc: Single;
-  cg: CGContextRef;
+  cg: CGContextRef; blendedOK: Boolean;
   mPix: TTina4Pixels; mW, mH: Integer; mPtr: PCardinalBuf;
 begin
   if (Handle < 0) or (Handle > High(FLayers)) then Exit;
@@ -1106,16 +1159,35 @@ begin
     end;
     if BlendMode <> '' then
     begin
-      // mix-blend-mode: draw the CGImage directly so CGContextSetBlendMode is
-      // honoured (NSImageRep.drawInRect would reset the blend mode). The extra
-      // translate+scale keeps the image upright in the flipped view context.
-      cg := CGContextRef(NSGraphicsContext.currentContext.CGContext);
-      CGContextSaveGState(cg);
-      CGContextSetBlendMode(cg, CGBlendOf(LowerCase(BlendMode)));
-      CGContextTranslateCTM(cg, ox, oy + bh);
-      CGContextScaleCTM(cg, 1, -1);
-      CGContextDrawImage(cg, CGRectMake(0, 0, bw, bh), rep.CGImage);
-      CGContextRestoreGState(cg);
+      // mix-blend-mode in sRGB: grab the backdrop under the layer, blend the
+      // (already sRGB) source over it per-pixel via the shared BlendRGB, and draw
+      // the result. CGContextSetBlendMode would blend in the view's P3 space and
+      // give the wrong colour on a wide-gamut Mac.
+      blendedOK := False;
+      bdRep := NSBitmapImageRep(NSBitmapImageRep.alloc.initWithFocusedViewRect(NSMakeRect(ox, oy, bw, bh)));
+      if bdRep <> nil then
+      begin
+        srgbBd := NSBitmapImageRep(bdRep.bitmapImageRepByConvertingToColorSpace_renderingIntent(
+          NSColorSpace.sRGBColorSpace, 0));
+        if (srgbBd <> nil) and (srgbBd <> bdRep) then begin srgbBd.retain; bdRep.release; bdRep := srgbBd; end;
+        blendedOK := SoftBlendRepOver(rep, bdRep, LowerCase(BlendMode));
+        bdRep.release;
+      end;
+      if blendedOK then
+        rep.drawInRect_fromRect_operation_fraction_respectFlipped_hints(
+          NSMakeRect(ox, oy, bw, bh), NSZeroRect, 2 {SourceOver}, 1.0, True, nil)
+      else
+      begin
+        // fallback: the OS blend (P3-space) — the extra translate+scale keeps the
+        // image upright in the flipped view context
+        cg := CGContextRef(NSGraphicsContext.currentContext.CGContext);
+        CGContextSaveGState(cg);
+        CGContextSetBlendMode(cg, CGBlendOf(LowerCase(BlendMode)));
+        CGContextTranslateCTM(cg, ox, oy + bh);
+        CGContextScaleCTM(cg, 1, -1);
+        CGContextDrawImage(cg, CGRectMake(0, 0, bw, bh), rep.CGImage);
+        CGContextRestoreGState(cg);
+      end;
     end
     else
       rep.drawInRect_fromRect_operation_fraction_respectFlipped_hints(
