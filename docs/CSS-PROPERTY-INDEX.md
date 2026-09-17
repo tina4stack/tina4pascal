@@ -201,7 +201,8 @@ for completeness — the engine renders correctly whether or not they are presen
 | scroll-snap-type / -align / -padding / -margin, overscroll-behavior, scroll-behavior | ⬜ | scroll snapping/anchoring is an interaction concern — the renderer owns scroll deltas but has no snap model; ignored, content still scrolls |
 | will-change, content-visibility, contain, isolation | ⬜ | performance/containment hints with no visual effect on a static frame (`content-visibility:hidden` subtree-skipping not done); ignored |
 | widows, orphans, break-before / -after / -inside | ⬜ | fragmentation controls — no effect in the continuous single-column flow; `break-inside:avoid` is naturally satisfied since multicol never splits a child |
-| text-emphasis (+ -position / -color / -style), text-combine-upright | ⬜ | East-Asian emphasis marks / tate-chū-yoko — niche; not painted |
+| text-emphasis (+ -style / -color / -position) | ✅ | a small mark centred over (or under) each non-space glyph, from the `text-emphasis` shorthand or the longhands. Fill `filled`/`open` × shape `dot`/`circle`/`double-circle`/`triangle`/`sesame`, a custom quoted `<string>` mark, a colour token, and `-position: over`/`under`; inherited; mark sized 0.5em, positioned per-glyph (UTF-8 aware). Taken from the box style (emphasis set on a block, applying to its text — the common case). Reftest `css-text-emphasis` (0.23% ours; marks land within 1px of Chrome). `-webkit-` aliases parsed |
+| text-combine-upright | ⬜ | tate-chū-yoko — niche; not painted |
 | text-orientation, unicode-bidi | 🟡 | writing-mode vertical + the bidi reorder/mirror path (`<bdo>`/`<bdi>`) are done; `text-orientation:upright` glyph rotation and explicit `unicode-bidi` embedding levels are not |
 
 ## Prioritised roadmap (by real-world impact ÷ effort)
@@ -232,7 +233,7 @@ otherwise-working feature):
     `filter`/`backdrop-filter`/`mix-blend-mode`/`drop-shadow` and clip-path basic
     shapes).
 3. Typography remainder: `hyphens:auto` dictionary, `text-orientation:upright`
-    CJK glyph rotation, `text-emphasis` marks (`font-variant` small-caps,
+    CJK glyph rotation (`text-emphasis` marks, `font-variant` small-caps,
     soft-hyphen `hyphens:manual`, synthetic `font-stretch`, vertical block-flow,
     bidi reorder/mirror/`<bdo>`/`<bdi>`, `text-wrap:balance`,
     `text-decoration-thickness`/`-underline-offset` are done).
@@ -244,7 +245,7 @@ image layers), CSS counters, the structural/combinator/`:not()` selectors,
 verified 0.00% vs headless Chrome. Behavioral, fragmentation and niche-i18n
 properties are catalogued above as ⬜ (out of core rendering scope).
 
-Coverage: **128 ✅ · 3 🟡 · 2 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
+Coverage: **129 ✅ · 3 🟡 · 2 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
 property is an unaccounted gap.
 
 Each ✅ item ships with a reftest under `examples/compliance/` and flips its row

@@ -304,6 +304,9 @@ type
     TextDecorationColor: TAlphaColor;  // 0 => use text color
     UnderThickness: Single;   // text-decoration-thickness in px, 0 = auto
     UnderOffset: Single;      // text-underline-offset in px (0 = auto)
+    TextEmphasisStyle: string;  // '' = none; e.g. 'filled dot', 'open circle', 'sesame' (inherited)
+    TextEmphasisColor: TAlphaColor;  // 0 => use text color
+    TextEmphasisOver: Boolean;  // True = mark over the text (default), False = under (inherited)
     TextAlign: TTextAlign;
     TextAlignSet: Boolean;     // text-align was explicitly set (vs inherited/initial 'start')
     TextJustify: Boolean;      // text-align: justify (spread slack across gaps)
@@ -2664,6 +2667,7 @@ begin
   Result.TextDecorationStyle := 'solid';
   Result.TextDecorationColor := 0;
   Result.UnderThickness := 0; Result.UnderOffset := 0;
+  Result.TextEmphasisStyle := ''; Result.TextEmphasisColor := 0; Result.TextEmphasisOver := True;
   Result.TextAlign := TTextAlign.Leading;
   Result.TextJustify := False;
   Result.TextAlignSet := False;
@@ -3242,6 +3246,9 @@ begin
   Result.LineHeight := ParentStyle.LineHeight;
   Result.WhiteSpace := ParentStyle.WhiteSpace;
   Result.TextWrap := ParentStyle.TextWrap;
+  Result.TextEmphasisStyle := ParentStyle.TextEmphasisStyle;   // inherited
+  Result.TextEmphasisColor := ParentStyle.TextEmphasisColor;
+  Result.TextEmphasisOver := ParentStyle.TextEmphasisOver;
   Result.ListStyleType := ParentStyle.ListStyleType;
   Result.ListStyleImage := ParentStyle.ListStyleImage;   // inherited
   Result.TextTransform := ParentStyle.TextTransform;
@@ -3267,6 +3274,7 @@ begin
   Result.TextDecorationStyle := 'solid';
   Result.TextDecorationColor := 0;
   Result.UnderThickness := 0; Result.UnderOffset := 0;
+  Result.TextEmphasisStyle := ''; Result.TextEmphasisColor := 0; Result.TextEmphasisOver := True;
   Result.Margin.Clear;
   Result.Padding.Clear;
   Result.SetBorderColor(TAlphaColors.Black);
@@ -4301,6 +4309,43 @@ begin
     if SameText(Trim(Temp), 'auto') then Style.UnderOffset := 0
     else Style.UnderOffset := ParseLength(Temp, Style.FontSize);
   end;
+  // text-emphasis shorthand: fill/shape keywords ‖ a <string> ‖ a <color>, any
+  // order. Shape/fill keywords (and a quoted custom mark) go to TextEmphasisStyle
+  // (resolved to a glyph at paint); anything else is treated as the colour.
+  if (Decls.TryGetValue('text-emphasis', Temp) or Decls.TryGetValue('-webkit-text-emphasis', Temp))
+     and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.TextEmphasisStyle := ''
+    else
+    begin
+      tdLine := '';
+      for tdTok in Temp.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+      begin
+        if (LowerCase(tdTok) = 'filled') or (LowerCase(tdTok) = 'open') or
+           (LowerCase(tdTok) = 'dot') or (LowerCase(tdTok) = 'circle') or
+           (LowerCase(tdTok) = 'double-circle') or (LowerCase(tdTok) = 'triangle') or
+           (LowerCase(tdTok) = 'sesame') or (Pos('"', tdTok) > 0) or (Pos('''', tdTok) > 0) then
+        begin
+          if tdLine = '' then tdLine := tdTok else tdLine := tdLine + ' ' + tdTok;
+        end
+        else
+          Style.TextEmphasisColor := ParseColor(tdTok);
+      end;
+      if tdLine <> '' then Style.TextEmphasisStyle := tdLine;
+    end;
+  end;
+  if (Decls.TryGetValue('text-emphasis-style', Temp) or Decls.TryGetValue('-webkit-text-emphasis-style', Temp))
+     and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.TextEmphasisStyle := ''
+    else Style.TextEmphasisStyle := Trim(Temp);
+  end;
+  if (Decls.TryGetValue('text-emphasis-color', Temp) or Decls.TryGetValue('-webkit-text-emphasis-color', Temp))
+     and not ShouldSkip(Temp) then
+    Style.TextEmphasisColor := ParseColor(Trim(Temp));
+  if (Decls.TryGetValue('text-emphasis-position', Temp) or Decls.TryGetValue('-webkit-text-emphasis-position', Temp))
+     and not ShouldSkip(Temp) then
+    Style.TextEmphasisOver := Pos('under', LowerCase(Temp)) = 0;
   if (Decls.TryGetValue('background-clip', Temp) or
       Decls.TryGetValue('-webkit-background-clip', Temp)) and not ShouldSkip(Temp) then
     Style.BackgroundClipText := SameText(Trim(Temp), 'text');

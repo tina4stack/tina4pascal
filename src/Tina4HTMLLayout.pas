@@ -5794,6 +5794,42 @@ end;
 procedure PaintBoxEx(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single;
   Opacity: Single; Hidden: Boolean); forward;
 
+{ Resolve a text-emphasis-style value to its mark glyph (UTF-8). A quoted custom
+  string wins; otherwise fill (filled/open) + shape (dot/circle/double-circle/
+  triangle/sesame) select the mark. Default shape is a filled circle. }
+function EmphasisMark(const Spec: string): string;
+var s, q: string; a, b: Integer;
+begin
+  Result := '';
+  if Spec = '' then Exit;
+  // custom string: return its content (a single grapheme in practice)
+  a := Pos('"', Spec); if a = 0 then a := Pos('''', Spec);
+  if a > 0 then
+  begin
+    q := Copy(Spec, a + 1, Length(Spec));
+    b := Pos(Spec[a], q);
+    if b > 0 then q := Copy(q, 1, b - 1);
+    Result := q; Exit;
+  end;
+  s := LowerCase(Spec);
+  if Pos('open', s) > 0 then
+  begin
+    if Pos('double-circle', s) > 0 then Result := #$E2#$97#$8E        // ◎ U+25CE
+    else if Pos('triangle', s) > 0 then Result := #$E2#$96#$B3        // △ U+25B3
+    else if Pos('sesame', s) > 0 then Result := #$EF#$B9#$86          // ﹆ U+FE46
+    else if Pos('dot', s) > 0 then Result := #$E2#$97#$A6             // ◦ U+25E6
+    else Result := #$E2#$97#$8B;                                     // ○ U+25CB (circle)
+  end
+  else
+  begin
+    if Pos('double-circle', s) > 0 then Result := #$E2#$97#$89        // ◉ U+25C9
+    else if Pos('triangle', s) > 0 then Result := #$E2#$96#$B2        // ▲ U+25B2
+    else if Pos('sesame', s) > 0 then Result := #$EF#$B9#$85          // ﹅ U+FE45
+    else if Pos('dot', s) > 0 then Result := #$E2#$80#$A2             // • U+2022
+    else Result := #$E2#$97#$8F;                                     // ● U+25CF (circle)
+  end;
+end;
+
 procedure PaintBox(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single);
 begin
   PaintBoxEx(Canvas, Box, OffsetY, 1.0, False);
@@ -6236,6 +6272,8 @@ var
   decCol: TTina4Color; decW, decTh, dbx, dby: Single;
   bcTextRad, bcTextDX, bcTextDenom, bcGX, bcFrac, bcCW: Single;
   bcCi, bcCl: Integer; bcCh: string;
+  emMark, emCh: string; emCol: TTina4Color;
+  emSize, emX, emY, emCW, emMW: Single; emCi, emCl: Integer;
   stretchF: Single;   // font-stretch horizontal scale for this run
   vAx, vAy, vWc: Single;   // writing-mode:vertical-rl paint frame (top-left + content width)
   vRotSaved: Boolean;      // a vertical-rl content rotation is open (balance the restore)
@@ -6877,6 +6915,38 @@ begin
         // text-underline-offset pushes the underline further below the baseline
         if (r.DecorLines and 1) <> 0 then
           PaintDecorLine(Canvas, dbx, dby + r.FontSize * 0.98 + r.DecorOffset, decW, decTh, r.DecorStyle, decCol);
+      end;
+      // text-emphasis: a small mark centred over (or under) each non-space glyph.
+      // Emphasis is taken from the box style (inherited) — the common case of the
+      // property set on a block and applying to all its text.
+      if st.TextEmphasisStyle <> '' then
+      begin
+        emMark := EmphasisMark(st.TextEmphasisStyle);
+        if emMark <> '' then
+        begin
+          if st.TextEmphasisColor <> 0 then emCol := ScaleAlpha(st.TextEmphasisColor, op)
+          else emCol := fg;
+          emSize := r.FontSize * 0.5;
+          emMW := Canvas.MeasureText(emMark, emSize, []).Width;
+          emX := r.X - sx;
+          emCi := 1;
+          while emCi <= Length(drawTxt) do
+          begin
+            emCl := 1;
+            while (emCi + emCl <= Length(drawTxt)) and
+                  ((Ord(drawTxt[emCi + emCl]) and $C0) = $80) do Inc(emCl);
+            emCh := Copy(drawTxt, emCi, emCl);
+            emCW := Canvas.MeasureText(emCh, r.FontSize, r.Styles).Width;
+            if Trim(emCh) <> '' then
+            begin
+              if st.TextEmphasisOver then emY := (r.Y - innerOfs) - emSize * 0.95
+              else emY := (r.Y - innerOfs) + r.FontSize * 0.98;
+              Canvas.DrawText(emX + (emCW - emMW) / 2, emY, emMark, emSize, [], emCol);
+            end;
+            emX := emX + emCW;
+            Inc(emCi, emCl);
+          end;
+        end;
       end;
       Canvas.LetterSpacing := 0;
       Canvas.FontFamily := '';
