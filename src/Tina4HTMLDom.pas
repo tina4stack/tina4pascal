@@ -459,6 +459,8 @@ type
     Perspective: Single;           // `perspective` property (viewing distance px), 0 = none
     PerspectiveOriginX: Single;    // px or %-marker (<-1.5 = %); default -50 = 50%
     PerspectiveOriginY: Single;
+    Preserve3D: Boolean;           // transform-style: preserve-3d — children share the 3D space
+    BackfaceHidden: Boolean;       // backface-visibility: hidden — cull faces pointing away
     ClipPath: string;              // CSS clip-path (inset/circle/ellipse/polygon), '' = none
     Filter: string;                // CSS filter chain (blur/grayscale/…), '' = none
     BackdropFilter: string;        // CSS backdrop-filter chain, '' = none
@@ -780,12 +782,9 @@ var p, v: string;
 begin
   p := LowerCase(Trim(Prop));
   v := LowerCase(Trim(Val));
-  // mask-image (gradient + url alpha) and background-blend-mode are supported now;
-  // standalone perspective and transform-style:preserve-3d are still not.
-  if (p = 'perspective') or (p = 'transform-style') then Exit(False);
-  // 3D transforms are not projected
-  if (p = 'transform') and ((Pos('3d', v) > 0) or (Pos('perspective', v) > 0)
-     or (Pos('rotatex', v) > 0) or (Pos('rotatey', v) > 0)) then Exit(False);
+  // mask-image, background-blend-mode, perspective, transform-style:preserve-3d
+  // and 3D transforms (single-element projection + 3D scenes on the desktop and
+  // mobile shells) are all supported now.
   Result := True;
 end;
 
@@ -2780,6 +2779,7 @@ begin
   Result.TransformMatrixSet := False;
   Result.Transform3DSet := False;
   Result.Perspective := 0; Result.PerspectiveOriginX := -50; Result.PerspectiveOriginY := -50;
+  Result.Preserve3D := False; Result.BackfaceHidden := False;
   Result.ClipPath := '';
   Result.Filter := ''; Result.BackdropFilter := ''; Result.MaskImage := ''; Result.MixBlendMode := ''; Result.BackgroundBlendMode := '';
   Result.TransformScaleY := 1;
@@ -3361,6 +3361,7 @@ begin
   Result.TransformMatrixSet := False;
   Result.Transform3DSet := False;
   Result.Perspective := 0; Result.PerspectiveOriginX := -50; Result.PerspectiveOriginY := -50;
+  Result.Preserve3D := False; Result.BackfaceHidden := False;
   Result.ClipPath := '';
   Result.Filter := ''; Result.BackdropFilter := ''; Result.MaskImage := ''; Result.MixBlendMode := ''; Result.BackgroundBlendMode := '';
   Result.TransformScaleY := 1;
@@ -5381,6 +5382,12 @@ begin
     if Length(OvParts) >= 2 then Style.PerspectiveOriginY := OriginToken(OvParts[1], False)
     else Style.PerspectiveOriginY := -50;
   end;
+  if (Decls.TryGetValue('transform-style', Temp) or Decls.TryGetValue('-webkit-transform-style', Temp))
+     and not ShouldSkip(Temp) then
+    Style.Preserve3D := SameText(Trim(Temp), 'preserve-3d');
+  if (Decls.TryGetValue('backface-visibility', Temp) or Decls.TryGetValue('-webkit-backface-visibility', Temp))
+     and not ShouldSkip(Temp) then
+    Style.BackfaceHidden := SameText(Trim(Temp), 'hidden');
 
   // transform-origin: <x> [<y>]  — keyword/px/% (default 50% 50%)
   if Decls.TryGetValue('transform-origin', Temp) and not ShouldSkip(Temp) then

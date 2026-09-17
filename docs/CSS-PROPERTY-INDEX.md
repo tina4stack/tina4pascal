@@ -134,9 +134,10 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | opacity | ✅ | subtree alpha via ScaleAlpha (per-channel, not group compositing) |
 | transform: translate/rotate/scale/skew | ✅ | 2D transforms via NSAffineTransform (skew adds a shear on the shell canvas — `Skew` contract method) |
 | transform: matrix() | ✅ | `matrix(a,b,c,d,e,f)` concatenated on the shell canvas (`TransformMatrix` contract method → NSAffineTransformStruct); pivots at `transform-origin` |
-| transform: 3d | ✅ | `rotateX/Y/Z`, `translateZ/translate3d`, `scaleZ/scale3d`, `perspective()`, `matrix3d()`. The chain builds a 4×4 matrix; the element rasterises into the offscreen layer, its 4 corners project through the matrix + perspective divide, and the texture is perspective-warped onto the quad (`EndLayer3D`: inverse-homography sampling → CGBitmapContext blit). The `perspective`/`perspective-origin` properties parse; per-element `perspective()` in the transform is the supported viewing model. No backface-culling / z-sorting of separate elements (`transform-style: preserve-3d` scenes) |
+| transform: 3d | ✅ | `rotateX/Y/Z`, `translateZ/translate3d`, `scaleZ/scale3d`, `perspective()`, `matrix3d()`. The chain builds a 4×4 matrix; the element rasterises into the offscreen layer, its 4 corners project through the matrix + perspective divide, and the texture is perspective-warped onto the quad (`EndLayer3D`: inverse-homography sampling → CGBitmapContext blit on Cocoa/iOS, pure-Pascal `WarpQuad` on the raster/Android path). Multi-plane `transform-style:preserve-3d` scenes (z-sort + backface-cull) are done — see the transform-style row |
 | transform-origin | ✅ | keyword/px/% pivot for rotate/scale/skew (default 50% 50%) |
-| perspective | 📦 | the property + `perspective-origin` parse into the computed style; the supported 3D viewing model is per-element `perspective()` in the `transform` chain (that renders), so the standalone property is parsed but not yet applied to children |
+| perspective, perspective-origin | ✅ | the `perspective` property establishes a viewing distance for descendants (the vanishing point at `perspective-origin`, default 50% 50%); a `transform-style:preserve-3d` child inside it is projected through it. Per-element `perspective()` in the `transform` chain also works |
+| transform-style, backface-visibility | ✅ | **`preserve-3d`** makes a container's children share its 3D space: each child's transform composes with the container's, its quad is perspective-projected and warped, and the children are z-sorted back-to-front. **`backface-visibility:hidden`** culls a face whose screen winding turns away (the card-flip pattern). Card-flip + cube verified pixel-matching Chrome; reftest `css-preserve3d-flip`, raster golden `preserve3d`. Renders on desktop (macOS/Windows) **and mobile** (iOS + Android — the pure-Pascal raster `EndLayer3D` warp). Linux X11 has no transform matrix, so 3D is flat there |
 | clip-path | ✅ | `inset()` / `circle()` / `ellipse()` / `polygon()` — the core tessellates the shape to a polygon in border-box coords and clips the subtree via the `ClipPolygon` contract method (Cocoa: `NSBezierPath.addClip`). Radius on `inset(... round)`, `path()`, and URL references not yet applied |
 | filter | ✅ | `blur` · `grayscale` · `brightness` · `contrast` · `invert` · `saturate` · `sepia` · `hue-rotate` · `opacity` · `drop-shadow`, chained. Rendered through a new offscreen-layer contract (`BeginLayer`/`EndLayerFiltered`): the element+subtree draw into an offscreen buffer, the pixels are filtered (separable box-blur ≈ Gaussian; colour-matrix ops; drop-shadow is a blurred, offset silhouette painted behind), then composited back |
 | mix-blend-mode | ✅ | all 16 separable + non-separable modes (multiply/screen/overlay/darken/lighten/color-dodge/color-burn/soft-light/hard-light/difference/exclusion/hue/saturation/color/luminosity) via `CGContextSetBlendMode` when the layer composites back |
@@ -186,7 +187,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | `@media` (in `<style>`) | ✅ | min/max-width breakpoints + `prefers-color-scheme` dark (incl. dark `:root` var swaps), live via `SetMediaContext` |
 | `@font-face` | ✅ | downloadable fonts: parse family + `src url()`, fetch (async/disk-cached like `<img>`) + register on all 3 shells (Cocoa/iOS CoreText, Android Typeface); CSS family aliased to the face's real name |
 | `@keyframes` | ✅ | parsed into named stops; drives `animation` |
-| `@supports` | ✅ | feature query evaluated at parse time (`and`/`or`/`not`, parenthesised tests); the block's rules apply only if supported. The oracle answers yes for our broad feature set and no for the props we still lack (standalone perspective, transform-style, 3D transforms). Nests inside `@media` |
+| `@supports` | ✅ | feature query evaluated at parse time (`and`/`or`/`not`, parenthesised tests); the block's rules apply only if supported. The oracle answers yes for our broad feature set and no for the props we still lack. Nests inside `@media` |
 | `@import` | ✅ | `@import "x.css"` / `url(...)` (+ trailing media ignored) — the URL is recorded and fetched like a `<link rel=stylesheet>`, then parsed; drained until empty so nested imports load. macOS host does remote+relative; the shared Win/Linux path does local files |
 | clamp(), min(), max() | ✅ | evaluated via the calc() engine (nestable, same unit support) |
 | env() | ✅ | `env(<name>, <fallback>)` resolves to its fallback — safe-area insets are 0 on desktop, so the named value is unavailable. Usable bare or inside calc() |
@@ -229,15 +230,7 @@ one-feature change) and/or has a hard platform blocker, and/or has near-zero
 real-world use. The disposition + what it would actually take is recorded so the
 index stays honest — none is a quick win, and none is marked ✅ without proof.
 
-1. **`transform-style: preserve-3d` + the `perspective` property** — needs a real
-    3D scene compositor: compose each descendant's 4×4 transform with its
-    preserve-3d ancestor's (per-corner Z from `translateZ`, a single shared
-    perspective), then z-sort and backface-cull the flattened planes. Single-
-    element 3D (`rotateX/Y`, `perspective()`, `matrix3d`, projected + quad-warped)
-    is done. **Hard blocker:** the Linux X11 shell has no transform matrix at all
-    (see the `linux-x11-no-affine` note), so quad-warping — and thus preserve-3d —
-    can't run there regardless. A dedicated effort, not a tail fix.
-2. **`mask-composite`** (multi-layer `add`/`subtract`/`intersect`/`exclude`) —
+1. **`mask-composite`** (multi-layer `add`/`subtract`/`intersect`/`exclude`) —
     needs the whole mask pipeline widened from one layer to a compositing stack.
     Near-zero real-world use, so deliberately deferred. Everything else in the
     mask family is done: `mask-mode:luminance`, `mask-size`
@@ -246,7 +239,7 @@ index stays honest — none is a quick win, and none is marked ✅ without proof
     `filter`/`backdrop-filter`/`mix-blend-mode`/`drop-shadow` and clip-path basic
     shapes. (PNG/JPEG masks on the raster shell need that shell's own PNG/JPEG
     decoder — WebP works there today; a shell-decode gap, not a core one.)
-3. **`hyphens:auto`** — needs an embedded hyphenation dictionary (Liang/TeX
+2. **`hyphens:auto`** — needs an embedded hyphenation dictionary (Liang/TeX
     patterns); without one it degrades to `manual` (breaks only at author soft
     hyphens), which is correct-but-conservative rather than wrong. A bad heuristic
     hyphenator (breaking at the wrong points) would be worse than the current
@@ -255,7 +248,7 @@ index stays honest — none is a quick win, and none is marked ✅ without proof
     `hyphens:manual`, synthetic `font-stretch`, vertical block-flow, bidi
     reorder/mirror/`<bdo>`/`<bdi>`, `text-wrap:balance`,
     `text-decoration-thickness`/`-underline-offset`.
-4. **multi-column line-level fragmentation** — the balancer distributes whole
+3. **multi-column line-level fragmentation** — the balancer distributes whole
     block children across columns; splitting a single tall paragraph's *lines*
     across a column break needs a fragmentation engine (the same machinery
     page-break/`break-inside` would use). Whole-child balancing covers the common
@@ -270,7 +263,7 @@ image layers), CSS counters, the structural/combinator/`:not()` selectors,
 verified 0.00% vs headless Chrome. Behavioral, fragmentation and niche-i18n
 properties are catalogued above as ⬜ (out of core rendering scope).
 
-Coverage: **132 ✅ · 3 🟡 · 1 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
+Coverage: **134 ✅ · 3 🟡 · 0 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
 property is an unaccounted gap.
 
 Each ✅ item ships with a reftest under `examples/compliance/` and flips its row
