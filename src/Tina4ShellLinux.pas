@@ -842,7 +842,9 @@ var
   L: TX11Layer; buf: PSingle; layerImg, destImg: PXImage;
   padx, pady, coreW, coreH: cint;
   vx0, vy0, vx1, vy1, i, j, lx, ly, so: cint; blend: string; dpx: LongWord;
+  maskCb: TMaskDecodeCb;
 begin
+  maskCb := @DecodeMaskImage;
   if (Handle < 0) or (Handle > High(FLayers)) then Exit;
   L := FLayers[Handle];
   FDraw := L.Saved; FW := L.SavedW; FH := L.SavedH;
@@ -863,7 +865,7 @@ begin
     buf := DecodeLayerImg(layerImg, padx, pady, coreW, coreH, L.Bw, L.Bh);
     DestroyImage(layerImg);
     if (FilterSpec <> '') or (MaskSpec <> '') then
-      ApplyFilterChainF(PSingleBuf(buf), L.Bw, L.Bh, FilterSpec, MaskSpec, 1);
+      ApplyFilterChainF(PSingleBuf(buf), L.Bw, L.Bh, FilterSpec, MaskSpec, 1, nil, 0, 0, False, maskCb);
 
     // valid parent rect (clamp the layer's doc rect into the parent)
     vx0 := L.Ox; if vx0 < 0 then vx0 := 0;

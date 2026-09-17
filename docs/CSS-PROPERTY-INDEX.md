@@ -142,7 +142,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | filter | ✅ | `blur` · `grayscale` · `brightness` · `contrast` · `invert` · `saturate` · `sepia` · `hue-rotate` · `opacity` · `drop-shadow`, chained. Rendered through a new offscreen-layer contract (`BeginLayer`/`EndLayerFiltered`): the element+subtree draw into an offscreen buffer, the pixels are filtered (separable box-blur ≈ Gaussian; colour-matrix ops; drop-shadow is a blurred, offset silhouette painted behind), then composited back |
 | mix-blend-mode | ✅ | all 16 separable + non-separable modes (multiply/screen/overlay/darken/lighten/color-dodge/color-burn/soft-light/hard-light/difference/exclusion/hue/saturation/color/luminosity) via `CGContextSetBlendMode` when the layer composites back |
 | backdrop-filter | ✅ | filters the already-painted pixels behind the element (captured via `initWithFocusedViewRect`) before its own background draws — same filter chain as `filter`. `-webkit-backdrop-filter` alias too |
-| mask-image, mask, -webkit-mask-image (+ `mask-mode`/`-position`/`-size`/`-repeat`) | 🟡 | `linear-gradient(...)` masks and `url()` **image** masks: the mask multiplies into the element's alpha in the offscreen buffer — the fade-out and icon-recolour patterns. A url() mask is decoded (`DecodeMaskImage`: Cocoa via CoreGraphics for PNG/JPEG, the pure-Pascal path for WebP). **`mask-mode: luminance`** (grey→alpha via Rec.709 luma) as well as alpha; **`mask-size`** `contain`/`cover`/`auto`(intrinsic, the CSS default) and explicit `<length>`/`<percentage>` per axis (one value ⇒ height auto, keeping aspect); **`mask-position`** keywords + percentages; **`mask-repeat`** `no-repeat` vs the default tiling — the geometry is parsed from the shorthand or the longhands (`ParseMaskGeom`) and honoured, so `mask:url(icon.svg) no-repeat center/contain` recolours a centred, contain-fitted icon exactly like Chrome. Reftests `css-mask-image-url`, `css-mask-position`, `css-mask-luminance` (all 0.00% vs Chrome). Not yet: `mask-composite` (multi-layer combine), and PNG/JPEG masks on the raster shell (WebP only there) |
+| mask-image, mask, -webkit-mask-image (+ `mask-mode`/`-position`/`-size`/`-repeat`/`-composite`) | ✅ | `linear-gradient(...)` masks and `url()` **image** masks: the mask multiplies into the element's alpha in the offscreen buffer — the fade-out and icon-recolour patterns. A url() mask is decoded (`DecodeMaskImage`: Cocoa via CoreGraphics for PNG/JPEG, the pure-Pascal path for WebP). **`mask-mode: luminance`** (grey→alpha via Rec.709 luma) as well as alpha; **`mask-size`** `contain`/`cover`/`auto`(intrinsic, the CSS default) and explicit `<length>`/`<percentage>` per axis (one value ⇒ height auto, keeping aspect); **`mask-position`** keywords + percentages; **`mask-repeat`** `no-repeat` vs the default tiling — the geometry is parsed from the shorthand or the longhands (`ParseMaskGeom`) and honoured, so `mask:url(icon.svg) no-repeat center/contain` recolours a centred, contain-fitted icon exactly like Chrome. Reftests `css-mask-image-url`, `css-mask-position`, `css-mask-luminance` (all 0.00% vs Chrome). **Multi-layer masks + `mask-composite`** (`add`/`subtract`/`intersect`/`exclude`) — each comma-separated layer renders its coverage and the layers combine per the composite op (`ApplyMaskLayers`); 2nd+ `url()` layers decode via a shell callback. All four ops verified within 0.01 of Chrome; reftest `css-mask-composite`. Caveat: PNG/JPEG masks on the raster/Android shell need that shell's own decoder (WebP + data-URI work there) |
 | background-blend-mode | ✅ | blends a **gradient** or a **`url()` image** background against the background-color beneath it — **every** mode: the separable set (multiply/screen/overlay/darken/lighten/color-dodge/-burn/hard-/soft-light/difference/exclusion) **and all four** non-separable ones (hue/saturation/color/luminosity), computed per-pixel through the shared `BlendRGB` in sRGB (so saturated colours match Chrome byte-exact — a CoreGraphics hardware blend does not, its working colour space skews chromatic multiply). The image layer is decoded (`DecodeImagePixels`: Cocoa via CoreGraphics, WebP in pure Pascal), each pixel blended against the solid background-color, then drawn. Reftests `css-bg-blend-image`, `css-blendmul`. Caveat: an image layer blends against the background-*color* (not a gradient beneath it) |
 | animation, @keyframes | ✅ | `@keyframes` parsed; `animation` shorthand + longhands (name/duration/delay/timing/iteration/direction). Per-frame interpolation at paint off the ticker: transform (translate/rotate/scale), opacity, background-color, color; timing linear/ease/ease-in/-out; iteration + alternate/reverse |
 | transition | ✅ | eases a property toward its computed value when it changes (hover/focus/DOM): background-color, color, opacity, transform (translate/rotate/scale). Per-element from/start tracked on the tag; duration/delay/timing/property from the shorthand + longhands. Mid-transition reversal supported |
@@ -230,16 +230,7 @@ one-feature change) and/or has a hard platform blocker, and/or has near-zero
 real-world use. The disposition + what it would actually take is recorded so the
 index stays honest — none is a quick win, and none is marked ✅ without proof.
 
-1. **`mask-composite`** (multi-layer `add`/`subtract`/`intersect`/`exclude`) —
-    needs the whole mask pipeline widened from one layer to a compositing stack.
-    Near-zero real-world use, so deliberately deferred. Everything else in the
-    mask family is done: `mask-mode:luminance`, `mask-size`
-    (contain/cover/auto + explicit length/percentage), `mask-position`,
-    `mask-repeat`, gradient **and** `url()` image masks, plus
-    `filter`/`backdrop-filter`/`mix-blend-mode`/`drop-shadow` and clip-path basic
-    shapes. (PNG/JPEG masks on the raster shell need that shell's own PNG/JPEG
-    decoder — WebP works there today; a shell-decode gap, not a core one.)
-2. **`hyphens:auto`** — needs an embedded hyphenation dictionary (Liang/TeX
+1. **`hyphens:auto`** — needs an embedded hyphenation dictionary (Liang/TeX
     patterns); without one it degrades to `manual` (breaks only at author soft
     hyphens), which is correct-but-conservative rather than wrong. A bad heuristic
     hyphenator (breaking at the wrong points) would be worse than the current
@@ -248,7 +239,7 @@ index stays honest — none is a quick win, and none is marked ✅ without proof
     `hyphens:manual`, synthetic `font-stretch`, vertical block-flow, bidi
     reorder/mirror/`<bdo>`/`<bdi>`, `text-wrap:balance`,
     `text-decoration-thickness`/`-underline-offset`.
-3. **multi-column line-level fragmentation** — the balancer distributes whole
+2. **multi-column line-level fragmentation** — the balancer distributes whole
     block children across columns; splitting a single tall paragraph's *lines*
     across a column break needs a fragmentation engine (the same machinery
     page-break/`break-inside` would use). Whole-child balancing covers the common
@@ -263,7 +254,7 @@ image layers), CSS counters, the structural/combinator/`:not()` selectors,
 verified 0.00% vs headless Chrome. Behavioral, fragmentation and niche-i18n
 properties are catalogued above as ⬜ (out of core rendering scope).
 
-Coverage: **134 ✅ · 3 🟡 · 0 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
+Coverage: **135 ✅ · 2 🟡 · 0 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
 property is an unaccounted gap.
 
 Each ✅ item ships with a reftest under `examples/compliance/` and flips its row

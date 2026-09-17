@@ -946,7 +946,7 @@ begin
   buf := DecodeLayer(L, padx, pady, coreW, coreH);
   try
     if (FilterSpec <> '') or (MaskSpec <> '') then
-      ApplyFilterChainF(PSingleBuf(buf), L.w, L.h, FilterSpec, MaskSpec, 1);
+      ApplyFilterChainF(PSingleBuf(buf), L.w, L.h, FilterSpec, MaskSpec, 1, nil, 0, 0, False, DecodeMaskImage);
     CompositeToDest(PSingleBuf(buf), L.w, L.h, L.ox, L.oy, LowerCase(BlendMode));
   finally
     FreeMem(buf);

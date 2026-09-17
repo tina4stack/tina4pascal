@@ -5455,6 +5455,12 @@ begin
     if (Decls.TryGetValue('mask-repeat', Temp) or Decls.TryGetValue('-webkit-mask-repeat', Temp))
        and not ShouldSkip(Temp) then Style.MaskImage := Style.MaskImage + ' ' + Trim(Temp);
   end;
+  // mask-composite: how a multi-layer mask combines (add/subtract/intersect/
+  // exclude, one per layer boundary). Folded as a sentinel the compositor reads.
+  if (Style.MaskImage <> '')
+     and (Decls.TryGetValue('mask-composite', Temp) or Decls.TryGetValue('-webkit-mask-composite', Temp))
+     and not ShouldSkip(Temp) then
+    Style.MaskImage := Style.MaskImage + ' ##composite=' + LowerCase(Trim(Temp));
   if Decls.TryGetValue('mix-blend-mode', Temp) and not ShouldSkip(Temp) then
   begin
     if SameText(Trim(Temp), 'normal') then Style.MixBlendMode := ''
