@@ -411,6 +411,7 @@ type
     ColumnRuleWidth: Single;      // rule between columns: 0 = none
     ColumnRuleColor: TAlphaColor;
     ColumnRuleStyle: string;      // 'none' (default) / solid / dashed / dotted / double
+    ColumnSpan: string;           // '' | 'all' — element spans every multicol column
     // text-shadow: offsetX offsetY [blur] color
     TextShadowOffsetX: Single;
     TextShadowOffsetY: Single;
@@ -2751,6 +2752,7 @@ begin
   Result.RowGap := 0; Result.ColGap := 0;
   Result.ColumnCount := 0; Result.ColumnWidth := -1;
   Result.ColumnRuleWidth := 0; Result.ColumnRuleColor := TAlphaColors.Null; Result.ColumnRuleStyle := 'none';
+  Result.ColumnSpan := '';
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
   Result.BgPosY := 0;
@@ -3324,6 +3326,7 @@ begin
   Result.RowGap := 0; Result.ColGap := 0;
   Result.ColumnCount := 0; Result.ColumnWidth := -1;
   Result.ColumnRuleWidth := 0; Result.ColumnRuleColor := TAlphaColors.Null; Result.ColumnRuleStyle := 'none';
+  Result.ColumnSpan := '';
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
   Result.BgPosY := 0;
@@ -5019,6 +5022,8 @@ begin
     Style.ColumnRuleStyle := Temp.Trim.ToLower;
   if Decls.TryGetValue('column-rule-color', Temp) and not ShouldSkip(Temp) then
     Style.ColumnRuleColor := ParseColor(Temp);
+  if Decls.TryGetValue('column-span', Temp) and not ShouldSkip(Temp) then
+    Style.ColumnSpan := Temp.Trim.ToLower;
   // CSS Grid templates + item placement
   if Decls.TryGetValue('grid-template-columns', Temp) and not ShouldSkip(Temp) then
     Style.GridTemplateColumns := Temp.Trim.ToLower;

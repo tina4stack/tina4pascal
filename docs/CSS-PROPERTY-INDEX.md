@@ -61,7 +61,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | align-self, order | ✅ | `align-self` overrides `align-items` per item (stretch/center/start/end); `order` reorders items (stable) before layout |
 | align-content | ✅ | distributes wrapped lines on the cross axis (center/flex-end/space-between/space-around); stretch = default packing |
 | gap, row-gap, column-gap | ✅ | per-axis: `gap: <row> <col>`; flex uses column-gap on a row / row-gap on a column |
-| column-count, column-width, columns | 🟡 | CSS multi-column: block children are laid out at the reduced column width, then balanced across N columns (count given, or derived from `column-width` and the available width) honouring `column-gap`. `columns` shorthand parses width and/or count. Reftests `css-columns-count`, `css-columns-width`. Caveats: balances whole children (a single tall block/paragraph is not fragmented across columns), no `column-span` |
+| column-count, column-width, columns | 🟡 | CSS multi-column: block children are laid out at the reduced column width, then balanced across N columns (count given, or derived from `column-width` and the available width) honouring `column-gap`. `columns` shorthand parses width and/or count. Reftests `css-columns-count`, `css-columns-width`. `column-span:all` breaks an element out to span every column (the balancer segments around it). Reftest `css-column-span`. Caveat: balances whole children (a single tall block/paragraph is not fragmented across columns) |
 | column-rule (+ -width/-style/-color) | ✅ | a vertical rule centred in each column gap, spanning the tallest column; shorthand parses width ‖ style ‖ color (default currentColor), longhands supported; `double` draws two hairlines. dashed/dotted render solid. Reftest `css-column-rule` |
 | grid-column, grid-row | ✅ | explicit start line + span, or `N / M`; occupancy-aware auto-placement around them |
 | grid-template-rows | ✅ | px / % / fr / auto row tracks. fr and % resolve against a definite container height and distribute the leftover; with an indefinite height they fall back to content size (matches Chrome) |
@@ -203,7 +203,6 @@ for completeness — the engine renders correctly whether or not they are presen
 | widows, orphans, break-before / -after / -inside | ⬜ | fragmentation controls — no effect in the continuous single-column flow; `break-inside:avoid` is naturally satisfied since multicol never splits a child |
 | text-emphasis (+ -position / -color / -style), text-combine-upright | ⬜ | East-Asian emphasis marks / tate-chū-yoko — niche; not painted |
 | text-orientation, unicode-bidi | 🟡 | writing-mode vertical + the bidi reorder/mirror path (`<bdo>`/`<bdi>`) are done; `text-orientation:upright` glyph rotation and explicit `unicode-bidi` embedding levels are not |
-| column-span | 🟡 | `column-span:all` (an element spanning all columns) needs the balancer to segment around it — not done; see the multicol row |
 
 ## Prioritised roadmap (by real-world impact ÷ effort)
 
@@ -230,14 +229,12 @@ otherwise-working feature):
     (gradient alpha masks **and** `url()` image masks, plus `filter`/
     `backdrop-filter`/`mix-blend-mode`/`drop-shadow` and clip-path basic shapes
     are all done).
-3. **multicol `column-span:all`** — an element breaking out to span every column
-    (count/width/gap/rule + balancing are done).
-4. Typography remainder: `hyphens:auto` dictionary, `text-orientation:upright`
+3. Typography remainder: `hyphens:auto` dictionary, `text-orientation:upright`
     CJK glyph rotation, `text-emphasis` marks (`font-variant` small-caps,
     soft-hyphen `hyphens:manual`, synthetic `font-stretch`, vertical block-flow,
     bidi reorder/mirror/`<bdo>`/`<bdi>`, `text-wrap:balance`,
     `text-decoration-thickness`/`-underline-offset` are done).
-5. **user-select / resize** (need a text-selection model / drag-resize handle).
+4. **user-select / resize** (need a text-selection model / drag-resize handle).
 
 Everything else — including background-blend-mode (software sRGB, gradient **and**
 image layers), CSS counters, the structural/combinator/`:not()` selectors,
@@ -245,7 +242,7 @@ image layers), CSS counters, the structural/combinator/`:not()` selectors,
 verified 0.00% vs headless Chrome. Behavioral, fragmentation and niche-i18n
 properties are catalogued above as ⬜ (out of core rendering scope).
 
-Coverage: **127 ✅ · 4 🟡 · 2 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
+Coverage: **128 ✅ · 3 🟡 · 2 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
 property is an unaccounted gap.
 
 Each ✅ item ships with a reftest under `examples/compliance/` and flips its row

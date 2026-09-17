@@ -4877,13 +4877,47 @@ end;
 function TLayoutEngine.LayoutColumns(box: TLayoutBox; Tag: THTMLTag;
   const st: TComputedStyle; contentX, contentY, contentW: Single): Single;
 var
-  ncols, i, k, col, fcount: Integer;
-  colW, gap, usedH, target, colH, dx, dy, maxColH, cp: Single;
+  ncols, i, k, fcount, segLo, oldIdx: Integer;
+  colW, gap, usedH, maxColH, runY: Single;
   flow: array of TLayoutBox;
-  outerTop, slotBottom: array of Single;
-  colStartTop: array of Single;
-  colOf: array of Integer;
+  childH: array of Single;
+  isSpan: array of Boolean;
+  hasSpan: Boolean;
+  oldBox, newBox: TLayoutBox;
   pos: string;
+
+  { Outer height of a flow child (border box + non-negative vertical margins). }
+  function OuterH(b: TLayoutBox): Single;
+  begin
+    Result := b.H + Max(0, b.Style.Margin.Top) + Max(0, b.Style.Margin.Bottom);
+  end;
+
+  { Balance flow[lo..hi-1] into ncols columns starting at topY; shift each into
+    its column and return the bottom Y (topY + the tallest column). }
+  function BalanceRange(lo, hi: Integer; topY: Single): Single;
+  var kk, cc, ac: Integer; tot, tgt, cur, mT, dxb, dyb: Single;
+      colBottom: array of Single;
+  begin
+    if hi <= lo then Exit(topY);
+    tot := 0; for kk := lo to hi - 1 do tot := tot + childH[kk];
+    tgt := tot / ncols;
+    SetLength(colBottom, ncols);
+    for cc := 0 to ncols - 1 do colBottom[cc] := topY;
+    cur := 0; ac := 0;
+    for kk := lo to hi - 1 do
+    begin
+      mT := Max(0, flow[kk].Style.Margin.Top);
+      dxb := (contentX + ac * (colW + gap)) - (flow[kk].X - Max(0, flow[kk].Style.Margin.Left));
+      dyb := (colBottom[ac] + mT) - flow[kk].Y;
+      ShiftBoxTree(flow[kk], dxb, dyb);
+      colBottom[ac] := colBottom[ac] + childH[kk];
+      cur := cur + childH[kk];
+      if (ac < ncols - 1) and (cur >= tgt * (ac + 1)) then Inc(ac);
+    end;
+    Result := topY;
+    for cc := 0 to ncols - 1 do if colBottom[cc] > Result then Result := colBottom[cc];
+  end;
+
 begin
   gap := st.ColGap; if gap < 0 then gap := 0;
   if st.ColumnCount > 0 then ncols := st.ColumnCount
@@ -4911,35 +4945,52 @@ begin
   if fcount = 0 then Exit(usedH);
   SetLength(flow, fcount);
 
-  // outer top of each flow child and the bottom of its vertical slot
-  SetLength(outerTop, fcount); SetLength(slotBottom, fcount);
-  for k := 0 to fcount - 1 do
-    outerTop[k] := flow[k].Y - Max(0, flow[k].Style.Margin.Top);
-  for k := 0 to fcount - 2 do slotBottom[k] := outerTop[k + 1];
-  slotBottom[fcount - 1] := contentY + usedH;
-
-  // greedily fill columns up to the balanced target height
-  SetLength(colStartTop, ncols); SetLength(colOf, fcount);
-  target := usedH / ncols;
-  col := 0; colStartTop[0] := outerTop[0];
+  // column-span:all — a child that breaks out to span every column. Re-lay each
+  // spanning child at the full content width (it was laid out at colW), then
+  // balance the runs of ordinary children between spanning ones as segments.
+  SetLength(isSpan, fcount);
+  hasSpan := False;
   for k := 0 to fcount - 1 do
   begin
-    colOf[k] := col;
-    colH := slotBottom[k] - colStartTop[col];
-    if (col < ncols - 1) and (colH >= target) and (k < fcount - 1) then
-    begin Inc(col); colStartTop[col] := outerTop[k + 1]; end;
+    isSpan[k] := (LowerCase(flow[k].Style.ColumnSpan) = 'all');
+    if isSpan[k] then hasSpan := True;
   end;
+  if hasSpan then
+    for k := 0 to fcount - 1 do
+      if isSpan[k] and (flow[k].Tag <> nil) then
+      begin
+        oldBox := flow[k];
+        oldIdx := box.Children.IndexOf(oldBox);
+        LayoutBlock(box, oldBox.Tag, st, contentX, contentY, contentW);  // appends the wide box
+        newBox := box.Children[box.Children.Count - 1];
+        box.Children.Extract(newBox);           // detach without freeing
+        if oldIdx >= 0 then box.Children[oldIdx] := newBox;   // frees the old colW box, stores the wide one
+        flow[k] := newBox;
+      end;
 
-  // shift each column into place and measure the tallest
-  maxColH := 0;
-  for k := 0 to fcount - 1 do
+  // outer height of every flow child (after any re-layout above)
+  SetLength(childH, fcount);
+  for k := 0 to fcount - 1 do childH[k] := OuterH(flow[k]);
+
+  if not hasSpan then
+    maxColH := BalanceRange(0, fcount, contentY) - contentY
+  else
   begin
-    col := colOf[k];
-    dx := col * (colW + gap);
-    dy := contentY - colStartTop[col];
-    ShiftBoxTree(flow[k], dx, dy);
-    cp := slotBottom[k] - colStartTop[col];   // this child's bottom within its column
-    if cp > maxColH then maxColH := cp;
+    // segmented: balance each run of ordinary children, place each spanning
+    // child full-width between the runs, stacking down the block.
+    runY := contentY; segLo := 0;
+    for k := 0 to fcount - 1 do
+      if isSpan[k] then
+      begin
+        if k > segLo then runY := BalanceRange(segLo, k, runY);
+        ShiftBoxTree(flow[k],
+          (contentX + Max(0, flow[k].Style.Margin.Left)) - flow[k].X,
+          (runY + Max(0, flow[k].Style.Margin.Top)) - flow[k].Y);
+        runY := runY + childH[k];
+        segLo := k + 1;
+      end;
+    if fcount > segLo then runY := BalanceRange(segLo, fcount, runY);
+    maxColH := runY - contentY;
   end;
 
   // record geometry so PaintBoxEx can draw column-rules in the gaps. Store the
