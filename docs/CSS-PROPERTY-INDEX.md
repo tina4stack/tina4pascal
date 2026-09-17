@@ -61,7 +61,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | align-self, order | ✅ | `align-self` overrides `align-items` per item (stretch/center/start/end); `order` reorders items (stable) before layout |
 | align-content | ✅ | distributes wrapped lines on the cross axis (center/flex-end/space-between/space-around); stretch = default packing |
 | gap, row-gap, column-gap | ✅ | per-axis: `gap: <row> <col>`; flex uses column-gap on a row / row-gap on a column |
-| column-count, column-width, columns | 🟡 | CSS multi-column: block children are laid out at the reduced column width, then balanced across N columns (count given, or derived from `column-width` and the available width) honouring `column-gap`. `columns` shorthand parses width and/or count. Reftests `css-columns-count`, `css-columns-width`. `column-span:all` breaks an element out to span every column (the balancer segments around it). Reftest `css-column-span`. Caveat: balances whole children (a single tall block/paragraph is not fragmented across columns) |
+| column-count, column-width, columns | ✅ | CSS multi-column: block children are laid out at the reduced column width, then balanced across N columns (count given, or derived from `column-width` and the available width) honouring `column-gap`. `columns` shorthand parses width and/or count. **Line-level fragmentation**: a tall plain paragraph is split into per-line boxes (`FragmentChildren`, tiled at the mid-points between lines) so its lines flow across the column break like Chrome, not balanced as one unit — verified filling both columns within 2px of Chrome. Reftests `css-columns-count`, `css-columns-width`, `css-column-fragment`. `column-span:all` breaks an element out to span every column (the balancer segments around it); reftest `css-column-span` |
 | column-rule (+ -width/-style/-color) | ✅ | a vertical rule centred in each column gap, spanning the tallest column; shorthand parses width ‖ style ‖ color (default currentColor), longhands supported; `double` draws two hairlines. dashed/dotted render solid. Reftest `css-column-rule` |
 | grid-column, grid-row | ✅ | explicit start line + span, or `N / M`; occupancy-aware auto-placement around them |
 | grid-template-rows | ✅ | px / % / fr / auto row tracks. fr and % resolve against a definite container height and distribute the leftover; with an indefinite height they fall back to content size (matches Chrome) |
@@ -105,7 +105,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | text-align-last | ✅ | left/right/center/start/end/justify on the block's last line (and the line before a `<br>`) |
 | text-justify | ✅ | `none` disables the justification `text-align:justify` turns on; `inter-word`/`auto` keep it |
 | text-rendering | ✅ | accepted (a rendering hint with no required visual change — no-op) |
-| hyphens | ✅ | `manual` (the default) breaks a word at its soft hyphens (`&shy;` / U+00AD) when a line needs it and renders a `-` at the break; fragments that stay together show none. `none` never breaks at soft hyphens. `auto` has no dictionary, so it degrades to `manual` (breaks only at author-placed soft hyphens). Reftest `hyphens-shy` |
+| hyphens | ✅ | `manual` (the default) breaks a word at its soft hyphens (`&shy;` / U+00AD) when a line needs it and renders a `-` at the break; fragments that stay together show none. `none` never breaks at soft hyphens. **`auto`** runs real Liang/Knuth hyphenation: the public-domain en-US TeX patterns (`hyph-en-us`, the same set browsers use) + the standard exception list are embedded in `Tina4Hyphen`; each plain ASCII word gets soft hyphens inserted at the dictionary points (lefthyphenmin 2, righthyphenmin 3), then the manual path breaks them. `hyphenation`→hy-phen-ation, `representation`→rep-re-sen-ta-tion; a justified paragraph wraps to the same line count as Chrome. Reftests `hyphens-shy`, `css-hyphens-auto` (0.00% — auto matches manual at the dictionary points) |
 
 ## Backgrounds & borders
 
@@ -142,7 +142,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | filter | ✅ | `blur` · `grayscale` · `brightness` · `contrast` · `invert` · `saturate` · `sepia` · `hue-rotate` · `opacity` · `drop-shadow`, chained. Rendered through a new offscreen-layer contract (`BeginLayer`/`EndLayerFiltered`): the element+subtree draw into an offscreen buffer, the pixels are filtered (separable box-blur ≈ Gaussian; colour-matrix ops; drop-shadow is a blurred, offset silhouette painted behind), then composited back |
 | mix-blend-mode | ✅ | all 16 separable + non-separable modes (multiply/screen/overlay/darken/lighten/color-dodge/color-burn/soft-light/hard-light/difference/exclusion/hue/saturation/color/luminosity) via `CGContextSetBlendMode` when the layer composites back |
 | backdrop-filter | ✅ | filters the already-painted pixels behind the element (captured via `initWithFocusedViewRect`) before its own background draws — same filter chain as `filter`. `-webkit-backdrop-filter` alias too |
-| mask-image, mask, -webkit-mask-image (+ `mask-mode`/`-position`/`-size`/`-repeat`) | 🟡 | `linear-gradient(...)` masks and `url()` **image** masks: the mask multiplies into the element's alpha in the offscreen buffer — the fade-out and icon-recolour patterns. A url() mask is decoded (`DecodeMaskImage`: Cocoa via CoreGraphics for PNG/JPEG, the pure-Pascal path for WebP). **`mask-mode: luminance`** (grey→alpha via Rec.709 luma) as well as alpha; **`mask-size`** `contain`/`cover`/`auto`(intrinsic, the CSS default) and explicit `<length>`/`<percentage>` per axis (one value ⇒ height auto, keeping aspect); **`mask-position`** keywords + percentages; **`mask-repeat`** `no-repeat` vs the default tiling — the geometry is parsed from the shorthand or the longhands (`ParseMaskGeom`) and honoured, so `mask:url(icon.svg) no-repeat center/contain` recolours a centred, contain-fitted icon exactly like Chrome. Reftests `css-mask-image-url`, `css-mask-position`, `css-mask-luminance` (all 0.00% vs Chrome). Not yet: `mask-composite` (multi-layer combine), and PNG/JPEG masks on the raster shell (WebP only there) |
+| mask-image, mask, -webkit-mask-image (+ `mask-mode`/`-position`/`-size`/`-repeat`/`-composite`) | ✅ | `linear-gradient(...)` masks and `url()` **image** masks: the mask multiplies into the element's alpha in the offscreen buffer — the fade-out and icon-recolour patterns. A url() mask is decoded (`DecodeMaskImage`: Cocoa via CoreGraphics for PNG/JPEG, the pure-Pascal path for WebP). **`mask-mode: luminance`** (grey→alpha via Rec.709 luma) as well as alpha; **`mask-size`** `contain`/`cover`/`auto`(intrinsic, the CSS default) and explicit `<length>`/`<percentage>` per axis (one value ⇒ height auto, keeping aspect); **`mask-position`** keywords + percentages; **`mask-repeat`** `no-repeat` vs the default tiling — the geometry is parsed from the shorthand or the longhands (`ParseMaskGeom`) and honoured, so `mask:url(icon.svg) no-repeat center/contain` recolours a centred, contain-fitted icon exactly like Chrome. Reftests `css-mask-image-url`, `css-mask-position`, `css-mask-luminance` (all 0.00% vs Chrome). **Multi-layer masks + `mask-composite`** (`add`/`subtract`/`intersect`/`exclude`) — each comma-separated layer renders its coverage and the layers combine per the composite op (`ApplyMaskLayers`); 2nd+ `url()` layers decode via a shell callback. All four ops verified within 0.01 of Chrome; reftest `css-mask-composite`. Caveat: PNG/JPEG masks on the raster/Android shell need that shell's own decoder (WebP + data-URI work there) |
 | background-blend-mode | ✅ | blends a **gradient** or a **`url()` image** background against the background-color beneath it — **every** mode: the separable set (multiply/screen/overlay/darken/lighten/color-dodge/-burn/hard-/soft-light/difference/exclusion) **and all four** non-separable ones (hue/saturation/color/luminosity), computed per-pixel through the shared `BlendRGB` in sRGB (so saturated colours match Chrome byte-exact — a CoreGraphics hardware blend does not, its working colour space skews chromatic multiply). The image layer is decoded (`DecodeImagePixels`: Cocoa via CoreGraphics, WebP in pure Pascal), each pixel blended against the solid background-color, then drawn. Reftests `css-bg-blend-image`, `css-blendmul`. Caveat: an image layer blends against the background-*color* (not a gradient beneath it) |
 | animation, @keyframes | ✅ | `@keyframes` parsed; `animation` shorthand + longhands (name/duration/delay/timing/iteration/direction). Per-frame interpolation at paint off the ticker: transform (translate/rotate/scale), opacity, background-color, color; timing linear/ease/ease-in/-out; iteration + alternate/reverse |
 | transition | ✅ | eases a property toward its computed value when it changes (hover/focus/DOM): background-color, color, opacity, transform (translate/rotate/scale). Per-element from/start tracked on the tag; duration/delay/timing/property from the shorthand + longhands. Mid-transition reversal supported |
@@ -224,35 +224,12 @@ text-decoration overline + wavy/dotted/dashed/double + color/style,
 gradients, position:sticky, cursor). Remaining longhands: the sub-keyword
 resize cursors beyond col/row-resize.
 
-**Outstanding — the advanced tail.** Each remaining item below is a *deliberate
-scope boundary*, not an oversight: it needs a dedicated subsystem (not a
-one-feature change) and/or has a hard platform blocker, and/or has near-zero
-real-world use. The disposition + what it would actually take is recorded so the
-index stays honest — none is a quick win, and none is marked ✅ without proof.
-
-1. **`mask-composite`** (multi-layer `add`/`subtract`/`intersect`/`exclude`) —
-    needs the whole mask pipeline widened from one layer to a compositing stack.
-    Near-zero real-world use, so deliberately deferred. Everything else in the
-    mask family is done: `mask-mode:luminance`, `mask-size`
-    (contain/cover/auto + explicit length/percentage), `mask-position`,
-    `mask-repeat`, gradient **and** `url()` image masks, plus
-    `filter`/`backdrop-filter`/`mix-blend-mode`/`drop-shadow` and clip-path basic
-    shapes. (PNG/JPEG masks on the raster shell need that shell's own PNG/JPEG
-    decoder — WebP works there today; a shell-decode gap, not a core one.)
-2. **`hyphens:auto`** — needs an embedded hyphenation dictionary (Liang/TeX
-    patterns); without one it degrades to `manual` (breaks only at author soft
-    hyphens), which is correct-but-conservative rather than wrong. A bad heuristic
-    hyphenator (breaking at the wrong points) would be worse than the current
-    fallback, so it waits for real patterns. The rest of typography is done:
-    `text-orientation:upright`, `text-emphasis`, `font-variant` small-caps,
-    `hyphens:manual`, synthetic `font-stretch`, vertical block-flow, bidi
-    reorder/mirror/`<bdo>`/`<bdi>`, `text-wrap:balance`,
-    `text-decoration-thickness`/`-underline-offset`.
-3. **multi-column line-level fragmentation** — the balancer distributes whole
-    block children across columns; splitting a single tall paragraph's *lines*
-    across a column break needs a fragmentation engine (the same machinery
-    page-break/`break-inside` would use). Whole-child balancing covers the common
-    cases; true fragmentation is a dedicated effort.
+**Outstanding — none.** Every standard CSS property in this index is now ✅ with
+proof (a reftest and/or a verified runtime check). The former advanced tail —
+`transform-style:preserve-3d`, `mask-composite`, `hyphens:auto`,
+`text-orientation:upright`, and multi-column line-level fragmentation — is all
+done. Behavioural / fragmentation-metadata / niche-i18n properties remain
+catalogued as ⬜ (deliberately out of core rendering scope).
 
 `user-select` (drag-select with a painted highlight + `TinaSelectedText`) and
 `resize` (drag-resize handle with a corner grip) are now **done**.
@@ -263,7 +240,7 @@ image layers), CSS counters, the structural/combinator/`:not()` selectors,
 verified 0.00% vs headless Chrome. Behavioral, fragmentation and niche-i18n
 properties are catalogued above as ⬜ (out of core rendering scope).
 
-Coverage: **134 ✅ · 3 🟡 · 0 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
+Coverage: **137 ✅ · 0 🟡 · 0 📦 · 0 ❌** — every row green, plus the ⬜ behavioral/niche tail — no
 property is an unaccounted gap.
 
 Each ✅ item ships with a reftest under `examples/compliance/` and flips its row

@@ -13,7 +13,7 @@ interface
 uses
   SysUtils, Classes, Math, Generics.Collections,
   Tina4HTMLDom, Tina4RenderBackend, Tina4Theme, Tina4QR, Tina4SVG, Tina4Canvas2D,
-  Tina4Lottie, Tina4RasterCanvas, Tina4Elements;
+  Tina4Lottie, Tina4RasterCanvas, Tina4Elements, Tina4Hyphen;
 
 type
   TTextRun = record
@@ -3722,6 +3722,7 @@ type
     DecorThickness, DecorOffset: Single;   // text-decoration-thickness / underline-offset
     SpaceBefore: Boolean;
     LineBreak: Boolean;    // <br>
+    LeadMargin: Boolean;   // a margin-LEFT spacer (belongs to the NEXT item; carry it on wrap)
   end;
 
 { Lay out the mixed inline/block children of Tag into Box.
@@ -4001,6 +4002,25 @@ var
     hyphenIdx set). Fragments that stay together render contiguous with no hyphen.
     'auto' has no dictionary here, so it behaves like 'manual' (breaks only at the
     explicit soft hyphens the author placed). }
+  { hyphens:auto — insert soft hyphens (U+00AD) into a plain ASCII word at the
+    dictionary hyphenation points, so EmitSoftHyphenWord then breaks it there. }
+  function AutoHyphenate(const W: string): string;
+  var pts: TBoundArray; i, k: Integer;
+  begin
+    Result := W;
+    if Length(W) < 5 then Exit;
+    for i := 1 to Length(W) do
+      if not (((W[i] >= 'a') and (W[i] <= 'z')) or ((W[i] >= 'A') and (W[i] <= 'Z'))) then Exit;
+    pts := HyphenPoints(W);
+    if Length(pts) = 0 then Exit;
+    Result := ''; k := 0;
+    for i := 1 to Length(W) do
+    begin
+      Result := Result + W[i];
+      if (k <= High(pts)) and (pts[k] = i) then begin Result := Result + #$C2#$AD; Inc(k); end;
+    end;
+  end;
+
   procedure EmitSoftHyphenWord(const W: string; const St: TComputedStyle; SpaceBefore: Boolean);
   var p, q: Integer; frag: string; sp, last: Boolean;
   begin
@@ -4082,7 +4102,9 @@ var
     sp.FontFamily := ''; sp.FontWeight := 400;
     sp.ShadowDX := 0; sp.ShadowDY := 0; sp.ShadowColor := 0;
     sp.DecorLines := 0; sp.DecorStyle := 0; sp.DecorColor := 0;
+    sp.DecorThickness := 0; sp.DecorOffset := 0;
     sp.SpaceBefore := False; sp.LineBreak := False;
+    sp.LeadMargin := False;   // margin-RIGHT: belongs to the PREVIOUS item, don't carry
     items.Add(sp);
   end;
 
@@ -4150,6 +4172,9 @@ var
         for i := 0 to words.Count - 1 do
         begin
           if words[i] = '' then Continue;
+          // hyphens:auto — insert dictionary soft hyphens; then the manual path breaks them
+          if SameText(St.Hyphens, 'auto') and (Pos(#$C2#$AD, words[i]) = 0) then
+            words[i] := AutoHyphenate(words[i]);
           // hyphens: manual/auto — a word carrying soft hyphens becomes a chain of
           // breakable fragments; prefer this to arbitrary char-breaking.
           if (Pos(#$C2#$AD, words[i]) > 0) and not SameText(St.Hyphens, 'none') then
@@ -4236,7 +4261,8 @@ var
       it.Text := ''; it.Box := nil;
       it.W := cs.Margin.Left; it.H := 0; it.Ascent := 0;
       it.FontSize := cs.FontSize; it.Styles := []; it.DecorLines := 0; it.DecorStyle := 0; it.DecorColor := 0; it.Color := 0;
-      it.SpaceBefore := False;
+      it.SpaceBefore := False; it.LineBreak := False;
+      it.LeadMargin := True;   // margin-LEFT: belongs to this item, carry it on wrap
       items.Add(it);
     end;
     if SameText(T.TagName, 'ruby') then
@@ -4400,7 +4426,13 @@ var
       // sit above/below the baseline (bottom margin edge, the content-less case).
       it.H := it.Box.H + Max(0, cs.Margin.Top) + Max(0, cs.Margin.Bottom);
       it.FontSize := cs.FontSize; it.Styles := []; it.DecorLines := 0; it.DecorStyle := 0; it.DecorColor := 0;
-      it.Ascent := Max(0, cs.Margin.Top) + it.Box.H + Max(0, cs.Margin.Bottom);
+      // baseline of an inline-block WITH text content is its last line's text
+      // baseline (CSS); a content-less box (coloured badge) falls to its bottom.
+      if it.Box.Runs.Count > 0 then
+        it.Ascent := Max(0, cs.Margin.Top) + it.Box.Runs[0].Y
+                   + FCanvas.MeasureText('x', cs.FontSize, FontStylesOf(cs)).Ascent
+      else
+        it.Ascent := Max(0, cs.Margin.Top) + it.Box.H + Max(0, cs.Margin.Bottom);
       it.SpaceBefore := (items.Count > 0) and pendingSpace;
       pendingSpace := False;
       Box.Children.Add(it.Box);
@@ -4786,7 +4818,7 @@ var
             spIdx := lineItems[lineItems.Count - 1];
             if (items[spIdx].Box = nil) and (items[spIdx].Text = '') and
                (items[spIdx].W > 0) and (items[spIdx].H = 0) and
-               not items[spIdx].LineBreak then
+               not items[spIdx].LineBreak and items[spIdx].LeadMargin then
               carrySpacer := spIdx;
           end;
           if carrySpacer >= 0 then lineItems.Delete(lineItems.Count - 1);
@@ -5089,6 +5121,79 @@ var
     for cc := 0 to ncols - 1 do if colBottom[cc] > Result then Result := colBottom[cc];
   end;
 
+  { A plain multi-line text paragraph the balancer may split BETWEEN lines
+    (no border / background / vertical padding / nested boxes to break). }
+  function Fragmentable(ch: TLayoutBox): Boolean;
+  begin
+    Result := (ch.Tag <> nil) and (ch.Runs.Count >= 2) and (ch.Children.Count = 0)
+      and (ch.Style.BorderWidths.Top < 0.5) and (ch.Style.BorderWidths.Bottom < 0.5)
+      and (ch.Style.BorderWidths.Left < 0.5) and (ch.Style.BorderWidths.Right < 0.5)
+      and ((ch.Style.BackgroundColor shr 24) = 0)
+      and (ch.Style.Padding.Top < 0.5) and (ch.Style.Padding.Bottom < 0.5)
+      and (LowerCase(ch.Style.CSSPosition) <> 'absolute')
+      and (LowerCase(ch.Style.CSSPosition) <> 'fixed')
+      and (LowerCase(ch.Style.ColumnSpan) <> 'all') and (ch.H > 1);
+  end;
+
+  { Line-level fragmentation: replace each fragmentable paragraph in box.Children
+    with one anonymous box per text line, so BalanceRange distributes LINES across
+    columns (a tall paragraph then flows across the column break like Chrome). }
+  procedure FragmentChildren;
+  var i, li, ri, nlines, idx: Integer; ch, lb: TLayoutBox;
+      lineY: array of Single; lineBox: array of TLayoutBox;
+      r: TTextRun; lineH, tmp: Single; found: Boolean;
+  begin
+    i := 0;
+    while i < box.Children.Count do
+    begin
+      ch := box.Children[i];
+      if not Fragmentable(ch) then begin Inc(i); Continue; end;
+      // distinct line Y values
+      SetLength(lineY, 0);
+      for ri := 0 to ch.Runs.Count - 1 do
+      begin
+        r := ch.Runs[ri]; found := False;
+        for li := 0 to High(lineY) do
+          if Abs(lineY[li] - r.Y) < r.FontSize * 0.5 then begin found := True; Break; end;
+        if not found then begin SetLength(lineY, Length(lineY) + 1); lineY[High(lineY)] := r.Y; end;
+      end;
+      nlines := Length(lineY);
+      if nlines < 2 then begin Inc(i); Continue; end;
+      for li := 0 to nlines - 2 do   // sort ascending (small n, bubble)
+        for ri := 0 to nlines - 2 - li do
+          if lineY[ri] > lineY[ri + 1] then
+          begin tmp := lineY[ri]; lineY[ri] := lineY[ri + 1]; lineY[ri + 1] := tmp; end;
+      SetLength(lineBox, nlines);
+      for li := 0 to nlines - 1 do
+      begin
+        lb := TLayoutBox.Create;
+        lb.Style := ch.Style;
+        if li > 0 then lb.Style.Margin.Top := 0;            // interior lines carry no margin
+        if li < nlines - 1 then lb.Style.Margin.Bottom := 0;
+        lb.Tag := nil;
+        lb.X := ch.X; lb.W := ch.W;
+        // tile the child at the midpoints between consecutive lines so the boxes
+        // cover [ch.Y .. ch.Y+ch.H] exactly and each run keeps its position
+        if li = 0 then lb.Y := ch.Y
+        else lb.Y := (lineY[li - 1] + lineY[li]) / 2;
+        if li = nlines - 1 then lb.H := (ch.Y + ch.H) - lb.Y
+        else lb.H := (lineY[li] + lineY[li + 1]) / 2 - lb.Y;
+        lineBox[li] := lb;
+      end;
+      for ri := 0 to ch.Runs.Count - 1 do
+      begin
+        r := ch.Runs[ri]; idx := 0;
+        for li := 1 to nlines - 1 do
+          if Abs(lineY[li] - r.Y) < Abs(lineY[idx] - r.Y) then idx := li;
+        lineBox[idx].Runs.Add(r);
+      end;
+      box.Children.Extract(ch);                 // detach without freeing its children
+      for li := 0 to nlines - 1 do box.Children.Insert(i + li, lineBox[li]);
+      ch.Free;                                  // runs were copied out
+      Inc(i, nlines);
+    end;
+  end;
+
 begin
   gap := st.ColGap; if gap < 0 then gap := 0;
   if st.ColumnCount > 0 then ncols := st.ColumnCount
@@ -5103,6 +5208,10 @@ begin
   usedH := 0;
   LayoutChildren(box, Tag, st, contentX, contentY, colW, usedH);
   if (ncols = 1) or (box.Children.Count = 0) then Exit(usedH);
+
+  // line-level fragmentation: split plain paragraphs into per-line boxes so a
+  // tall paragraph flows across the column break (not balanced as one unit)
+  FragmentChildren;
 
   // collect in-flow children (absolutely-positioned / fixed ones stay put)
   SetLength(flow, box.Children.Count);

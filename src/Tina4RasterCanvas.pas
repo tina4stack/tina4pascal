@@ -763,7 +763,8 @@ begin
     if (Pos('url(', LowerCase(MaskSpec)) > 0) and
        DecodeMaskImage(MaskSpec, mW, mH, mPix) and (Length(mPix) > 0) then
       mPtr := PCardinalBuf(@mPix[0]);
-    ApplyFilterChainF(PSingleBuf(@fbuf[0]), lw, lh, FilterSpec, MaskSpec, 1, mPtr, mW, mH);
+    ApplyFilterChainF(PSingleBuf(@fbuf[0]), lw, lh, FilterSpec, MaskSpec, 1, mPtr, mW, mH,
+      False, DecodeMaskImage);
     for i := 0 to lw * lh - 1 do
     begin
       fa := fbuf[i*4+3];

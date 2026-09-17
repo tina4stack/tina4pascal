@@ -12,11 +12,15 @@ unit Tina4Compositor;
 
 interface
 
-uses SysUtils, Classes, Math;
+uses SysUtils, Classes, Math, Tina4RenderBackend;
 
 type
   PSingleBuf = ^Single;
   PCardinalBuf = ^Cardinal;
+  { Decode a mask url() layer to straight $AARRGGBB pixels — the shell passes its
+    DecodeMaskImage so the compositor can decode the 2nd+ layer of a multi-layer
+    mask-composite (the first layer is already decoded and passed as MaskPix). }
+  TMaskDecodeCb = function(const Spec: string; out W, H: Integer; out Pix: TTina4Pixels): Boolean of object;
 
 { IEEE-754 binary16 (half) <-> single, for shells whose offscreen buffer is
   16-bit float (macOS lockFocus hands one back). }
@@ -32,7 +36,7 @@ function Single2Half(s: Single): Word;
 procedure ApplyFilterChainF(buf: PSingleBuf; pw, ph: Integer;
   const FilterSpec, MaskSpec: string; Scale: Single;
   MaskPix: PCardinalBuf = nil; MaskW: Integer = 0; MaskH: Integer = 0;
-  MaskLuminance: Boolean = False);
+  MaskLuminance: Boolean = False; DecodeCb: TMaskDecodeCb = nil);
 
 { Map a CSS mix-blend-mode name to a CoreGraphics CGBlendMode integer (both
   shells use CoreGraphics; '' / 'normal' -> 0 = kCGBlendModeNormal). }
@@ -593,15 +597,99 @@ begin
     end;
 end;
 
+{ Apply a CSS mask (one or more comma-separated layers) to the premultiplied
+  buffer's alpha. A single layer takes the fast path. Multiple layers each render
+  their coverage onto an opaque scratch buffer (reusing the gradient / image mask
+  routines), then combine per `mask-composite` (add / subtract / intersect /
+  exclude, folded in as a `##composite=` sentinel), and the result multiplies the
+  buffer's alpha. The 2nd+ url() layer is decoded via DecodeCb. }
+procedure ApplyMaskLayers(buf: PSingleBuf; pw, ph: Integer; const Spec: string;
+  Scale: Single; MaskPix: PCardinalBuf; MaskW, MaskH: Integer;
+  MaskLuminance: Boolean; DecodeCb: TMaskDecodeCb);
+var
+  s, opPart, lspec, op: string;
+  layers, ops: TStringArray;
+  i, k, j: Integer;
+  combined, scratch, Ai: array of Single;
+  mfit: Integer; mpx, mpy, msw, msh: Single; mnorep, mlum, mswp, mshp: Boolean;
+  lpix: TTina4Pixels; lw, lh: Integer; lptr: PCardinalBuf;
+  sc, dd: Single;
+
+  procedure FillLayerAlpha(const layerSpec: string; layerIdx: Integer);
+  var kk: Integer;
+  begin
+    for kk := 0 to pw*ph - 1 do
+    begin scratch[kk*4]:=1; scratch[kk*4+1]:=1; scratch[kk*4+2]:=1; scratch[kk*4+3]:=1; end;
+    if Pos('gradient(', LowerCase(layerSpec)) > 0 then
+      ApplyGradientMask(PSingleBuf(@scratch[0]), pw, ph, layerSpec)
+    else if Pos('url(', LowerCase(layerSpec)) > 0 then
+    begin
+      lptr := nil; lw := 0; lh := 0;
+      if (layerIdx = 0) and (MaskPix <> nil) then begin lptr := MaskPix; lw := MaskW; lh := MaskH; end
+      else if Assigned(DecodeCb) and DecodeCb(layerSpec, lw, lh, lpix) and (Length(lpix) > 0) then
+        lptr := PCardinalBuf(@lpix[0]);
+      if lptr <> nil then
+      begin
+        ParseMaskGeom(layerSpec, mfit, mpx, mpy, mnorep, mlum, msw, msh, mswp, mshp);
+        ApplyImageMask(PSingleBuf(@scratch[0]), pw, ph, lptr, lw, lh,
+          MaskLuminance or mlum, mfit, mpx, mpy, mnorep, Scale, msw, msh, mswp, mshp);
+      end
+      else for kk := 0 to pw*ph - 1 do scratch[kk*4+3] := 0;   // undecodable → empty
+    end;
+    for kk := 0 to pw*ph - 1 do Ai[kk] := scratch[kk*4+3];
+  end;
+
+begin
+  // pull the mask-composite sentinel off the end
+  opPart := ''; s := Spec;
+  j := Pos('##composite=', s);
+  if j > 0 then begin opPart := Copy(s, j + 12, MaxInt); s := Trim(Copy(s, 1, j - 1)); end;
+  layers := SplitTopLevel(s);
+  // single layer → the original fast path
+  if Length(layers) <= 1 then
+  begin
+    if Pos('gradient(', LowerCase(s)) > 0 then ApplyGradientMask(buf, pw, ph, s)
+    else if (MaskPix <> nil) and (Pos('url(', LowerCase(s)) > 0) then
+    begin
+      ParseMaskGeom(s, mfit, mpx, mpy, mnorep, mlum, msw, msh, mswp, mshp);
+      ApplyImageMask(buf, pw, ph, MaskPix, MaskW, MaskH,
+        MaskLuminance or mlum, mfit, mpx, mpy, mnorep, Scale, msw, msh, mswp, mshp);
+    end;
+    Exit;
+  end;
+  ops := Trim(opPart).Split([',']);
+  SetLength(combined, pw*ph); SetLength(Ai, pw*ph); SetLength(scratch, pw*ph*4);
+  FillLayerAlpha(Trim(layers[0]), 0);
+  for k := 0 to pw*ph - 1 do combined[k] := Ai[k];
+  for i := 1 to High(layers) do
+  begin
+    FillLayerAlpha(Trim(layers[i]), i);
+    if i - 1 <= High(ops) then op := Trim(ops[i-1]) else op := 'add';
+    for k := 0 to pw*ph - 1 do
+    begin
+      sc := Ai[k]; dd := combined[k];   // source = this layer, dest = accumulation
+      if op = 'subtract' then combined[k] := dd * (1 - sc)   // dest where outside source
+      else if op = 'intersect' then combined[k] := sc * dd
+      else if op = 'exclude' then combined[k] := sc + dd - 2*sc*dd
+      else combined[k] := sc + dd - sc*dd;   // add (source-over union)
+    end;
+  end;
+  for k := 0 to pw*ph - 1 do
+  begin
+    buf[k*4]   := buf[k*4]   * combined[k];
+    buf[k*4+1] := buf[k*4+1] * combined[k];
+    buf[k*4+2] := buf[k*4+2] * combined[k];
+    buf[k*4+3] := buf[k*4+3] * combined[k];
+  end;
+end;
+
 procedure ApplyFilterChainF(buf: PSingleBuf; pw, ph: Integer;
   const FilterSpec, MaskSpec: string; Scale: Single;
   MaskPix: PCardinalBuf; MaskW: Integer; MaskH: Integer;
-  MaskLuminance: Boolean);
+  MaskLuminance: Boolean; DecodeCb: TMaskDecodeCb);
 var
   s, fn, arg: string; p, q, depth: Integer;
   toks: TStringArray; sdx, sdy, sblur, i2: Integer; sr, sg, sb, sa2: Single; col: string;
-  mfit: Integer; mpx, mpy: Single; mnorep, mlum: Boolean;
-  msw, msh: Single; mswp, mshp: Boolean;
 begin
   s := LowerCase(FilterSpec); p := 1;
   while p <= Length(s) do
@@ -644,16 +732,8 @@ begin
     end;
   end;
   if MaskSpec <> '' then
-  begin
-    if Pos('gradient(', LowerCase(MaskSpec)) > 0 then
-      ApplyGradientMask(buf, pw, ph, MaskSpec)
-    else if (MaskPix <> nil) and (Pos('url(', LowerCase(MaskSpec)) > 0) then
-    begin
-      ParseMaskGeom(MaskSpec, mfit, mpx, mpy, mnorep, mlum, msw, msh, mswp, mshp);
-      ApplyImageMask(buf, pw, ph, MaskPix, MaskW, MaskH,
-        MaskLuminance or mlum, mfit, mpx, mpy, mnorep, Scale, msw, msh, mswp, mshp);
-    end;
-  end;
+    ApplyMaskLayers(buf, pw, ph, MaskSpec, Scale, MaskPix, MaskW, MaskH,
+      MaskLuminance, DecodeCb);
 end;
 
 procedure WarpQuad(src: PSingleBuf; pw, ph: Integer;

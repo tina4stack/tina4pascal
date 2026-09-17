@@ -962,7 +962,8 @@ end;
 { Decode a rep (8-bit or 16-bit float, pre-/non-premultiplied RGBA) into a planar
   premultiplied Single buffer, run the shared filter+mask chain, write it back. }
 procedure ApplyFilterToRep(rep: NSBitmapImageRep; const Spec, MaskSpec: string; Scale: Single;
-  MaskPix: PCardinalBuf = nil; MaskW: Integer = 0; MaskH: Integer = 0);
+  MaskPix: PCardinalBuf = nil; MaskW: Integer = 0; MaskH: Integer = 0;
+  DecodeCb: TMaskDecodeCb = nil);
 var
   data: PByte; buf: PSingle;
   pw, ph, bpr, bps, n, i, o, so: Integer;
@@ -998,7 +999,8 @@ begin
       if not premult then
       begin buf[so] := buf[so]*buf[so+3]; buf[so+1] := buf[so+1]*buf[so+3]; buf[so+2] := buf[so+2]*buf[so+3]; end;
     end;
-    ApplyFilterChainF(PSingleBuf(buf), pw, ph, Spec, MaskSpec, Scale, MaskPix, MaskW, MaskH);
+    ApplyFilterChainF(PSingleBuf(buf), pw, ph, Spec, MaskSpec, Scale, MaskPix, MaskW, MaskH,
+      False, DecodeCb);
     for i := 0 to n - 1 do
     begin
       o := (i div pw) * bpr + (i mod pw) * bps * 4; so := i * 4;
@@ -1066,7 +1068,7 @@ begin
       if (Pos('url(', LowerCase(MaskSpec)) > 0) and
          DecodeMaskImage(MaskSpec, mW, mH, mPix) and (Length(mPix) > 0) then
         mPtr := PCardinalBuf(@mPix[0]);
-      ApplyFilterToRep(rep, FilterSpec, MaskSpec, sc, mPtr, mW, mH);
+      ApplyFilterToRep(rep, FilterSpec, MaskSpec, sc, mPtr, mW, mH, DecodeMaskImage);
     end;
     if BlendMode <> '' then
     begin

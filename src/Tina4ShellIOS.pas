@@ -799,7 +799,7 @@ begin
   begin
     GetMem(buf, pw * ph * 4 * SizeOf(Single));
     for i := 0 to pw * ph * 4 - 1 do buf[i] := data[i] / 255;   // 8-bit premult → Single
-    ApplyFilterChainF(PSingleBuf(buf), pw, ph, FilterSpec, MaskSpec, sc);
+    ApplyFilterChainF(PSingleBuf(buf), pw, ph, FilterSpec, MaskSpec, sc, nil, 0, 0, False, DecodeMaskImage);
     for i := 0 to pw * ph * 4 - 1 do
     begin v := buf[i]; if v < 0 then v := 0; if v > 1 then v := 1; data[i] := Round(v * 255); end;
     FreeMem(buf);
