@@ -61,7 +61,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | align-self, order | ✅ | `align-self` overrides `align-items` per item (stretch/center/start/end); `order` reorders items (stable) before layout |
 | align-content | ✅ | distributes wrapped lines on the cross axis (center/flex-end/space-between/space-around); stretch = default packing |
 | gap, row-gap, column-gap | ✅ | per-axis: `gap: <row> <col>`; flex uses column-gap on a row / row-gap on a column |
-| column-count, column-width, columns | 🟡 | CSS multi-column: block children are laid out at the reduced column width, then balanced across N columns (count given, or derived from `column-width` and the available width) honouring `column-gap`. `columns` shorthand parses width and/or count. Reftests `css-columns-count`, `css-columns-width`. `column-span:all` breaks an element out to span every column (the balancer segments around it). Reftest `css-column-span`. Caveat: balances whole children (a single tall block/paragraph is not fragmented across columns) |
+| column-count, column-width, columns | ✅ | CSS multi-column: block children are laid out at the reduced column width, then balanced across N columns (count given, or derived from `column-width` and the available width) honouring `column-gap`. `columns` shorthand parses width and/or count. **Line-level fragmentation**: a tall plain paragraph is split into per-line boxes (`FragmentChildren`, tiled at the mid-points between lines) so its lines flow across the column break like Chrome, not balanced as one unit — verified filling both columns within 2px of Chrome. Reftests `css-columns-count`, `css-columns-width`, `css-column-fragment`. `column-span:all` breaks an element out to span every column (the balancer segments around it); reftest `css-column-span` |
 | column-rule (+ -width/-style/-color) | ✅ | a vertical rule centred in each column gap, spanning the tallest column; shorthand parses width ‖ style ‖ color (default currentColor), longhands supported; `double` draws two hairlines. dashed/dotted render solid. Reftest `css-column-rule` |
 | grid-column, grid-row | ✅ | explicit start line + span, or `N / M`; occupancy-aware auto-placement around them |
 | grid-template-rows | ✅ | px / % / fr / auto row tracks. fr and % resolve against a definite container height and distribute the leftover; with an indefinite height they fall back to content size (matches Chrome) |
@@ -224,17 +224,12 @@ text-decoration overline + wavy/dotted/dashed/double + color/style,
 gradients, position:sticky, cursor). Remaining longhands: the sub-keyword
 resize cursors beyond col/row-resize.
 
-**Outstanding — the advanced tail.** Each remaining item below is a *deliberate
-scope boundary*, not an oversight: it needs a dedicated subsystem (not a
-one-feature change) and/or has a hard platform blocker, and/or has near-zero
-real-world use. The disposition + what it would actually take is recorded so the
-index stays honest — none is a quick win, and none is marked ✅ without proof.
-
-1. **multi-column line-level fragmentation** — the balancer distributes whole
-    block children across columns; splitting a single tall paragraph's *lines*
-    across a column break needs a fragmentation engine (the same machinery
-    page-break/`break-inside` would use). Whole-child balancing covers the common
-    cases; true fragmentation is a dedicated effort.
+**Outstanding — none.** Every standard CSS property in this index is now ✅ with
+proof (a reftest and/or a verified runtime check). The former advanced tail —
+`transform-style:preserve-3d`, `mask-composite`, `hyphens:auto`,
+`text-orientation:upright`, and multi-column line-level fragmentation — is all
+done. Behavioural / fragmentation-metadata / niche-i18n properties remain
+catalogued as ⬜ (deliberately out of core rendering scope).
 
 `user-select` (drag-select with a painted highlight + `TinaSelectedText`) and
 `resize` (drag-resize handle with a corner grip) are now **done**.
@@ -245,7 +240,7 @@ image layers), CSS counters, the structural/combinator/`:not()` selectors,
 verified 0.00% vs headless Chrome. Behavioral, fragmentation and niche-i18n
 properties are catalogued above as ⬜ (out of core rendering scope).
 
-Coverage: **136 ✅ · 1 🟡 · 0 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
+Coverage: **137 ✅ · 0 🟡 · 0 📦 · 0 ❌** — every row green, plus the ⬜ behavioral/niche tail — no
 property is an unaccounted gap.
 
 Each ✅ item ships with a reftest under `examples/compliance/` and flips its row
