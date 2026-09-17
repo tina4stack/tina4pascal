@@ -162,6 +162,14 @@ type
     function averagePowerForChannel(channel: NSUInteger): single; message 'averagePowerForChannel:';
   end;
 
+  { AVPlayerLooper (AVFoundation, 10.12+) isn't in the FPC binding — declare the
+    one class method we need. It loops a template item forever on a queue player. }
+  AVPlayerLooper = objcclass external (NSObject)
+  public
+    class function playerLooperWithPlayer_templateItem(player: AVQueuePlayer;
+      itemTemplate: AVPlayerItem): AVPlayerLooper; message 'playerLooperWithPlayer:templateItem:';
+  end;
+
 var
   { @font-face aliases: CSS family (lowercased) -> the font's real registered
     name. Process-global because CoreText registration is process-wide and the
@@ -169,6 +177,8 @@ var
   GFontAlias: TStringList = nil;
   { native <video> overlays, keyed by source URL (NSString -> AVPlayerView) }
   GVideoViews: NSMutableDictionary = nil;
+  { retained AVPlayerLooper per looping <video> (else it deallocs and stops) }
+  GVideoLoopers: NSMutableDictionary = nil;
   { bundled fonts: scanned once, flags say which DejaVu generics shipped so
     FontFor can back the CSS generics with them (see docs/BUNDLED-FONTS.md). }
   GBundledScanned: Boolean = False;
@@ -1204,8 +1214,10 @@ var
   n, i, flags: LongInt; x, y, w, h: Single; src: string;
   key: NSString; url: NSURL; player: AVPlayer; pv: AVPlayerView;
   live: NSMutableSet; keys: NSArray; k: LongWord;
+  qp: AVQueuePlayer; item: AVPlayerItem; looper: AVPlayerLooper;
 begin
   if GVideoViews = nil then GVideoViews := NSMutableDictionary.alloc.init;
+  if GVideoLoopers = nil then GVideoLoopers := NSMutableDictionary.alloc.init;
   n := TinaEmbedCount;
   live := NSMutableSet.setWithCapacity(8);
   for i := 0 to n - 1 do
@@ -1221,7 +1233,19 @@ begin
       url := NSURL.URLWithString(key);
       if url = nil then Continue;
       flags := TinaEmbedFlags(i);   // 1 controls·2 autoplay·4 loop·8 muted
-      player := AVPlayer.playerWithURL(url);
+      if (flags and 4) <> 0 then
+      begin
+        // `loop`: an AVQueuePlayer + AVPlayerLooper replays the item forever.
+        // The looper must be retained (kept in GVideoLoopers) or it deallocs and
+        // playback stops after one pass.
+        qp := AVQueuePlayer.alloc.init;
+        item := AVPlayerItem.playerItemWithURL(url);
+        looper := AVPlayerLooper.playerLooperWithPlayer_templateItem(qp, item);
+        GVideoLoopers.setObject_forKey(looper, key);
+        player := qp;
+      end
+      else
+        player := AVPlayer.playerWithURL(url);
       player.setMuted((flags and 8) <> 0);                    // `muted`
       pv := AVPlayerView(AVPlayerView.alloc).initWithFrame(NSMakeRect(x, y, w, h));
       pv.setPlayer(player);
@@ -1232,7 +1256,7 @@ begin
       pv.setVideoGravity(AVLayerVideoGravityResizeAspect);
       host.addSubview(pv);
       GVideoViews.setObject_forKey(pv, key);
-      if (flags and 2) <> 0 then player.play;                 // `autoplay` (loop: TODO on macOS)
+      if (flags and 2) <> 0 then player.play;                 // `autoplay`
     end
     else
       pv.setFrame(NSMakeRect(x, y, w, h));   // track scroll
@@ -1252,6 +1276,7 @@ begin
         pv.removeFromSuperview;
       end;
       GVideoViews.removeObjectForKey(key);
+      if GVideoLoopers <> nil then GVideoLoopers.removeObjectForKey(key);   // drop the looper
     end;
   end;
 end;
