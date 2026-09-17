@@ -1769,12 +1769,13 @@ begin
            GLayoutDirty := True;
            Exit;
          end;
-         // extending a text selection tracks the finger, never scrolls
+         // extending a text selection tracks the finger, never scrolls. Selection
+         // changes pixels, not layout, so DON'T relayout — the shell's post-touch
+         // repaint picks up the new highlight (same as the scroll drag below).
          if GSelecting then
          begin
            GLastX := cx; GLastY := cy; GMoved := True;
            SetTextSelection(True, GSelAnchorX, GSelAnchorY, cx, cy + GScrollY);
-           GLayoutDirty := True;
            Exit;
          end;
          // dragging a range slider tracks the finger, never scrolls the page
