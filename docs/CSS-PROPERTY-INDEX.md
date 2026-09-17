@@ -86,6 +86,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | word-spacing | ✅ | extra px added to every inter-word space (inherited; affects wrap + alignment) |
 | text-align | ✅ | left/center/right/justify (justify spreads slack across word gaps; last line stays left) |
 | text-decoration | ✅ | underline / line-through / overline; shorthand parses line + style + color in any order, plus `text-decoration-line/-style/-color` longhands. Solid same-color stays on the cheap font underline; a non-solid **style** (wavy zig-zag / dotted / dashed / double) or a distinct **color** is hand-painted (`PaintDecorLine`) with the font line suppressed |
+| text-decoration-thickness, text-underline-offset | ✅ | a custom thickness (px, or `auto`/`from-font`) or a non-zero underline offset forces the hand-painted path and sets the stroke width / pushes the underline further below the baseline. Reftest `css-underline-thickness` |
 | text-transform | ✅ | uppercase/lowercase/capitalize applied to painted glyphs |
 | text-indent | ✅ | first formatted line indented (left-aligned blocks) |
 | text-overflow | ✅ | ellipsis truncation (single nowrap line): truncates the crossing run + drops the rest |

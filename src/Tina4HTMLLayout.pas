@@ -31,6 +31,7 @@ type
     // 1=underline 2=line-through 4=overline. DecorStyle: 0 solid 1 double
     // 2 dotted 3 dashed 4 wavy. DecorColor 0 => use text color.
     DecorLines, DecorStyle: Byte; DecorColor: TTina4Color;
+    DecorThickness, DecorOffset: Single;  // text-decoration-thickness / underline-offset (0 = auto)
   end;
 
   { Form controls are DRAWN by the renderer (no native widgets); their state
@@ -94,7 +95,7 @@ type
     FCounters: TDictionary<string, TList<Integer>>;  // CSS counters: name -> nesting stack
     function FontStylesOf(const St: TComputedStyle): TTina4FontStyles;
     procedure ComputeDecor(const St: TComputedStyle; var FS: TTina4FontStyles;
-      out Lines, Sty: Byte; out Col: TTina4Color);
+      out Lines, Sty: Byte; out Col: TTina4Color; out Th, Off: Single);
     function LineHeightOf(const St: TComputedStyle): Single;
     procedure LayoutChildren(Box: TLayoutBox; Tag: THTMLTag;
       const ParentStyle: TComputedStyle; CX, CY, CW: Single; out UsedH: Single);
@@ -1128,18 +1129,21 @@ end;
   colour needs manual painting; the plain solid case stays on the cheap
   font-drawn underline/strike, so FS is left untouched and Lines stays 0. }
 procedure TLayoutEngine.ComputeDecor(const St: TComputedStyle;
-  var FS: TTina4FontStyles; out Lines, Sty: Byte; out Col: TTina4Color);
+  var FS: TTina4FontStyles; out Lines, Sty: Byte; out Col: TTina4Color;
+  out Th, Off: Single);
 var td: string;
 begin
-  Lines := 0;
+  Lines := 0; Th := St.UnderThickness; Off := St.UnderOffset;
   Sty := DecorStyleByte(St.TextDecorationStyle);
   Col := St.TextDecorationColor;
-  if (Sty = 0) and (Col = 0) then Exit;   // font/legacy path handles it
+  // font-drawn path only when nothing needs hand painting — a non-solid style, a
+  // distinct colour, or a custom thickness / underline-offset all force it.
+  if (Sty = 0) and (Col = 0) and (St.UnderThickness <= 0) and (St.UnderOffset = 0) then Exit;
   td := LowerCase(St.TextDecoration);
   if Pos('underline', td) > 0 then Lines := Lines or 1;
   if Pos('line-through', td) > 0 then Lines := Lines or 2;
   if Pos('overline', td) > 0 then Lines := Lines or 4;
-  if Lines = 0 then begin Sty := 0; Col := 0; Exit; end;  // color/style but no line
+  if Lines = 0 then begin Sty := 0; Col := 0; Th := 0; Off := 0; Exit; end;  // style/thickness but no line
   Exclude(FS, tfsUnderline); Exclude(FS, tfsStrike); Exclude(FS, tfsOverline);
 end;
 
@@ -1197,7 +1201,12 @@ begin
   if ResolveSize(St.ExplicitHeight, 0) >= 0 then
     Result.H := St.ExplicitHeight + padV
   else
-    Result.H := LineHeightOf(St) + padV;
+    // An inline element's background/padding box is sized by the font's content
+    // box (ascent+descent), NOT the author line-height — a `line-height:1.5`
+    // ancestor must not inflate a padded <span>/badge. Fall back to the line
+    // height only when there is no text metric.
+    if m.LineHeight > 0 then Result.H := m.LineHeight + padV
+    else Result.H := LineHeightOf(St) + padV;
   if txt <> '' then
   begin
     run.Text := txt;
@@ -1211,7 +1220,7 @@ begin
     run.Color := St.Color; run.LetterSpacing := 0;
     run.FontFamily := St.FontFamily; run.FontWeight := St.FontWeight;
     run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
-    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor);
+    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor, run.DecorThickness, run.DecorOffset);
     Result.Runs.Add(run);
   end;
 end;
@@ -1258,7 +1267,7 @@ begin
     run.FontSize := rtFS; run.Styles := FontStylesOf(St); run.Color := St.Color;
     run.LetterSpacing := 0; run.FontFamily := St.FontFamily; run.FontWeight := St.FontWeight;
     run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
-    run.DecorLines := 0; run.DecorStyle := 0; run.DecorColor := 0;
+    run.DecorLines := 0; run.DecorStyle := 0; run.DecorColor := 0; run.DecorThickness := 0; run.DecorOffset := 0;
     Result.Runs.Add(run);
   end;
   if baseTxt <> '' then
@@ -1268,7 +1277,7 @@ begin
     run.FontSize := baseFS; run.Styles := FontStylesOf(St); run.Color := St.Color;
     run.LetterSpacing := St.LetterSpacing; run.FontFamily := St.FontFamily; run.FontWeight := St.FontWeight;
     run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
-    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor);
+    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor, run.DecorThickness, run.DecorOffset);
     Result.Runs.Add(run);
   end;
 end;
@@ -2153,7 +2162,7 @@ begin
       run.FontSize := St.FontSize; run.Styles := FontStylesOf(St);
       run.Color := $FF9CA3AF; run.LetterSpacing := 0;
       run.FontWeight := St.FontWeight; run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
-    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor);
+    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor, run.DecorThickness, run.DecorOffset);
       Result.Runs.Add(run);
       Exit;
     end;
@@ -2180,7 +2189,7 @@ begin
         run.Styles := FontStylesOf(St);
         run.Color := St.Color; run.LetterSpacing := 0;
         run.FontWeight := St.FontWeight; run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
-    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor);
+    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor, run.DecorThickness, run.DecorOffset);
         Result.Runs.Add(run);
       end;
     finally
@@ -2211,7 +2220,7 @@ begin
     if (kind = ckButton) or St.AppearanceNone then    // centre the caption
       run.X := (Result.W - m.Width) / 2;
     run.FontWeight := St.FontWeight; run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
-    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor);
+    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor, run.DecorThickness, run.DecorOffset);
     Result.Runs.Add(run);
   end;
 end;
@@ -3539,6 +3548,7 @@ type
     FontWeight: Integer;
     ShadowDX, ShadowDY: Single; ShadowColor: TTina4Color;
     DecorLines, DecorStyle: Byte; DecorColor: TTina4Color;
+    DecorThickness, DecorOffset: Single;   // text-decoration-thickness / underline-offset
     SpaceBefore: Boolean;
     LineBreak: Boolean;    // <br>
   end;
@@ -3649,7 +3659,7 @@ var
     qi.Ascent := (qi.H - (qm.Ascent + qm.Descent)) / 2 + qm.Ascent;
     qi.FontSize := St.FontSize; qi.Styles := FontStylesOf(St); qi.Color := St.Color;
     qi.LetterSpacing := St.LetterSpacing; qi.FontFamily := St.FontFamily; qi.FontWeight := St.FontWeight; qi.ShadowDX := St.TextShadowOffsetX; qi.ShadowDY := St.TextShadowOffsetY; if St.TextShadowActive then qi.ShadowColor := St.TextShadowColor else qi.ShadowColor := 0;
-    ComputeDecor(St, qi.Styles, qi.DecorLines, qi.DecorStyle, qi.DecorColor);
+    ComputeDecor(St, qi.Styles, qi.DecorLines, qi.DecorStyle, qi.DecorColor, qi.DecorThickness, qi.DecorOffset);
     qi.SpaceBefore := SpaceBefore and (items.Count > 0); qi.LineBreak := False;
     items.Add(qi);
   end;
@@ -3711,7 +3721,7 @@ var
       r.FontSize := sz; r.Styles := it.Styles - [tfsSmallCaps]; r.Color := it.Color;
       r.LetterSpacing := it.LetterSpacing; r.FontFamily := it.FontFamily; r.FontWeight := it.FontWeight;
       r.ShadowDX := it.ShadowDX; r.ShadowDY := it.ShadowDY; r.ShadowColor := it.ShadowColor;
-      r.DecorLines := it.DecorLines; r.DecorStyle := it.DecorStyle; r.DecorColor := it.DecorColor;
+      r.DecorLines := it.DecorLines; r.DecorStyle := it.DecorStyle; r.DecorColor := it.DecorColor; r.DecorThickness := it.DecorThickness; r.DecorOffset := it.DecorOffset;
       Box.Runs.Add(r);
       cx := cx + m.Width;
     end;
@@ -3755,7 +3765,7 @@ var
     begin ti.Ascent := ti.Ascent + vaShift; ti.FontAscent := ti.FontAscent + vaShift; end;
     ti.FontSize := St.FontSize; ti.Styles := FontStylesOf(St); ti.Color := St.Color;
     ti.LetterSpacing := St.LetterSpacing; ti.FontFamily := St.FontFamily; ti.FontWeight := St.FontWeight; ti.ShadowDX := St.TextShadowOffsetX; ti.ShadowDY := St.TextShadowOffsetY; if St.TextShadowActive then ti.ShadowColor := St.TextShadowColor else ti.ShadowColor := 0;
-    ComputeDecor(St, ti.Styles, ti.DecorLines, ti.DecorStyle, ti.DecorColor);
+    ComputeDecor(St, ti.Styles, ti.DecorLines, ti.DecorStyle, ti.DecorColor, ti.DecorThickness, ti.DecorOffset);
     ti.SpaceBefore := SpaceBefore and (items.Count > 0);
     ti.LineBreak := False;
     items.Add(ti);
@@ -4017,7 +4027,7 @@ var
           it.FontFamily := St.FontFamily;
           it.FontWeight := St.FontWeight;
           it.ShadowDX := St.TextShadowOffsetX; it.ShadowDY := St.TextShadowOffsetY; if St.TextShadowActive then it.ShadowColor := St.TextShadowColor else it.ShadowColor := 0;
-          ComputeDecor(St, it.Styles, it.DecorLines, it.DecorStyle, it.DecorColor);
+          ComputeDecor(St, it.Styles, it.DecorLines, it.DecorStyle, it.DecorColor, it.DecorThickness, it.DecorOffset);
           it.SpaceBefore := (items.Count > 0) and ((i > 0) or leadingSpace);
           items.Add(it);
           if St.BidiForce <> '' then       // <bdo>/<bdi> forced direction
@@ -4507,7 +4517,7 @@ var
         run.FontFamily := it.FontFamily;
         run.FontWeight := it.FontWeight;
         run.ShadowDX := it.ShadowDX; run.ShadowDY := it.ShadowDY; run.ShadowColor := it.ShadowColor;
-        run.DecorLines := it.DecorLines; run.DecorStyle := it.DecorStyle; run.DecorColor := it.DecorColor;
+        run.DecorLines := it.DecorLines; run.DecorStyle := it.DecorStyle; run.DecorColor := it.DecorColor; run.DecorThickness := it.DecorThickness; run.DecorOffset := it.DecorOffset;
         // ::first-line — recolour / decorate the first line's runs (non-metric)
         if wasFirstLine then
         begin
@@ -6767,14 +6777,17 @@ begin
         if r.DecorColor <> 0 then decCol := ScaleAlpha(r.DecorColor, op)
         else decCol := fg;
         decW := Canvas.MeasureText(drawTxt, r.FontSize, r.Styles).Width;
-        decTh := Max(1, r.FontSize / 14);
+        // text-decoration-thickness overrides the auto ~font/14 stroke
+        if r.DecorThickness > 0 then decTh := r.DecorThickness
+        else decTh := Max(1, r.FontSize / 14);
         dbx := r.X - sx; dby := r.Y - innerOfs;
         if (r.DecorLines and 4) <> 0 then
           PaintDecorLine(Canvas, dbx, dby + r.FontSize * 0.10, decW, decTh, r.DecorStyle, decCol);
         if (r.DecorLines and 2) <> 0 then
           PaintDecorLine(Canvas, dbx, dby + r.FontSize * 0.56, decW, decTh, r.DecorStyle, decCol);
+        // text-underline-offset pushes the underline further below the baseline
         if (r.DecorLines and 1) <> 0 then
-          PaintDecorLine(Canvas, dbx, dby + r.FontSize * 0.98, decW, decTh, r.DecorStyle, decCol);
+          PaintDecorLine(Canvas, dbx, dby + r.FontSize * 0.98 + r.DecorOffset, decW, decTh, r.DecorStyle, decCol);
       end;
       Canvas.LetterSpacing := 0;
       Canvas.FontFamily := '';

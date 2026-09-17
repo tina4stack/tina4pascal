@@ -302,6 +302,8 @@ type
     TextDecoration: string;
     TextDecorationStyle: string;      // 'solid'|'double'|'dotted'|'dashed'|'wavy'
     TextDecorationColor: TAlphaColor;  // 0 => use text color
+    UnderThickness: Single;   // text-decoration-thickness in px, 0 = auto
+    UnderOffset: Single;      // text-underline-offset in px (0 = auto)
     TextAlign: TTextAlign;
     TextAlignSet: Boolean;     // text-align was explicitly set (vs inherited/initial 'start')
     TextJustify: Boolean;      // text-align: justify (spread slack across gaps)
@@ -2658,6 +2660,7 @@ begin
   Result.TextDecoration := 'none';
   Result.TextDecorationStyle := 'solid';
   Result.TextDecorationColor := 0;
+  Result.UnderThickness := 0; Result.UnderOffset := 0;
   Result.TextAlign := TTextAlign.Leading;
   Result.TextJustify := False;
   Result.TextAlignSet := False;
@@ -3257,6 +3260,7 @@ begin
   Result.TextDecoration := 'none';
   Result.TextDecorationStyle := 'solid';
   Result.TextDecorationColor := 0;
+  Result.UnderThickness := 0; Result.UnderOffset := 0;
   Result.Margin.Clear;
   Result.Padding.Clear;
   Result.SetBorderColor(TAlphaColors.Black);
@@ -4280,6 +4284,16 @@ begin
     Style.TextDecorationStyle := Temp.ToLower;
   if Decls.TryGetValue('text-decoration-color', Temp) and not ShouldSkip(Temp) then
     Style.TextDecorationColor := ParseColor(Temp);
+  if Decls.TryGetValue('text-decoration-thickness', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'auto') or SameText(Trim(Temp), 'from-font') then Style.UnderThickness := 0
+    else Style.UnderThickness := ParseLength(Temp, Style.FontSize);
+  end;
+  if Decls.TryGetValue('text-underline-offset', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'auto') then Style.UnderOffset := 0
+    else Style.UnderOffset := ParseLength(Temp, Style.FontSize);
+  end;
   if (Decls.TryGetValue('background-clip', Temp) or
       Decls.TryGetValue('-webkit-background-clip', Temp)) and not ShouldSkip(Temp) then
     Style.BackgroundClipText := SameText(Trim(Temp), 'text');
