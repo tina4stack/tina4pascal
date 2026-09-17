@@ -53,6 +53,7 @@ public class Tina4View extends View implements Runnable {
     private native int nativeFocusNext();        // move to next field; new kind (0=none)
     private native void nativeSetFile(String name);   // picked filename → the <input type=file>
     private native void nativeSetPhoto(String path);  // captured image path → <img id="shot">
+    private native void nativeSetRecording(String path); // recorded audio path → <recorder>/<audio id="rec">
     private native int    nativeEmbedCount();          // laid-out <video> boxes
     private native float[] nativeEmbedRect(int index); // [x,y,w,h] in CSS px (scroll applied)
     private native String  nativeEmbedSrc(int index);  // the video source URL
@@ -66,6 +67,18 @@ public class Tina4View extends View implements Runnable {
 
     /** Called by MainActivity once a photo has been captured and saved to path. */
     void onPhotoCaptured(String path) { nativeSetPhoto(path); invalidate(); }
+
+    /** <recorder> tapped: start/stop mic capture via MainActivity. */
+    private void startRecording() {
+        Context c = getContext();
+        if (c instanceof MainActivity) ((MainActivity) c).startRecording(this);
+    }
+    private void stopRecording() {
+        Context c = getContext();
+        if (c instanceof MainActivity) ((MainActivity) c).stopRecording();
+    }
+    /** Called by MainActivity when capture finishes (path, or "" on failure). */
+    void onRecordingDone(String path) { nativeSetRecording(path); invalidate(); }
 
     // IME "Done": drop focus + hide the keyboard
     void imeDone() { nativeBlur(); hideKeyboard(); stopCaret(); invalidate(); }
@@ -263,7 +276,10 @@ public class Tina4View extends View implements Runnable {
                 boolean controls = (flags & 1) != 0, autoplay = (flags & 2) != 0,
                         loop = (flags & 4) != 0, muted = (flags & 8) != 0;
                 vv = new VideoView(getContext());
-                vv.setVideoURI(Uri.parse(src));
+                // a local file path (the <recorder> hands back a files-dir .m4a)
+                // needs a file:// Uri; http(s)/other schemes parse directly
+                vv.setVideoURI(src.startsWith("/")
+                        ? Uri.fromFile(new java.io.File(src)) : Uri.parse(src));
                 if (controls) {                                  // `controls`
                     MediaController mc = new MediaController(getContext());
                     mc.setAnchorView(vv);
@@ -307,6 +323,8 @@ public class Tina4View extends View implements Runnable {
         else if (r == 3) startFling();
         else if (r == 4) pickFile();
         else if (r == 5) captureCamera();
+        else if (r == 6) startRecording();   // TINA_RECORD_START
+        else if (r == 7) stopRecording();    // TINA_RECORD_STOP
         // Deterministic keyboard rule: it is up only while a text field is
         // focused. Any touch that leaves nothing focused (checkbox, radio,
         // select, button, empty space) dismisses it — no stray pop-ups.

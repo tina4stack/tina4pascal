@@ -224,6 +224,12 @@ begin
   TinaSetPhoto(JToStr(Env, Path));
 end;
 
+procedure Java_com_tina4_pascal_Tina4View_nativeSetRecording(Env: PJNIEnv; This: jobject;
+  Path: jstring); cdecl;
+begin
+  TinaSetRecording(JToStr(Env, Path));   // '' rolls a failed capture back to idle
+end;
+
 { ---- native media embeds (<video>) ----------------------------------- }
 
 function Java_com_tina4_pascal_Tina4View_nativeEmbedCount(Env: PJNIEnv;
@@ -296,6 +302,7 @@ exports
   Java_com_tina4_pascal_Tina4View_nativeFocusNext,
   Java_com_tina4_pascal_Tina4View_nativeSetFile,
   Java_com_tina4_pascal_Tina4View_nativeSetPhoto,
+  Java_com_tina4_pascal_Tina4View_nativeSetRecording,
   Java_com_tina4_pascal_Tina4View_nativeEmbedCount,
   Java_com_tina4_pascal_Tina4View_nativeEmbedRect,
   Java_com_tina4_pascal_Tina4View_nativeEmbedSrc,
