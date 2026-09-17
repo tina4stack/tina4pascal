@@ -3018,6 +3018,7 @@ var
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
   rowGap, colGap, frUnit, fixedSum, frSum, cellW, cellH, colXk, rowYr, defH, jOff, aOff, freeRows: Single;
   jsx, asx: string;   // resolved grid item justify / align (inline / block)
+  runText: string;    // contiguous text runs → anonymous grid items
   trackW, trackFr, colX, rowH, rowFr: array of Single;
   trackFixed: array of Boolean;
   rowIsFr: array of Boolean;
@@ -3262,13 +3263,20 @@ begin
   // collect grid items
   itemTags := TList<THTMLTag>.Create;
   try
+    // Text directly inside a grid container is an anonymous grid item (CSS);
+    // wrap contiguous text runs like flex does, so `<div style=grid>A</div>`
+    // (a leaf grid item with text) renders instead of dropping the text.
+    runText := '';
     for c in Tag.Children do
     begin
-      if IsTextNode(c) then Continue;
+      if IsTextNode(c) then begin runText := runText + c.Text; Continue; end;
       cs := TComputedStyle.ForTag(c, st, FSheet);
       if LowerCase(cs.Display) = 'none' then Continue;
+      if Trim(runText) <> '' then begin itemTags.Add(MakeAnonTextItem(Tag, runText)); runText := ''; end
+      else runText := '';
       itemTags.Add(c);
     end;
+    if Trim(runText) <> '' then itemTags.Add(MakeAnonTextItem(Tag, runText));
 
     SetLength(iRow, itemTags.Count); SetLength(iCol, itemTags.Count);
     SetLength(iSpan, itemTags.Count); SetLength(iRowSpan, itemTags.Count);
@@ -3337,6 +3345,12 @@ begin
       else if cb = nil then
         cb := MakeInlineContainer(itemTags[i], cs, cellW);
       box.Children.Add(cb);
+      // A non-stretch item (justify-items/self center|start|end) shrinks to its
+      // content so it can actually be offset within the cell — otherwise a text
+      // item fills the track and `place-items:center` has nothing to centre.
+      if (jsx <> 'stretch') and (ResolveSize(cs.ExplicitWidth, cellW) < 0) and
+         (cb.NaturalW > 0) and (cb.NaturalW < cb.W) then
+        cb.W := cb.NaturalW;
 
       iRow[i] := curRow; iCol[i] := curCol; iSpan[i] := span; iRowSpan[i] := rowSpan;
       if curRow + rowSpan > nrows then
