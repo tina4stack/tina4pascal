@@ -5932,15 +5932,41 @@ end;
 procedure PaintBackgroundImage(Canvas: TTina4Canvas; Box: TLayoutBox;
   const st: TComputedStyle; y: Single);
 var
-  h: Integer;
+  h, bpW, bpH, bi: Integer;
   iw, ih, dw, dh, scale, px, py, tileX, tileY: Single;
-  sz, rep: string;
-  noRepeat: Boolean;
+  sz, rep, blend: string;
+  noRepeat, useBlend: Boolean;
+  bgOpaque: TTina4Color;
+  imgPix, blendBuf: TTina4Pixels;
+
+  procedure DrawBg(hh: Integer; dx, dy, dww, dhh: Single);
+  begin
+    if useBlend then Canvas.DrawRGBA(@blendBuf[0], bpW, bpH, dx, dy, dww, dhh)
+    else Canvas.DrawImage(hh, dx, dy, dww, dhh);
+  end;
+
 begin
   h := Canvas.LoadImage(st.BackgroundImage);
   if h < 0 then Exit;                          // not decoded yet (async) — retry
   if not Canvas.ImageSize(h, iw, ih) then Exit;
   if (iw <= 0) or (ih <= 0) then Exit;
+  // background-blend-mode: blend the image against the solid background-colour
+  // beneath it, per-pixel in software (BlendRGB) so the result matches Chrome's
+  // sRGB blend. Source-over when unset/normal or the image can't be decoded.
+  blend := LowerCase(Trim(st.BackgroundBlendMode));
+  if blend = 'normal' then blend := '';
+  useBlend := False;
+  if (blend <> '') and ((st.BackgroundColor shr 24) > 0) and
+     Canvas.DecodeImagePixels(st.BackgroundImage, bpW, bpH, imgPix) and
+     (bpW > 0) and (bpH > 0) then
+  begin
+    bgOpaque := st.BackgroundColor or $FF000000;
+    SetLength(blendBuf, bpW * bpH);
+    for bi := 0 to bpW * bpH - 1 do
+      blendBuf[bi] := (imgPix[bi] and $FF000000) or
+        (BlendRGB(imgPix[bi] or $FF000000, bgOpaque, blend) and $00FFFFFF);
+    useBlend := True;
+  end;
 
   sz := LowerCase(Trim(st.BackgroundSize));
   dw := iw; dh := ih;
@@ -5971,7 +5997,7 @@ begin
 
   Canvas.ClipRoundRect(Box.X, y, Box.W, Box.H, ResolvedMaxR(st, Box.W, Box.H));   // honour border-radius (incl %)
   if noRepeat then
-    Canvas.DrawImage(h, Box.X + px, y + py, dw, dh)
+    DrawBg(h, Box.X + px, y + py, dw, dh)
   else
   begin
     // tile from the positioned origin, back-filling to cover the whole box
@@ -5981,7 +6007,7 @@ begin
       tileX := Box.X + px; while tileX > Box.X do tileX := tileX - dw;
       while tileX < Box.X + Box.W do
       begin
-        Canvas.DrawImage(h, tileX, tileY, dw, dh);
+        DrawBg(h, tileX, tileY, dw, dh);
         tileX := tileX + dw;
       end;
       tileY := tileY + dh;
