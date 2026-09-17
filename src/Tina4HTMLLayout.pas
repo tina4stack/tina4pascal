@@ -1154,7 +1154,7 @@ begin
   if St.LineHeight > 0 then
     Result := St.FontSize * St.LineHeight
   else
-    Result := St.FontSize * 1.4;
+    Result := St.FontSize * 1.2;
 end;
 
 procedure TLayoutEngine.CollectInlineText(Tag: THTMLTag; SB: TStringBuilder);
@@ -3018,10 +3018,11 @@ var
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
   rowGap, colGap, frUnit, fixedSum, frSum, cellW, cellH, colXk, rowYr, defH, jOff, aOff, freeRows: Single;
   jsx, asx: string;   // resolved grid item justify / align (inline / block)
+  runText: string;    // contiguous text runs → anonymous grid items
   trackW, trackFr, colX, rowH, rowFr: array of Single;
   trackFixed: array of Boolean;
   rowIsFr: array of Boolean;
-  ncols, nrows, i, curRow, curCol, span, k, spanRows, tplRows: Integer;
+  ncols, nrows, i, curRow, curCol, span, k, spanRows, tplRows, ci: Integer;
   colStart, rowStart, rowSpan, autoRow, autoCol: Integer;
   autoRowH: Single;
   toks: TStringArray;
@@ -3262,13 +3263,20 @@ begin
   // collect grid items
   itemTags := TList<THTMLTag>.Create;
   try
+    // Text directly inside a grid container is an anonymous grid item (CSS);
+    // wrap contiguous text runs like flex does, so `<div style=grid>A</div>`
+    // (a leaf grid item with text) renders instead of dropping the text.
+    runText := '';
     for c in Tag.Children do
     begin
-      if IsTextNode(c) then Continue;
+      if IsTextNode(c) then begin runText := runText + c.Text; Continue; end;
       cs := TComputedStyle.ForTag(c, st, FSheet);
       if LowerCase(cs.Display) = 'none' then Continue;
+      if Trim(runText) <> '' then begin itemTags.Add(MakeAnonTextItem(Tag, runText)); runText := ''; end
+      else runText := '';
       itemTags.Add(c);
     end;
+    if Trim(runText) <> '' then itemTags.Add(MakeAnonTextItem(Tag, runText));
 
     SetLength(iRow, itemTags.Count); SetLength(iCol, itemTags.Count);
     SetLength(iSpan, itemTags.Count); SetLength(iRowSpan, itemTags.Count);
@@ -3337,6 +3345,12 @@ begin
       else if cb = nil then
         cb := MakeInlineContainer(itemTags[i], cs, cellW);
       box.Children.Add(cb);
+      // A non-stretch item (justify-items/self center|start|end) shrinks to its
+      // content so it can actually be offset within the cell — otherwise a text
+      // item fills the track and `place-items:center` has nothing to centre.
+      if (jsx <> 'stretch') and (ResolveSize(cs.ExplicitWidth, cellW) < 0) and
+         (cb.NaturalW > 0) and (cb.NaturalW < cb.W) then
+        cb.W := cb.NaturalW;
 
       iRow[i] := curRow; iCol[i] := curCol; iSpan[i] := span; iRowSpan[i] := rowSpan;
       if curRow + rowSpan > nrows then
@@ -3450,7 +3464,22 @@ begin
       asx := cb.Style.AlignSelf; if (asx = '') or (asx = 'auto') then asx := st.AlignItems;
       if asx = '' then asx := 'stretch';
       if (asx = 'stretch') and (ResolveSize(cb.Style.ExplicitHeight, 0) < 0) then
-      begin if cb.H < cellH then cb.H := cellH; aOff := 0; end
+      begin
+        if cb.H < cellH then
+        begin
+          // A nested flex/grid that centres its own content laid it out at the
+          // shorter content height; now that we stretch it to the taller cell,
+          // shift that content down so it stays centred (the tile-with-a-label
+          // case: place-items:center in a grid-auto-rows cell).
+          if IsFlexOrGrid(cb.Style) and
+             ((LowerCase(cb.Style.AlignItems) = 'center') or
+              (LowerCase(cb.Style.AlignContent) = 'center')) then
+            for ci := 0 to cb.Children.Count - 1 do
+              ShiftBoxTree(cb.Children[ci], 0, (cellH - cb.H) / 2);
+          cb.H := cellH;
+        end;
+        aOff := 0;
+      end
       else if asx = 'center' then aOff := (cellH - cb.H) / 2
       else if (asx = 'end') or (asx = 'flex-end') or (asx = 'self-end') then aOff := cellH - cb.H
       else aOff := 0;   // start
@@ -4649,7 +4678,9 @@ begin
         // (CSS: the width resolves to containing-block − left − right). Same for
         // top+bottom → stretch the height. This is what `inset:Npx` relies on.
         if (ResolveSize(cs.ExplicitWidth, CW) < 0) and (cs.CSSLeft > -9998) and (cs.CSSRight > -9998) then
-          absBox.W := Max(0, CW - cs.CSSLeft - cs.CSSRight)
+          // stretch across the containing block's PADDING box (content + padding)
+          absBox.W := Max(0, (CW + ParentStyle.Padding.Left + ParentStyle.Padding.Right)
+                             - cs.CSSLeft - cs.CSSRight)
         // Shrink-to-fit: an out-of-flow box with no explicit width sizes to its
         // content (CSS "shrink-to-fit"), not the full container — e.g. a pill
         // pinned with `right` only should hug its text, not span the row.
@@ -4662,7 +4693,8 @@ begin
         begin
           absCH := ResolveSize(ParentStyle.ExplicitHeight, 0);
           if absCH < 0 then absCH := Box.NaturalH;
-          absBox.H := Max(0, absCH - cs.CSSTop - cs.CSSBottom);
+          absBox.H := Max(0, (absCH + ParentStyle.Padding.Top + ParentStyle.Padding.Bottom)
+                             - cs.CSSTop - cs.CSSBottom);
         end;
         // fixed is viewport-relative (origin 0,0); absolute is container-relative.
         // Paint (PaintBoxEx) drops the scroll offset for fixed so it stays put.
@@ -4677,17 +4709,23 @@ begin
           ShiftBoxTree(absBox, absX - absBox.X, absY - absBox.Y);
           Continue;
         end;
+        // An absolute box is positioned against its containing block's PADDING
+        // box (CSS), not its content box — so `left:0`/`top:0` sit at the inner
+        // border edge, clearing the padding (the common badge-in-a-padded-card
+        // pattern). CX/CY/CW are the content box; back out the padding to reach
+        // the padding box. Auto left/top keep the static-position approximation.
         absX := CX; absY := CY;
-        if cs.CSSLeft > -9998 then absX := CX + cs.CSSLeft
-        else if cs.CSSRight > -9998 then absX := CX + CW - absBox.W - cs.CSSRight;
-        if cs.CSSTop > -9998 then absY := CY + cs.CSSTop
+        if cs.CSSLeft > -9998 then absX := (CX - ParentStyle.Padding.Left) + cs.CSSLeft
+        else if cs.CSSRight > -9998 then
+          absX := (CX + CW + ParentStyle.Padding.Right) - absBox.W - cs.CSSRight;
+        if cs.CSSTop > -9998 then absY := (CY - ParentStyle.Padding.Top) + cs.CSSTop
         else if cs.CSSBottom > -9998 then
         begin
           // bottom needs the container content height — use its explicit
           // height (known now via the container's own style)
           absCH := ResolveSize(ParentStyle.ExplicitHeight, 0);
           if absCH < 0 then absCH := Box.NaturalH;
-          absY := CY + absCH - absBox.H - cs.CSSBottom;
+          absY := (CY + absCH + ParentStyle.Padding.Bottom) - absBox.H - cs.CSSBottom;
         end;
         ShiftBoxTree(absBox, absX - absBox.X, absY - absBox.Y);
         Continue;  // no flow advance
@@ -4856,12 +4894,14 @@ begin
     if cp > maxColH then maxColH := cp;
   end;
 
-  // record geometry so PaintBoxEx can draw column-rules in the gaps
+  // record geometry so PaintBoxEx can draw column-rules in the gaps. Store the
+  // content origin as an OFFSET from box.X/Y (not absolute) so it survives a
+  // later ShiftBoxTree — e.g. this container being positioned as a flex item.
   if (st.ColumnRuleWidth > 0) and (LowerCase(st.ColumnRuleStyle) <> 'none') then
   begin
     box.ColRuleGaps := ncols - 1;
     box.ColRuleColW := colW; box.ColRuleGap := gap;
-    box.ColRuleX0 := contentX; box.ColRuleY0 := contentY; box.ColRuleH := maxColH;
+    box.ColRuleX0 := contentX - box.X; box.ColRuleY0 := contentY - box.Y; box.ColRuleH := maxColH;
   end;
   Result := maxColH;
 end;
@@ -5493,7 +5533,7 @@ begin
   base := TComputedStyle.Default;
   base.FontFamily := 'Helvetica';
   base.FontSize := 16;       // web default; Delphi default is 14
-  base.LineHeight := 1.5;    // bootstrap body line-height
+  base.LineHeight := 1.2;    // bootstrap body line-height (CSS normal ~1.2)
   FBaseStyle := base;
   FViewportW := ViewportW;
   SetLength(FFloats, 0);   // fresh float context per layout
@@ -5932,15 +5972,41 @@ end;
 procedure PaintBackgroundImage(Canvas: TTina4Canvas; Box: TLayoutBox;
   const st: TComputedStyle; y: Single);
 var
-  h: Integer;
+  h, bpW, bpH, bi: Integer;
   iw, ih, dw, dh, scale, px, py, tileX, tileY: Single;
-  sz, rep: string;
-  noRepeat: Boolean;
+  sz, rep, blend: string;
+  noRepeat, useBlend: Boolean;
+  bgOpaque: TTina4Color;
+  imgPix, blendBuf: TTina4Pixels;
+
+  procedure DrawBg(hh: Integer; dx, dy, dww, dhh: Single);
+  begin
+    if useBlend then Canvas.DrawRGBA(@blendBuf[0], bpW, bpH, dx, dy, dww, dhh)
+    else Canvas.DrawImage(hh, dx, dy, dww, dhh);
+  end;
+
 begin
   h := Canvas.LoadImage(st.BackgroundImage);
   if h < 0 then Exit;                          // not decoded yet (async) — retry
   if not Canvas.ImageSize(h, iw, ih) then Exit;
   if (iw <= 0) or (ih <= 0) then Exit;
+  // background-blend-mode: blend the image against the solid background-colour
+  // beneath it, per-pixel in software (BlendRGB) so the result matches Chrome's
+  // sRGB blend. Source-over when unset/normal or the image can't be decoded.
+  blend := LowerCase(Trim(st.BackgroundBlendMode));
+  if blend = 'normal' then blend := '';
+  useBlend := False;
+  if (blend <> '') and ((st.BackgroundColor shr 24) > 0) and
+     Canvas.DecodeImagePixels(st.BackgroundImage, bpW, bpH, imgPix) and
+     (bpW > 0) and (bpH > 0) then
+  begin
+    bgOpaque := st.BackgroundColor or $FF000000;
+    SetLength(blendBuf, bpW * bpH);
+    for bi := 0 to bpW * bpH - 1 do
+      blendBuf[bi] := (imgPix[bi] and $FF000000) or
+        (BlendRGB(imgPix[bi] or $FF000000, bgOpaque, blend) and $00FFFFFF);
+    useBlend := True;
+  end;
 
   sz := LowerCase(Trim(st.BackgroundSize));
   dw := iw; dh := ih;
@@ -5971,7 +6037,7 @@ begin
 
   Canvas.ClipRoundRect(Box.X, y, Box.W, Box.H, ResolvedMaxR(st, Box.W, Box.H));   // honour border-radius (incl %)
   if noRepeat then
-    Canvas.DrawImage(h, Box.X + px, y + py, dw, dh)
+    DrawBg(h, Box.X + px, y + py, dw, dh)
   else
   begin
     // tile from the positioned origin, back-filling to cover the whole box
@@ -5981,7 +6047,7 @@ begin
       tileX := Box.X + px; while tileX > Box.X do tileX := tileX - dw;
       while tileX < Box.X + Box.W do
       begin
-        Canvas.DrawImage(h, tileX, tileY, dw, dh);
+        DrawBg(h, tileX, tileY, dw, dh);
         tileX := tileX + dw;
       end;
       tileY := tileY + dh;
@@ -6741,9 +6807,9 @@ begin
     if (crCol and $FF000000) = 0 then crCol := st.Color;   // unset → currentColor
     for crI := 0 to Box.ColRuleGaps - 1 do
     begin
-      crX := Box.ColRuleX0 + (crI + 1) * Box.ColRuleColW
+      crX := Box.X + Box.ColRuleX0 + (crI + 1) * Box.ColRuleColW
              + crI * Box.ColRuleGap + Box.ColRuleGap / 2;
-      crTop := Box.ColRuleY0 - innerOfs;
+      crTop := Box.Y + Box.ColRuleY0 - innerOfs;
       if LowerCase(st.ColumnRuleStyle) = 'double' then
       begin
         Canvas.FillRect(crX - st.ColumnRuleWidth / 2, crTop,

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: "Segoe UI", Helvetica, Arial, sans-serif; color: #1c2033; background: #f4f5fb; }
+  body { margin: 0; font-family: Helvetica, Arial, sans-serif; color: #1c2033; background: #f4f5fb; }
   .hero {
     padding: 34px 40px 30px;
     background: linear-gradient(135deg, #5b3df6 0%, #9b2fe4 55%, #e0459b 100%);
@@ -36,13 +36,34 @@
     font-size: 14px; font-family: inherit; background: #fff; color: #1c2033;
   }
   .check { margin-top: 14px; font-size: 14px; color: #4a4e66; }
-  .mono { font-family: "Consolas", monospace; background: #eceaff; color: #5b3df6; padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+  .mono { font-family: Menlo, monospace; background: #eceaff; color: #5b3df6; padding: 1px 6px; border-radius: 5px; font-size: 13px; }
   .swatches { display: flex; gap: 8px; margin-top: 12px; }
   .sw { width: 40px; height: 40px; border-radius: 10px; }
   .s1 { background: linear-gradient(135deg,#ff9a3c,#ff3c6f); }
   .s2 { background: radial-gradient(circle at 30% 30%,#57e6c3,#1f9d8f); }
   .s3 { background: linear-gradient(135deg,#5b8def,#3d5afe); }
   .s4 { background: linear-gradient(135deg,#c86dd7,#3023ae); }
+
+  /* second row — features added in the fidelity pass */
+  .row2 { display: flex; gap: 20px; margin-top: 20px; }
+  .drop p { margin: 0; font-size: 13.5px; line-height: 1.5; color: #4a4e66; }
+  .drop p::first-letter { float: left; font-size: 46px; line-height: 38px; padding: 2px 8px 0 0; color: #5b3df6; font-weight: 800; }
+  .drop p::first-line { color: #9b2fe4; }
+  .steps { counter-reset: step; list-style: none; margin: 14px 0 0; padding: 0; }
+  .steps li { position: relative; padding: 6px 0 6px 34px; font-size: 13.5px; color: #4a4e66; }
+  .steps li::before { counter-increment: step; content: counter(step); position: absolute; left: 0; top: 4px;
+    width: 22px; height: 22px; border-radius: 50%; background: linear-gradient(135deg,#5b3df6,#e0459b);
+    color: #fff; font-size: 12px; font-weight: 700; text-align: center; line-height: 22px; }
+  .cols { column-count: 2; column-gap: 16px; column-rule: 1px solid #e2e0f0; margin: 12px 0 0; padding: 0; list-style: none; }
+  .cols li { break-inside: avoid; font-size: 12.5px; line-height: 1.4; color: #4a4e66; padding: 5px 0; }
+  .cols li b { color: #1c2033; display: block; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: 34px; gap: 7px; margin-top: 14px; }
+  .grid div { border-radius: 8px; display: grid; place-items: center; color: #fff; font-size: 12px; font-weight: 700; }
+  .g1 { background: #5b3df6; } .g2 { background: #9b2fe4; } .g3 { background: #e0459b; }
+  .zebra { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12.5px; }
+  .zebra td { padding: 6px 8px; color: #4a4e66; }
+  .zebra tr:nth-child(even) td { background: #f0eeff; }
+  .zebra tr:first-child td { font-weight: 700; color: #1c2033; }
 </style>
 </head>
 <body>
@@ -82,6 +103,47 @@
         <input type="email" value="ada@tina4.com">
         <label>Release date</label>
         <input type="date" value="2026-09-06">
+      </div>
+    </div>
+
+    <div class="row2">
+      <div class="card drop">
+        <h3>Editorial</h3>
+        <p>Drop caps and a tinted first line come from <b>::first-letter</b> and
+        <b>::first-line</b>, floated through the same engine that wraps the text
+        beside them — no images, no scripts, just CSS.</p>
+        <ol class="steps">
+          <li>CSS counters number this list</li>
+          <li>content: counter(step)</li>
+          <li>styled entirely from CSS</li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h3>Multi-column</h3>
+        <p class="muted" style="margin:0">Block items balanced across two columns with a rule down the gutter.</p>
+        <ul class="cols">
+          <li><b>column-count</b>track count</li>
+          <li><b>column-gap</b>gutter width</li>
+          <li><b>column-rule</b>divider line</li>
+          <li><b>object-fit</b>cover / contain</li>
+          <li><b>counters</b>numbered lists</li>
+          <li><b>place-items</b>grid centering</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Selectors &amp; grid</h3>
+        <table class="zebra">
+          <tr><td>Feature</td><td>Status</td></tr>
+          <tr><td>:nth-child</td><td>zebra rows</td></tr>
+          <tr><td>combinators</td><td>&gt; + ~</td></tr>
+          <tr><td>:not()</td><td>negation</td></tr>
+        </table>
+        <div class="grid">
+          <div class="g1">A</div><div class="g2">B</div><div class="g3">C</div>
+          <div class="g2">D</div><div class="g3">E</div><div class="g1">F</div>
+        </div>
       </div>
     </div>
   </div>

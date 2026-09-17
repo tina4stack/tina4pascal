@@ -39,7 +39,7 @@ type
     constructor Create;
     destructor Destroy; override;
     function LoadImage(const Src: string): Integer; override;
-    function DecodeMaskImage(const Src: string; out W, H: Integer;
+    function DecodeImagePixels(const Src: string; out W, H: Integer;
       out Pix: TTina4Pixels): Boolean; override;
     function RegisterFont(const Family, Src: string): Boolean; override;
     function ImageSize(Handle: Integer; out W, H: Single): Boolean; override;
@@ -394,22 +394,21 @@ begin
   FImageBySrc.AddObject(Src, TObject(PtrInt(Result)));
 end;
 
-{ Decode a mask-image url() to straight $AARRGGBB pixels via CoreGraphics, so
-  PNG/JPEG masks work (the base class only decodes WebP). Falls back to the base
-  class for formats NSImage can't take. }
-function TCocoaCanvas.DecodeMaskImage(const Src: string; out W, H: Integer;
+{ Decode an image to straight $AARRGGBB pixels via CoreGraphics, so PNG/JPEG
+  work (the base class only decodes WebP). Used for url() masks and blended
+  background layers. Falls back to the base class for formats NSImage can't take. }
+function TCocoaCanvas.DecodeImagePixels(const Src: string; out W, H: Integer;
   out Pix: TTina4Pixels): Boolean;
 var
-  url: string; hImg, pw, ph, x, y, srcRow, o: Integer;
+  hImg, pw, ph, x, y, srcRow, o: Integer;
   img: NSImage; cg: CGImageRef; csp: CGColorSpaceRef; cgctx: CGContextRef;
   buf: PByte;
 begin
   Result := False; W := 0; H := 0; Pix := nil;
-  url := ExtractMaskUrl(Src);
-  if url = '' then Exit;
-  hImg := LoadImage(url);
+  if Src = '' then Exit;
+  hImg := LoadImage(Src);
   if not ((hImg >= 0) and (hImg < FImages.Count) and (FImages[hImg] <> nil)) then
-    Exit(inherited DecodeMaskImage(Src, W, H, Pix));   // WebP / base fallback
+    Exit(inherited DecodeImagePixels(Src, W, H, Pix));   // WebP / base fallback
   img := NSImage(FImages[hImg]);
   cg := img.CGImageForProposedRect_context_hints(nil, nil, nil);
   if cg = nil then Exit;

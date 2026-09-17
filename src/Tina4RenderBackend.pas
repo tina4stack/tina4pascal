@@ -145,10 +145,13 @@ type
     function LoadImage(const Src: string): Integer; virtual;
     function ImageSize(Handle: Integer; out W, H: Single): Boolean; virtual;
     procedure DrawImage(Handle: Integer; X, Y, W, H: Single); virtual;
-    { Decode a mask-image `url(...)` to straight $AARRGGBB pixels for the
-      compositor. The base class handles WebP + data: URIs via DecodeToBaseStore;
-      shells override to add their native decoders (PNG/JPEG). False = undecodable
-      (the mask is then skipped, a safe degrade). }
+    { Decode an image `Src` (bare url/data:/file) to straight $AARRGGBB pixels.
+      The base class handles WebP + data: URIs via DecodeToBaseStore; shells
+      override to add their native decoders (PNG/JPEG). False = undecodable. }
+    function DecodeImagePixels(const Src: string; out W, H: Integer;
+      out Pix: TTina4Pixels): Boolean; virtual;
+    { As DecodeImagePixels but takes a `url(...)` mask spec (for the compositor);
+      a false return means the mask is skipped (a safe degrade). }
     function DecodeMaskImage(const Src: string; out W, H: Integer;
       out Pix: TTina4Pixels): Boolean; virtual;
     { Offscreen compositing for CSS filter / mix-blend-mode. BeginLayer redirects
@@ -1149,14 +1152,13 @@ begin
     Result := Copy(Result, 2, Length(Result) - 2);
 end;
 
-function TTina4Canvas.DecodeMaskImage(const Src: string; out W, H: Integer;
+function TTina4Canvas.DecodeImagePixels(const Src: string; out W, H: Integer;
   out Pix: TTina4Pixels): Boolean;
-var url: string; h2, n: Integer;
+var h2, n: Integer;
 begin
   Result := False; W := 0; H := 0; Pix := nil;
-  url := ExtractMaskUrl(Src);
-  if url = '' then Exit;
-  h2 := DecodeToBaseStore(url);           // base class: WebP + data:/file URIs
+  if Src = '' then Exit;
+  h2 := DecodeToBaseStore(Src);           // base class: WebP + data:/file URIs
   if h2 < WEBP_HANDLE_BASE then Exit;
   h2 := h2 - WEBP_HANDLE_BASE;
   if (h2 < 0) or (h2 >= FBaseCount) then Exit;
@@ -1166,6 +1168,12 @@ begin
   SetLength(Pix, n);
   Move(FBasePix[h2][0], Pix[0], n * SizeOf(Cardinal));
   Result := True;
+end;
+
+function TTina4Canvas.DecodeMaskImage(const Src: string; out W, H: Integer;
+  out Pix: TTina4Pixels): Boolean;
+begin
+  Result := DecodeImagePixels(ExtractMaskUrl(Src), W, H, Pix);
 end;
 
 function TTina4Canvas.LoadImage(const Src: string): Integer;
