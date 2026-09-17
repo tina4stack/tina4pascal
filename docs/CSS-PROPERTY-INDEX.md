@@ -61,7 +61,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | align-self, order | ✅ | `align-self` overrides `align-items` per item (stretch/center/start/end); `order` reorders items (stable) before layout |
 | align-content | ✅ | distributes wrapped lines on the cross axis (center/flex-end/space-between/space-around); stretch = default packing |
 | gap, row-gap, column-gap | ✅ | per-axis: `gap: <row> <col>`; flex uses column-gap on a row / row-gap on a column |
-| column-count, column-width, columns | 🟡 | CSS multi-column: block children are laid out at the reduced column width, then balanced across N columns (count given, or derived from `column-width` and the available width) honouring `column-gap`. `columns` shorthand parses width and/or count. Reftests `css-columns-count`, `css-columns-width`. Caveats: balances whole children (a single tall block/paragraph is not fragmented across columns), no `column-span` |
+| column-count, column-width, columns | 🟡 | CSS multi-column: block children are laid out at the reduced column width, then balanced across N columns (count given, or derived from `column-width` and the available width) honouring `column-gap`. `columns` shorthand parses width and/or count. Reftests `css-columns-count`, `css-columns-width`. `column-span:all` breaks an element out to span every column (the balancer segments around it). Reftest `css-column-span`. Caveat: balances whole children (a single tall block/paragraph is not fragmented across columns) |
 | column-rule (+ -width/-style/-color) | ✅ | a vertical rule centred in each column gap, spanning the tallest column; shorthand parses width ‖ style ‖ color (default currentColor), longhands supported; `double` draws two hairlines. dashed/dotted render solid. Reftest `css-column-rule` |
 | grid-column, grid-row | ✅ | explicit start line + span, or `N / M`; occupancy-aware auto-placement around them |
 | grid-template-rows | ✅ | px / % / fr / auto row tracks. fr and % resolve against a definite container height and distribute the leftover; with an indefinite height they fall back to content size (matches Chrome) |
@@ -86,11 +86,13 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | word-spacing | ✅ | extra px added to every inter-word space (inherited; affects wrap + alignment) |
 | text-align | ✅ | left/center/right/justify (justify spreads slack across word gaps; last line stays left) |
 | text-decoration | ✅ | underline / line-through / overline; shorthand parses line + style + color in any order, plus `text-decoration-line/-style/-color` longhands. Solid same-color stays on the cheap font underline; a non-solid **style** (wavy zig-zag / dotted / dashed / double) or a distinct **color** is hand-painted (`PaintDecorLine`) with the font line suppressed |
+| text-decoration-thickness, text-underline-offset | ✅ | a custom thickness (px, or `auto`/`from-font`) or a non-zero underline offset forces the hand-painted path and sets the stroke width / pushes the underline further below the baseline. Reftest `css-underline-thickness` |
 | text-transform | ✅ | uppercase/lowercase/capitalize applied to painted glyphs |
 | text-indent | ✅ | first formatted line indented (left-aligned blocks) |
 | text-overflow | ✅ | ellipsis truncation (single nowrap line): truncates the crossing run + drops the rest |
 | text-shadow | ✅ | painted (offset shadow pass before the glyph); see PaintBoxEx run loop |
 | white-space | ✅ | normal/nowrap/pre/pre-wrap/pre-line; pre* preserve newlines (+ spaces for pre/pre-wrap) — parser keeps raw text for <pre> and inline white-space:pre* |
+| text-wrap (+ -mode) | ✅ | `nowrap` (no wrapping) and `balance` — a measure-only line-count binary search finds the narrowest width that keeps the full-width line count, so 2–8 line headings/blocks break into even lines. `pretty`/`stable` parse and fall back to normal wrapping. Reftest `css-text-wrap-balance` |
 | word-break, overflow-wrap | ✅ | break-word/break-all/anywhere: over-long words break between characters (UTF-8 aware) |
 | vertical-align | ✅ | sub/super/top/bottom/middle/text-top/text-bottom + **`<length>`** (px/em/rem baseline shift on inline text) |
 | list-style-type | ✅ | disc/circle/square/none, decimal, decimal-leading-zero, lower/upper-alpha(latin), lower/upper-roman, lower-greek. Reftests `css-list-markers`, `css-list-greek` |
@@ -139,7 +141,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | filter | ✅ | `blur` · `grayscale` · `brightness` · `contrast` · `invert` · `saturate` · `sepia` · `hue-rotate` · `opacity` · `drop-shadow`, chained. Rendered through a new offscreen-layer contract (`BeginLayer`/`EndLayerFiltered`): the element+subtree draw into an offscreen buffer, the pixels are filtered (separable box-blur ≈ Gaussian; colour-matrix ops; drop-shadow is a blurred, offset silhouette painted behind), then composited back |
 | mix-blend-mode | ✅ | all 16 separable + non-separable modes (multiply/screen/overlay/darken/lighten/color-dodge/color-burn/soft-light/hard-light/difference/exclusion/hue/saturation/color/luminosity) via `CGContextSetBlendMode` when the layer composites back |
 | backdrop-filter | ✅ | filters the already-painted pixels behind the element (captured via `initWithFocusedViewRect`) before its own background draws — same filter chain as `filter`. `-webkit-backdrop-filter` alias too |
-| mask-image, mask, -webkit-mask-image | 🟡 | `linear-gradient(...)` masks and `url()` **image** masks (alpha mode): the mask's alpha multiplies into the element's alpha in the offscreen buffer — the fade-out and icon-mask patterns. A url() mask is decoded (`DecodeMaskImage`: Cocoa via CoreGraphics for PNG/JPEG, the pure-Pascal path for WebP) and stretched over the element. Reftest `css-mask-image-url`. Not yet: `mask-mode:luminance`, mask position/size/repeat (the image always covers the box), and PNG/JPEG masks on the raster shell (WebP only there) |
+| mask-image, mask, -webkit-mask-image (+ `mask-mode`/`-position`/`-size`/`-repeat`) | 🟡 | `linear-gradient(...)` masks and `url()` **image** masks: the mask multiplies into the element's alpha in the offscreen buffer — the fade-out and icon-recolour patterns. A url() mask is decoded (`DecodeMaskImage`: Cocoa via CoreGraphics for PNG/JPEG, the pure-Pascal path for WebP). **`mask-mode: luminance`** (grey→alpha via Rec.709 luma) as well as alpha; **`mask-size`** `contain`/`cover`/`auto`(intrinsic, the CSS default)/`100%`; **`mask-position`** keywords + percentages; **`mask-repeat`** `no-repeat` vs the default tiling — the geometry is parsed from the shorthand or the longhands (`ParseMaskGeom`) and honoured, so `mask:url(icon.svg) no-repeat center/contain` recolours a centred, contain-fitted icon exactly like Chrome. Reftests `css-mask-image-url`, `css-mask-position`, `css-mask-luminance` (all 0.00% vs Chrome). Not yet: non-keyword `mask-size` lengths (`24px`), `mask-composite`, and PNG/JPEG masks on the raster shell (WebP only there) |
 | background-blend-mode | ✅ | blends a **gradient** or a **`url()` image** background against the background-color beneath it — **every** mode: the separable set (multiply/screen/overlay/darken/lighten/color-dodge/-burn/hard-/soft-light/difference/exclusion) **and all four** non-separable ones (hue/saturation/color/luminosity), computed per-pixel through the shared `BlendRGB` in sRGB (so saturated colours match Chrome byte-exact — a CoreGraphics hardware blend does not, its working colour space skews chromatic multiply). The image layer is decoded (`DecodeImagePixels`: Cocoa via CoreGraphics, WebP in pure Pascal), each pixel blended against the solid background-color, then drawn. Reftests `css-bg-blend-image`, `css-blendmul`. Caveat: an image layer blends against the background-*color* (not a gradient beneath it) |
 | animation, @keyframes | ✅ | `@keyframes` parsed; `animation` shorthand + longhands (name/duration/delay/timing/iteration/direction). Per-frame interpolation at paint off the ticker: transform (translate/rotate/scale), opacity, background-color, color; timing linear/ease/ease-in/-out; iteration + alternate/reverse |
 | transition | ✅ | eases a property toward its computed value when it changes (hover/focus/DOM): background-color, color, opacity, transform (translate/rotate/scale). Per-element from/start tracked on the tag; duration/delay/timing/property from the shorthand + longhands. Mid-transition reversal supported |
@@ -183,10 +185,25 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | `@media` (in `<style>`) | ✅ | min/max-width breakpoints + `prefers-color-scheme` dark (incl. dark `:root` var swaps), live via `SetMediaContext` |
 | `@font-face` | ✅ | downloadable fonts: parse family + `src url()`, fetch (async/disk-cached like `<img>`) + register on all 3 shells (Cocoa/iOS CoreText, Android Typeface); CSS family aliased to the face's real name |
 | `@keyframes` | ✅ | parsed into named stops; drives `animation` |
-| `@supports` | ✅ | feature query evaluated at parse time (`and`/`or`/`not`, parenthesised tests); the block's rules apply only if supported. The oracle answers yes for our broad feature set and no for the props we still lack (mask, background-blend-mode, perspective, transform-style, 3D transforms). Nests inside `@media` |
+| `@supports` | ✅ | feature query evaluated at parse time (`and`/`or`/`not`, parenthesised tests); the block's rules apply only if supported. The oracle answers yes for our broad feature set and no for the props we still lack (standalone perspective, transform-style, 3D transforms). Nests inside `@media` |
 | `@import` | ✅ | `@import "x.css"` / `url(...)` (+ trailing media ignored) — the URL is recorded and fetched like a `<link rel=stylesheet>`, then parsed; drained until empty so nested imports load. macOS host does remote+relative; the shared Win/Linux path does local files |
 | clamp(), min(), max() | ✅ | evaluated via the calc() engine (nestable, same unit support) |
 | env() | ✅ | `env(<name>, <fallback>)` resolves to its fallback — safe-area insets are 0 on desktop, so the named value is unavailable. Usable bare or inside calc() |
+
+## Behavioral, fragmentation & niche (out of core rendering scope)
+
+These have no effect on a single static frame, need an interaction/scroll model
+the immediate-mode core doesn't own, or are niche East-Asian typography. Listed
+for completeness — the engine renders correctly whether or not they are present.
+
+| Property | Status | Note |
+|---|---|---|
+| scroll-snap-type / -align / -padding / -margin, overscroll-behavior, scroll-behavior | ⬜ | scroll snapping/anchoring is an interaction concern — the renderer owns scroll deltas but has no snap model; ignored, content still scrolls |
+| will-change, content-visibility, contain, isolation | ⬜ | performance/containment hints with no visual effect on a static frame (`content-visibility:hidden` subtree-skipping not done); ignored |
+| widows, orphans, break-before / -after / -inside | ⬜ | fragmentation controls — no effect in the continuous single-column flow; `break-inside:avoid` is naturally satisfied since multicol never splits a child |
+| text-emphasis (+ -style / -color / -position) | ✅ | a small mark centred over (or under) each non-space glyph, from the `text-emphasis` shorthand or the longhands. Fill `filled`/`open` × shape `dot`/`circle`/`double-circle`/`triangle`/`sesame`, a custom quoted `<string>` mark, a colour token, and `-position: over`/`under`; inherited; mark sized 0.5em, positioned per-glyph (UTF-8 aware). Taken from the box style (emphasis set on a block, applying to its text — the common case). Reftest `css-text-emphasis` (0.23% ours; marks land within 1px of Chrome). `-webkit-` aliases parsed |
+| text-combine-upright | ⬜ | tate-chū-yoko — niche; not painted |
+| text-orientation, unicode-bidi | 🟡 | writing-mode vertical + the bidi reorder/mirror path (`<bdo>`/`<bdi>`) are done; `text-orientation:upright` glyph rotation and explicit `unicode-bidi` embedding levels are not |
 
 ## Prioritised roadmap (by real-world impact ÷ effort)
 
@@ -204,32 +221,32 @@ text-decoration overline + wavy/dotted/dashed/double + color/style,
 gradients, position:sticky, cursor). Remaining longhands: the sub-keyword
 resize cursors beyond col/row-resize.
 
-**Outstanding — bigger rocks** (each needs a dedicated subsystem the immediate-
-mode renderer doesn't yet have):
+**Outstanding — the advanced tail** (each the last, hardest slice of an
+otherwise-working feature):
 1. **transform-style: preserve-3d** multi-plane 3D scenes — a shared 3D space
     with z-sorting + backface-culling across sibling planes (single-element 3D
     transforms, `perspective()`, `matrix3d` are done).
-2. **mask** long tail — `url()` image masks, `mask-mode:luminance`, mask
-    position/size/repeat (gradient alpha masks + `filter`/`backdrop-filter`/
-    `mix-blend-mode`/`drop-shadow` and clip-path basic shapes are done).
-3. Typography remainder (font selection / bidi): `hyphens: auto` dictionary,
-    `vertical-lr` + upright CJK orientation (`font-variant` small-caps, soft-hyphen
-    `hyphens: manual`, synthetic `font-stretch`, `vertical-rl` block-flow, and bidi
-    — reorder + mirror + `<bdo>`/`<bdi>` — all done).
-4. **user-select / resize** (need a selection model / drag-resize handle);
-    **background-blend-mode** (software per-background-layer blend compositing —
-    the existing blend path is Cocoa CGBlendMode, not pure-Pascal).
+2. **mask** last slivers — non-keyword `mask-size` lengths (`24px`),
+    `mask-composite`, and PNG/JPEG masks on the raster shell (WebP only there).
+    `mask-mode:luminance`, `mask-size` contain/cover/auto/100%, `mask-position`
+    and `mask-repeat` are **done** (gradient **and** `url()` image masks, plus
+    `filter`/`backdrop-filter`/`mix-blend-mode`/`drop-shadow` and clip-path basic
+    shapes).
+3. Typography remainder: `hyphens:auto` dictionary, `text-orientation:upright`
+    CJK glyph rotation (`text-emphasis` marks, `font-variant` small-caps,
+    soft-hyphen `hyphens:manual`, synthetic `font-stretch`, vertical block-flow,
+    bidi reorder/mirror/`<bdo>`/`<bdi>`, `text-wrap:balance`,
+    `text-decoration-thickness`/`-underline-offset` are done).
+4. **user-select / resize** (need a text-selection model / drag-resize handle).
 
-Coverage: **106 ✅ · 5 🟡 · 3 📦 · 0 ❌** — no property is entirely unhandled.
-(An ours-vs-Chrome pass exposed two flex bugs the ours-vs-ours reftests missed —
-reverse-direction packing and column-direction `flex-wrap` — both now **fixed**
-and verified 0.0–0.25% vs Chrome.)
-Every 🟡/📦 that remains is the advanced tail of an otherwise-working feature and
-needs a dedicated subsystem to finish: a hyphenation dictionary + soft-hyphen
-line-breaking, the Unicode bidi algorithm, font synthesis (small-caps/stretch),
-a text-selection model (user-select/resize), `mask` url() images, non-separable
-blend modes, full vertical block-flow, and multi-plane `preserve-3d`.
+Everything else — including background-blend-mode (software sRGB, gradient **and**
+image layers), CSS counters, the structural/combinator/`:not()` selectors,
+`::first-letter`/`::first-line`, object-fit, and multi-column — is done and
+verified 0.00% vs headless Chrome. Behavioral, fragmentation and niche-i18n
+properties are catalogued above as ⬜ (out of core rendering scope).
 
+Coverage: **129 ✅ · 3 🟡 · 2 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
+property is an unaccounted gap.
 
-Each item ships with a reftest under `examples/compliance/` and flips its row
+Each ✅ item ships with a reftest under `examples/compliance/` and flips its row
 here and in `CONFORMANCE.md`.

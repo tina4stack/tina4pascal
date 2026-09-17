@@ -31,6 +31,7 @@ type
     // 1=underline 2=line-through 4=overline. DecorStyle: 0 solid 1 double
     // 2 dotted 3 dashed 4 wavy. DecorColor 0 => use text color.
     DecorLines, DecorStyle: Byte; DecorColor: TTina4Color;
+    DecorThickness, DecorOffset: Single;  // text-decoration-thickness / underline-offset (0 = auto)
   end;
 
   { Form controls are DRAWN by the renderer (no native widgets); their state
@@ -94,7 +95,7 @@ type
     FCounters: TDictionary<string, TList<Integer>>;  // CSS counters: name -> nesting stack
     function FontStylesOf(const St: TComputedStyle): TTina4FontStyles;
     procedure ComputeDecor(const St: TComputedStyle; var FS: TTina4FontStyles;
-      out Lines, Sty: Byte; out Col: TTina4Color);
+      out Lines, Sty: Byte; out Col: TTina4Color; out Th, Off: Single);
     function LineHeightOf(const St: TComputedStyle): Single;
     procedure LayoutChildren(Box: TLayoutBox; Tag: THTMLTag;
       const ParentStyle: TComputedStyle; CX, CY, CW: Single; out UsedH: Single);
@@ -1128,18 +1129,21 @@ end;
   colour needs manual painting; the plain solid case stays on the cheap
   font-drawn underline/strike, so FS is left untouched and Lines stays 0. }
 procedure TLayoutEngine.ComputeDecor(const St: TComputedStyle;
-  var FS: TTina4FontStyles; out Lines, Sty: Byte; out Col: TTina4Color);
+  var FS: TTina4FontStyles; out Lines, Sty: Byte; out Col: TTina4Color;
+  out Th, Off: Single);
 var td: string;
 begin
-  Lines := 0;
+  Lines := 0; Th := St.UnderThickness; Off := St.UnderOffset;
   Sty := DecorStyleByte(St.TextDecorationStyle);
   Col := St.TextDecorationColor;
-  if (Sty = 0) and (Col = 0) then Exit;   // font/legacy path handles it
+  // font-drawn path only when nothing needs hand painting — a non-solid style, a
+  // distinct colour, or a custom thickness / underline-offset all force it.
+  if (Sty = 0) and (Col = 0) and (St.UnderThickness <= 0) and (St.UnderOffset = 0) then Exit;
   td := LowerCase(St.TextDecoration);
   if Pos('underline', td) > 0 then Lines := Lines or 1;
   if Pos('line-through', td) > 0 then Lines := Lines or 2;
   if Pos('overline', td) > 0 then Lines := Lines or 4;
-  if Lines = 0 then begin Sty := 0; Col := 0; Exit; end;  // color/style but no line
+  if Lines = 0 then begin Sty := 0; Col := 0; Th := 0; Off := 0; Exit; end;  // style/thickness but no line
   Exclude(FS, tfsUnderline); Exclude(FS, tfsStrike); Exclude(FS, tfsOverline);
 end;
 
@@ -1197,7 +1201,12 @@ begin
   if ResolveSize(St.ExplicitHeight, 0) >= 0 then
     Result.H := St.ExplicitHeight + padV
   else
-    Result.H := LineHeightOf(St) + padV;
+    // An inline element's background/padding box is sized by the font's content
+    // box (ascent+descent), NOT the author line-height — a `line-height:1.5`
+    // ancestor must not inflate a padded <span>/badge. Fall back to the line
+    // height only when there is no text metric.
+    if m.LineHeight > 0 then Result.H := m.LineHeight + padV
+    else Result.H := LineHeightOf(St) + padV;
   if txt <> '' then
   begin
     run.Text := txt;
@@ -1211,7 +1220,7 @@ begin
     run.Color := St.Color; run.LetterSpacing := 0;
     run.FontFamily := St.FontFamily; run.FontWeight := St.FontWeight;
     run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
-    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor);
+    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor, run.DecorThickness, run.DecorOffset);
     Result.Runs.Add(run);
   end;
 end;
@@ -1258,7 +1267,7 @@ begin
     run.FontSize := rtFS; run.Styles := FontStylesOf(St); run.Color := St.Color;
     run.LetterSpacing := 0; run.FontFamily := St.FontFamily; run.FontWeight := St.FontWeight;
     run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
-    run.DecorLines := 0; run.DecorStyle := 0; run.DecorColor := 0;
+    run.DecorLines := 0; run.DecorStyle := 0; run.DecorColor := 0; run.DecorThickness := 0; run.DecorOffset := 0;
     Result.Runs.Add(run);
   end;
   if baseTxt <> '' then
@@ -1268,7 +1277,7 @@ begin
     run.FontSize := baseFS; run.Styles := FontStylesOf(St); run.Color := St.Color;
     run.LetterSpacing := St.LetterSpacing; run.FontFamily := St.FontFamily; run.FontWeight := St.FontWeight;
     run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
-    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor);
+    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor, run.DecorThickness, run.DecorOffset);
     Result.Runs.Add(run);
   end;
 end;
@@ -2153,7 +2162,7 @@ begin
       run.FontSize := St.FontSize; run.Styles := FontStylesOf(St);
       run.Color := $FF9CA3AF; run.LetterSpacing := 0;
       run.FontWeight := St.FontWeight; run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
-    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor);
+    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor, run.DecorThickness, run.DecorOffset);
       Result.Runs.Add(run);
       Exit;
     end;
@@ -2180,7 +2189,7 @@ begin
         run.Styles := FontStylesOf(St);
         run.Color := St.Color; run.LetterSpacing := 0;
         run.FontWeight := St.FontWeight; run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
-    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor);
+    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor, run.DecorThickness, run.DecorOffset);
         Result.Runs.Add(run);
       end;
     finally
@@ -2211,7 +2220,7 @@ begin
     if (kind = ckButton) or St.AppearanceNone then    // centre the caption
       run.X := (Result.W - m.Width) / 2;
     run.FontWeight := St.FontWeight; run.ShadowColor := 0; run.ShadowDX := 0; run.ShadowDY := 0;
-    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor);
+    ComputeDecor(St, run.Styles, run.DecorLines, run.DecorStyle, run.DecorColor, run.DecorThickness, run.DecorOffset);
     Result.Runs.Add(run);
   end;
 end;
@@ -3539,6 +3548,7 @@ type
     FontWeight: Integer;
     ShadowDX, ShadowDY: Single; ShadowColor: TTina4Color;
     DecorLines, DecorStyle: Byte; DecorColor: TTina4Color;
+    DecorThickness, DecorOffset: Single;   // text-decoration-thickness / underline-offset
     SpaceBefore: Boolean;
     LineBreak: Boolean;    // <br>
   end;
@@ -3649,7 +3659,7 @@ var
     qi.Ascent := (qi.H - (qm.Ascent + qm.Descent)) / 2 + qm.Ascent;
     qi.FontSize := St.FontSize; qi.Styles := FontStylesOf(St); qi.Color := St.Color;
     qi.LetterSpacing := St.LetterSpacing; qi.FontFamily := St.FontFamily; qi.FontWeight := St.FontWeight; qi.ShadowDX := St.TextShadowOffsetX; qi.ShadowDY := St.TextShadowOffsetY; if St.TextShadowActive then qi.ShadowColor := St.TextShadowColor else qi.ShadowColor := 0;
-    ComputeDecor(St, qi.Styles, qi.DecorLines, qi.DecorStyle, qi.DecorColor);
+    ComputeDecor(St, qi.Styles, qi.DecorLines, qi.DecorStyle, qi.DecorColor, qi.DecorThickness, qi.DecorOffset);
     qi.SpaceBefore := SpaceBefore and (items.Count > 0); qi.LineBreak := False;
     items.Add(qi);
   end;
@@ -3711,7 +3721,7 @@ var
       r.FontSize := sz; r.Styles := it.Styles - [tfsSmallCaps]; r.Color := it.Color;
       r.LetterSpacing := it.LetterSpacing; r.FontFamily := it.FontFamily; r.FontWeight := it.FontWeight;
       r.ShadowDX := it.ShadowDX; r.ShadowDY := it.ShadowDY; r.ShadowColor := it.ShadowColor;
-      r.DecorLines := it.DecorLines; r.DecorStyle := it.DecorStyle; r.DecorColor := it.DecorColor;
+      r.DecorLines := it.DecorLines; r.DecorStyle := it.DecorStyle; r.DecorColor := it.DecorColor; r.DecorThickness := it.DecorThickness; r.DecorOffset := it.DecorOffset;
       Box.Runs.Add(r);
       cx := cx + m.Width;
     end;
@@ -3755,7 +3765,7 @@ var
     begin ti.Ascent := ti.Ascent + vaShift; ti.FontAscent := ti.FontAscent + vaShift; end;
     ti.FontSize := St.FontSize; ti.Styles := FontStylesOf(St); ti.Color := St.Color;
     ti.LetterSpacing := St.LetterSpacing; ti.FontFamily := St.FontFamily; ti.FontWeight := St.FontWeight; ti.ShadowDX := St.TextShadowOffsetX; ti.ShadowDY := St.TextShadowOffsetY; if St.TextShadowActive then ti.ShadowColor := St.TextShadowColor else ti.ShadowColor := 0;
-    ComputeDecor(St, ti.Styles, ti.DecorLines, ti.DecorStyle, ti.DecorColor);
+    ComputeDecor(St, ti.Styles, ti.DecorLines, ti.DecorStyle, ti.DecorColor, ti.DecorThickness, ti.DecorOffset);
     ti.SpaceBefore := SpaceBefore and (items.Count > 0);
     ti.LineBreak := False;
     items.Add(ti);
@@ -4017,7 +4027,7 @@ var
           it.FontFamily := St.FontFamily;
           it.FontWeight := St.FontWeight;
           it.ShadowDX := St.TextShadowOffsetX; it.ShadowDY := St.TextShadowOffsetY; if St.TextShadowActive then it.ShadowColor := St.TextShadowColor else it.ShadowColor := 0;
-          ComputeDecor(St, it.Styles, it.DecorLines, it.DecorStyle, it.DecorColor);
+          ComputeDecor(St, it.Styles, it.DecorLines, it.DecorStyle, it.DecorColor, it.DecorThickness, it.DecorOffset);
           it.SpaceBefore := (items.Count > 0) and ((i > 0) or leadingSpace);
           items.Add(it);
           if St.BidiForce <> '' then       // <bdo>/<bdi> forced direction
@@ -4507,7 +4517,7 @@ var
         run.FontFamily := it.FontFamily;
         run.FontWeight := it.FontWeight;
         run.ShadowDX := it.ShadowDX; run.ShadowDY := it.ShadowDY; run.ShadowColor := it.ShadowColor;
-        run.DecorLines := it.DecorLines; run.DecorStyle := it.DecorStyle; run.DecorColor := it.DecorColor;
+        run.DecorLines := it.DecorLines; run.DecorStyle := it.DecorStyle; run.DecorColor := it.DecorColor; run.DecorThickness := it.DecorThickness; run.DecorOffset := it.DecorOffset;
         // ::first-line — recolour / decorate the first line's runs (non-metric)
         if wasFirstLine then
         begin
@@ -4523,14 +4533,49 @@ var
     lineItems.Clear;
   end;
 
+  { Simulate wrapping over `items` at width w (no painting) and return the line
+    count — used by text-wrap:balance to find the balanced width. }
+  function CountLinesAt(w: Single): Integer;
+  var j: Integer; cw, sw: Single; it2: TInlineItem;
+  begin
+    Result := 1; cw := 0;
+    for j := 0 to items.Count - 1 do
+    begin
+      it2 := items[j];
+      if it2.LineBreak then begin Inc(Result); cw := 0; Continue; end;
+      sw := 0;
+      if it2.SpaceBefore and (cw > 0) then
+        sw := FCanvas.MeasureText(' ', it2.FontSize, it2.Styles).Width + ParentStyle.WordSpacing;
+      if (cw > 0) and (cw + sw + it2.W > w) then begin Inc(Result); cw := it2.W; end
+      else cw := cw + sw + it2.W;
+    end;
+  end;
+
   procedure FlowInlineItems;
   var
-    i, carrySpacer, spIdx: Integer;
+    i, carrySpacer, spIdx, fullLines, bIter: Integer;
     it: TInlineItem;
-    curW, lineH, spaceW, lineW, flw0, flw1: Single;
+    curW, lineH, spaceW, lineW, flw0, flw1, balancedW, blo, bhi, bmid: Single;
     lineItems: TList<Integer>;
   begin
     if items.Count = 0 then Exit;
+    // text-wrap:balance — find the narrowest width that keeps the full-width line
+    // count, so the lines end up roughly even (headings, short paragraphs).
+    balancedW := 0;
+    if SameText(ParentStyle.TextWrap, 'balance') and (not noWrapFlow) then
+    begin
+      fullLines := CountLinesAt(CW);
+      if (fullLines >= 2) and (fullLines <= 8) then
+      begin
+        blo := 0; bhi := CW;
+        for bIter := 1 to 24 do
+        begin
+          bmid := (blo + bhi) / 2;
+          if CountLinesAt(bmid) <= fullLines then bhi := bmid else blo := bmid;
+        end;
+        balancedW := bhi;
+      end;
+    end;
     lineItems := TList<Integer>.Create;
     try
       curW := 0; lineH := 0;
@@ -4551,6 +4596,8 @@ var
         // it (so text wraps beside a floated box).
         LineBounds(y, y + Max(lineH, it.H), flw0, flw1);
         lineW := flw1 - flw0;
+        // text-wrap:balance caps the usable width to the balanced width
+        if (balancedW > 0) and (balancedW < lineW) then lineW := balancedW;
         // text-indent narrows the FIRST line's usable width by the indent, so
         // the shifted first line wraps early instead of overflowing the margin.
         if firstInlineLine and (ParentStyle.TextIndent <> 0) and
@@ -4638,7 +4685,8 @@ begin
   end;
   FloatBase := Length(FFloats); MaxFloatY := CY;   // this container's floats append here
   noWrapFlow := SameText(ParentStyle.WhiteSpace, 'nowrap') or
-                SameText(ParentStyle.WhiteSpace, 'pre');
+                SameText(ParentStyle.WhiteSpace, 'pre') or
+                SameText(ParentStyle.TextWrap, 'nowrap');
   items := TList<TInlineItem>.Create;
   hyphenIdx := TList<Integer>.Create;
   bidiForce := TDictionary<Integer, string>.Create;
@@ -4829,13 +4877,47 @@ end;
 function TLayoutEngine.LayoutColumns(box: TLayoutBox; Tag: THTMLTag;
   const st: TComputedStyle; contentX, contentY, contentW: Single): Single;
 var
-  ncols, i, k, col, fcount: Integer;
-  colW, gap, usedH, target, colH, dx, dy, maxColH, cp: Single;
+  ncols, i, k, fcount, segLo, oldIdx: Integer;
+  colW, gap, usedH, maxColH, runY: Single;
   flow: array of TLayoutBox;
-  outerTop, slotBottom: array of Single;
-  colStartTop: array of Single;
-  colOf: array of Integer;
+  childH: array of Single;
+  isSpan: array of Boolean;
+  hasSpan: Boolean;
+  oldBox, newBox: TLayoutBox;
   pos: string;
+
+  { Outer height of a flow child (border box + non-negative vertical margins). }
+  function OuterH(b: TLayoutBox): Single;
+  begin
+    Result := b.H + Max(0, b.Style.Margin.Top) + Max(0, b.Style.Margin.Bottom);
+  end;
+
+  { Balance flow[lo..hi-1] into ncols columns starting at topY; shift each into
+    its column and return the bottom Y (topY + the tallest column). }
+  function BalanceRange(lo, hi: Integer; topY: Single): Single;
+  var kk, cc, ac: Integer; tot, tgt, cur, mT, dxb, dyb: Single;
+      colBottom: array of Single;
+  begin
+    if hi <= lo then Exit(topY);
+    tot := 0; for kk := lo to hi - 1 do tot := tot + childH[kk];
+    tgt := tot / ncols;
+    SetLength(colBottom, ncols);
+    for cc := 0 to ncols - 1 do colBottom[cc] := topY;
+    cur := 0; ac := 0;
+    for kk := lo to hi - 1 do
+    begin
+      mT := Max(0, flow[kk].Style.Margin.Top);
+      dxb := (contentX + ac * (colW + gap)) - (flow[kk].X - Max(0, flow[kk].Style.Margin.Left));
+      dyb := (colBottom[ac] + mT) - flow[kk].Y;
+      ShiftBoxTree(flow[kk], dxb, dyb);
+      colBottom[ac] := colBottom[ac] + childH[kk];
+      cur := cur + childH[kk];
+      if (ac < ncols - 1) and (cur >= tgt * (ac + 1)) then Inc(ac);
+    end;
+    Result := topY;
+    for cc := 0 to ncols - 1 do if colBottom[cc] > Result then Result := colBottom[cc];
+  end;
+
 begin
   gap := st.ColGap; if gap < 0 then gap := 0;
   if st.ColumnCount > 0 then ncols := st.ColumnCount
@@ -4863,35 +4945,52 @@ begin
   if fcount = 0 then Exit(usedH);
   SetLength(flow, fcount);
 
-  // outer top of each flow child and the bottom of its vertical slot
-  SetLength(outerTop, fcount); SetLength(slotBottom, fcount);
-  for k := 0 to fcount - 1 do
-    outerTop[k] := flow[k].Y - Max(0, flow[k].Style.Margin.Top);
-  for k := 0 to fcount - 2 do slotBottom[k] := outerTop[k + 1];
-  slotBottom[fcount - 1] := contentY + usedH;
-
-  // greedily fill columns up to the balanced target height
-  SetLength(colStartTop, ncols); SetLength(colOf, fcount);
-  target := usedH / ncols;
-  col := 0; colStartTop[0] := outerTop[0];
+  // column-span:all — a child that breaks out to span every column. Re-lay each
+  // spanning child at the full content width (it was laid out at colW), then
+  // balance the runs of ordinary children between spanning ones as segments.
+  SetLength(isSpan, fcount);
+  hasSpan := False;
   for k := 0 to fcount - 1 do
   begin
-    colOf[k] := col;
-    colH := slotBottom[k] - colStartTop[col];
-    if (col < ncols - 1) and (colH >= target) and (k < fcount - 1) then
-    begin Inc(col); colStartTop[col] := outerTop[k + 1]; end;
+    isSpan[k] := (LowerCase(flow[k].Style.ColumnSpan) = 'all');
+    if isSpan[k] then hasSpan := True;
   end;
+  if hasSpan then
+    for k := 0 to fcount - 1 do
+      if isSpan[k] and (flow[k].Tag <> nil) then
+      begin
+        oldBox := flow[k];
+        oldIdx := box.Children.IndexOf(oldBox);
+        LayoutBlock(box, oldBox.Tag, st, contentX, contentY, contentW);  // appends the wide box
+        newBox := box.Children[box.Children.Count - 1];
+        box.Children.Extract(newBox);           // detach without freeing
+        if oldIdx >= 0 then box.Children[oldIdx] := newBox;   // frees the old colW box, stores the wide one
+        flow[k] := newBox;
+      end;
 
-  // shift each column into place and measure the tallest
-  maxColH := 0;
-  for k := 0 to fcount - 1 do
+  // outer height of every flow child (after any re-layout above)
+  SetLength(childH, fcount);
+  for k := 0 to fcount - 1 do childH[k] := OuterH(flow[k]);
+
+  if not hasSpan then
+    maxColH := BalanceRange(0, fcount, contentY) - contentY
+  else
   begin
-    col := colOf[k];
-    dx := col * (colW + gap);
-    dy := contentY - colStartTop[col];
-    ShiftBoxTree(flow[k], dx, dy);
-    cp := slotBottom[k] - colStartTop[col];   // this child's bottom within its column
-    if cp > maxColH then maxColH := cp;
+    // segmented: balance each run of ordinary children, place each spanning
+    // child full-width between the runs, stacking down the block.
+    runY := contentY; segLo := 0;
+    for k := 0 to fcount - 1 do
+      if isSpan[k] then
+      begin
+        if k > segLo then runY := BalanceRange(segLo, k, runY);
+        ShiftBoxTree(flow[k],
+          (contentX + Max(0, flow[k].Style.Margin.Left)) - flow[k].X,
+          (runY + Max(0, flow[k].Style.Margin.Top)) - flow[k].Y);
+        runY := runY + childH[k];
+        segLo := k + 1;
+      end;
+    if fcount > segLo then runY := BalanceRange(segLo, fcount, runY);
+    maxColH := runY - contentY;
   end;
 
   // record geometry so PaintBoxEx can draw column-rules in the gaps. Store the
@@ -5695,6 +5794,42 @@ end;
 procedure PaintBoxEx(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single;
   Opacity: Single; Hidden: Boolean); forward;
 
+{ Resolve a text-emphasis-style value to its mark glyph (UTF-8). A quoted custom
+  string wins; otherwise fill (filled/open) + shape (dot/circle/double-circle/
+  triangle/sesame) select the mark. Default shape is a filled circle. }
+function EmphasisMark(const Spec: string): string;
+var s, q: string; a, b: Integer;
+begin
+  Result := '';
+  if Spec = '' then Exit;
+  // custom string: return its content (a single grapheme in practice)
+  a := Pos('"', Spec); if a = 0 then a := Pos('''', Spec);
+  if a > 0 then
+  begin
+    q := Copy(Spec, a + 1, Length(Spec));
+    b := Pos(Spec[a], q);
+    if b > 0 then q := Copy(q, 1, b - 1);
+    Result := q; Exit;
+  end;
+  s := LowerCase(Spec);
+  if Pos('open', s) > 0 then
+  begin
+    if Pos('double-circle', s) > 0 then Result := #$E2#$97#$8E        // ◎ U+25CE
+    else if Pos('triangle', s) > 0 then Result := #$E2#$96#$B3        // △ U+25B3
+    else if Pos('sesame', s) > 0 then Result := #$EF#$B9#$86          // ﹆ U+FE46
+    else if Pos('dot', s) > 0 then Result := #$E2#$97#$A6             // ◦ U+25E6
+    else Result := #$E2#$97#$8B;                                     // ○ U+25CB (circle)
+  end
+  else
+  begin
+    if Pos('double-circle', s) > 0 then Result := #$E2#$97#$89        // ◉ U+25C9
+    else if Pos('triangle', s) > 0 then Result := #$E2#$96#$B2        // ▲ U+25B2
+    else if Pos('sesame', s) > 0 then Result := #$EF#$B9#$85          // ﹅ U+FE45
+    else if Pos('dot', s) > 0 then Result := #$E2#$80#$A2             // • U+2022
+    else Result := #$E2#$97#$8F;                                     // ● U+25CF (circle)
+  end;
+end;
+
 procedure PaintBox(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single);
 begin
   PaintBoxEx(Canvas, Box, OffsetY, 1.0, False);
@@ -6137,6 +6272,8 @@ var
   decCol: TTina4Color; decW, decTh, dbx, dby: Single;
   bcTextRad, bcTextDX, bcTextDenom, bcGX, bcFrac, bcCW: Single;
   bcCi, bcCl: Integer; bcCh: string;
+  emMark, emCh: string; emCol: TTina4Color;
+  emSize, emX, emY, emCW, emMW: Single; emCi, emCl: Integer;
   stretchF: Single;   // font-stretch horizontal scale for this run
   vAx, vAy, vWc: Single;   // writing-mode:vertical-rl paint frame (top-left + content width)
   vRotSaved: Boolean;      // a vertical-rl content rotation is open (balance the restore)
@@ -6767,14 +6904,49 @@ begin
         if r.DecorColor <> 0 then decCol := ScaleAlpha(r.DecorColor, op)
         else decCol := fg;
         decW := Canvas.MeasureText(drawTxt, r.FontSize, r.Styles).Width;
-        decTh := Max(1, r.FontSize / 14);
+        // text-decoration-thickness overrides the auto ~font/14 stroke
+        if r.DecorThickness > 0 then decTh := r.DecorThickness
+        else decTh := Max(1, r.FontSize / 14);
         dbx := r.X - sx; dby := r.Y - innerOfs;
         if (r.DecorLines and 4) <> 0 then
           PaintDecorLine(Canvas, dbx, dby + r.FontSize * 0.10, decW, decTh, r.DecorStyle, decCol);
         if (r.DecorLines and 2) <> 0 then
           PaintDecorLine(Canvas, dbx, dby + r.FontSize * 0.56, decW, decTh, r.DecorStyle, decCol);
+        // text-underline-offset pushes the underline further below the baseline
         if (r.DecorLines and 1) <> 0 then
-          PaintDecorLine(Canvas, dbx, dby + r.FontSize * 0.98, decW, decTh, r.DecorStyle, decCol);
+          PaintDecorLine(Canvas, dbx, dby + r.FontSize * 0.98 + r.DecorOffset, decW, decTh, r.DecorStyle, decCol);
+      end;
+      // text-emphasis: a small mark centred over (or under) each non-space glyph.
+      // Emphasis is taken from the box style (inherited) — the common case of the
+      // property set on a block and applying to all its text.
+      if st.TextEmphasisStyle <> '' then
+      begin
+        emMark := EmphasisMark(st.TextEmphasisStyle);
+        if emMark <> '' then
+        begin
+          if st.TextEmphasisColor <> 0 then emCol := ScaleAlpha(st.TextEmphasisColor, op)
+          else emCol := fg;
+          emSize := r.FontSize * 0.5;
+          emMW := Canvas.MeasureText(emMark, emSize, []).Width;
+          emX := r.X - sx;
+          emCi := 1;
+          while emCi <= Length(drawTxt) do
+          begin
+            emCl := 1;
+            while (emCi + emCl <= Length(drawTxt)) and
+                  ((Ord(drawTxt[emCi + emCl]) and $C0) = $80) do Inc(emCl);
+            emCh := Copy(drawTxt, emCi, emCl);
+            emCW := Canvas.MeasureText(emCh, r.FontSize, r.Styles).Width;
+            if Trim(emCh) <> '' then
+            begin
+              if st.TextEmphasisOver then emY := (r.Y - innerOfs) - emSize * 0.95
+              else emY := (r.Y - innerOfs) + r.FontSize * 0.98;
+              Canvas.DrawText(emX + (emCW - emMW) / 2, emY, emMark, emSize, [], emCol);
+            end;
+            emX := emX + emCW;
+            Inc(emCi, emCl);
+          end;
+        end;
       end;
       Canvas.LetterSpacing := 0;
       Canvas.FontFamily := '';

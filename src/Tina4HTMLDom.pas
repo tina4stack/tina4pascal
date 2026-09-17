@@ -302,6 +302,11 @@ type
     TextDecoration: string;
     TextDecorationStyle: string;      // 'solid'|'double'|'dotted'|'dashed'|'wavy'
     TextDecorationColor: TAlphaColor;  // 0 => use text color
+    UnderThickness: Single;   // text-decoration-thickness in px, 0 = auto
+    UnderOffset: Single;      // text-underline-offset in px (0 = auto)
+    TextEmphasisStyle: string;  // '' = none; e.g. 'filled dot', 'open circle', 'sesame' (inherited)
+    TextEmphasisColor: TAlphaColor;  // 0 => use text color
+    TextEmphasisOver: Boolean;  // True = mark over the text (default), False = under (inherited)
     TextAlign: TTextAlign;
     TextAlignSet: Boolean;     // text-align was explicitly set (vs inherited/initial 'start')
     TextJustify: Boolean;      // text-align: justify (spread slack across gaps)
@@ -328,6 +333,7 @@ type
     AspectRatio: Single;   // width/height ratio (0 = none/auto)
     Display: string;
     WhiteSpace: string;
+    TextWrap: string;   // '' | 'nowrap' | 'balance' | 'pretty' | 'stable' (inherited)
     BoxSizing: string;
     AppearanceNone: Boolean;    // appearance:none — strip native control chrome
     AccentColor: TAlphaColor;   // accent-color for checkboxes/radios/range (0=auto)
@@ -408,6 +414,7 @@ type
     ColumnRuleWidth: Single;      // rule between columns: 0 = none
     ColumnRuleColor: TAlphaColor;
     ColumnRuleStyle: string;      // 'none' (default) / solid / dashed / dotted / double
+    ColumnSpan: string;           // '' | 'all' — element spans every multicol column
     // text-shadow: offsetX offsetY [blur] color
     TextShadowOffsetX: Single;
     TextShadowOffsetY: Single;
@@ -770,8 +777,9 @@ var p, v: string;
 begin
   p := LowerCase(Trim(Prop));
   v := LowerCase(Trim(Val));
-  if (p = 'mask') or (p = 'mask-image') or (p = 'background-blend-mode')
-     or (p = 'perspective') or (p = 'transform-style') then Exit(False);
+  // mask-image (gradient + url alpha) and background-blend-mode are supported now;
+  // standalone perspective and transform-style:preserve-3d are still not.
+  if (p = 'perspective') or (p = 'transform-style') then Exit(False);
   // 3D transforms are not projected
   if (p = 'transform') and ((Pos('3d', v) > 0) or (Pos('perspective', v) > 0)
      or (Pos('rotatex', v) > 0) or (Pos('rotatey', v) > 0)) then Exit(False);
@@ -2658,6 +2666,8 @@ begin
   Result.TextDecoration := 'none';
   Result.TextDecorationStyle := 'solid';
   Result.TextDecorationColor := 0;
+  Result.UnderThickness := 0; Result.UnderOffset := 0;
+  Result.TextEmphasisStyle := ''; Result.TextEmphasisColor := 0; Result.TextEmphasisOver := True;
   Result.TextAlign := TTextAlign.Leading;
   Result.TextJustify := False;
   Result.TextAlignSet := False;
@@ -2688,6 +2698,7 @@ begin
   Result.AspectRatio := 0;
   Result.Display := 'block';
   Result.WhiteSpace := 'normal';
+  Result.TextWrap := '';
   Result.BoxSizing := 'content-box';
   Result.CSSCursor := '';
   Result.TextTransform := 'none';
@@ -2745,6 +2756,7 @@ begin
   Result.RowGap := 0; Result.ColGap := 0;
   Result.ColumnCount := 0; Result.ColumnWidth := -1;
   Result.ColumnRuleWidth := 0; Result.ColumnRuleColor := TAlphaColors.Null; Result.ColumnRuleStyle := 'none';
+  Result.ColumnSpan := '';
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
   Result.BgPosY := 0;
@@ -3233,6 +3245,10 @@ begin
   Result.WritingMode := ParentStyle.WritingMode;   // inherited
   Result.LineHeight := ParentStyle.LineHeight;
   Result.WhiteSpace := ParentStyle.WhiteSpace;
+  Result.TextWrap := ParentStyle.TextWrap;
+  Result.TextEmphasisStyle := ParentStyle.TextEmphasisStyle;   // inherited
+  Result.TextEmphasisColor := ParentStyle.TextEmphasisColor;
+  Result.TextEmphasisOver := ParentStyle.TextEmphasisOver;
   Result.ListStyleType := ParentStyle.ListStyleType;
   Result.ListStyleImage := ParentStyle.ListStyleImage;   // inherited
   Result.TextTransform := ParentStyle.TextTransform;
@@ -3257,6 +3273,8 @@ begin
   Result.TextDecoration := 'none';
   Result.TextDecorationStyle := 'solid';
   Result.TextDecorationColor := 0;
+  Result.UnderThickness := 0; Result.UnderOffset := 0;
+  Result.TextEmphasisStyle := ''; Result.TextEmphasisColor := 0; Result.TextEmphasisOver := True;
   Result.Margin.Clear;
   Result.Padding.Clear;
   Result.SetBorderColor(TAlphaColors.Black);
@@ -3316,6 +3334,7 @@ begin
   Result.RowGap := 0; Result.ColGap := 0;
   Result.ColumnCount := 0; Result.ColumnWidth := -1;
   Result.ColumnRuleWidth := 0; Result.ColumnRuleColor := TAlphaColors.Null; Result.ColumnRuleStyle := 'none';
+  Result.ColumnSpan := '';
   Result.TextShadowActive := False;
   Result.BgPosX := 0;
   Result.BgPosY := 0;
@@ -4280,6 +4299,53 @@ begin
     Style.TextDecorationStyle := Temp.ToLower;
   if Decls.TryGetValue('text-decoration-color', Temp) and not ShouldSkip(Temp) then
     Style.TextDecorationColor := ParseColor(Temp);
+  if Decls.TryGetValue('text-decoration-thickness', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'auto') or SameText(Trim(Temp), 'from-font') then Style.UnderThickness := 0
+    else Style.UnderThickness := ParseLength(Temp, Style.FontSize);
+  end;
+  if Decls.TryGetValue('text-underline-offset', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'auto') then Style.UnderOffset := 0
+    else Style.UnderOffset := ParseLength(Temp, Style.FontSize);
+  end;
+  // text-emphasis shorthand: fill/shape keywords ‖ a <string> ‖ a <color>, any
+  // order. Shape/fill keywords (and a quoted custom mark) go to TextEmphasisStyle
+  // (resolved to a glyph at paint); anything else is treated as the colour.
+  if (Decls.TryGetValue('text-emphasis', Temp) or Decls.TryGetValue('-webkit-text-emphasis', Temp))
+     and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.TextEmphasisStyle := ''
+    else
+    begin
+      tdLine := '';
+      for tdTok in Temp.Split([' '], TStringSplitOptions.ExcludeEmpty) do
+      begin
+        if (LowerCase(tdTok) = 'filled') or (LowerCase(tdTok) = 'open') or
+           (LowerCase(tdTok) = 'dot') or (LowerCase(tdTok) = 'circle') or
+           (LowerCase(tdTok) = 'double-circle') or (LowerCase(tdTok) = 'triangle') or
+           (LowerCase(tdTok) = 'sesame') or (Pos('"', tdTok) > 0) or (Pos('''', tdTok) > 0) then
+        begin
+          if tdLine = '' then tdLine := tdTok else tdLine := tdLine + ' ' + tdTok;
+        end
+        else
+          Style.TextEmphasisColor := ParseColor(tdTok);
+      end;
+      if tdLine <> '' then Style.TextEmphasisStyle := tdLine;
+    end;
+  end;
+  if (Decls.TryGetValue('text-emphasis-style', Temp) or Decls.TryGetValue('-webkit-text-emphasis-style', Temp))
+     and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.TextEmphasisStyle := ''
+    else Style.TextEmphasisStyle := Trim(Temp);
+  end;
+  if (Decls.TryGetValue('text-emphasis-color', Temp) or Decls.TryGetValue('-webkit-text-emphasis-color', Temp))
+     and not ShouldSkip(Temp) then
+    Style.TextEmphasisColor := ParseColor(Trim(Temp));
+  if (Decls.TryGetValue('text-emphasis-position', Temp) or Decls.TryGetValue('-webkit-text-emphasis-position', Temp))
+     and not ShouldSkip(Temp) then
+    Style.TextEmphasisOver := Pos('under', LowerCase(Temp)) = 0;
   if (Decls.TryGetValue('background-clip', Temp) or
       Decls.TryGetValue('-webkit-background-clip', Temp)) and not ShouldSkip(Temp) then
     Style.BackgroundClipText := SameText(Trim(Temp), 'text');
@@ -4506,6 +4572,10 @@ begin
     Style.VerticalAlign := Temp.ToLower;
   if Decls.TryGetValue('white-space', Temp) and not ShouldSkip(Temp) then
     Style.WhiteSpace := Temp.Trim.ToLower;
+  if Decls.TryGetValue('text-wrap', Temp) and not ShouldSkip(Temp) then
+    Style.TextWrap := Temp.Trim.ToLower;
+  if Decls.TryGetValue('text-wrap-mode', Temp) and not ShouldSkip(Temp) then
+    Style.TextWrap := Temp.Trim.ToLower;
   if Decls.TryGetValue('box-sizing', Temp) and not ShouldSkip(Temp) then
     Style.BoxSizing := Temp.ToLower;
   if (Decls.TryGetValue('appearance', Temp) or Decls.TryGetValue('-webkit-appearance', Temp))
@@ -4997,6 +5067,8 @@ begin
     Style.ColumnRuleStyle := Temp.Trim.ToLower;
   if Decls.TryGetValue('column-rule-color', Temp) and not ShouldSkip(Temp) then
     Style.ColumnRuleColor := ParseColor(Temp);
+  if Decls.TryGetValue('column-span', Temp) and not ShouldSkip(Temp) then
+    Style.ColumnSpan := Temp.Trim.ToLower;
   // CSS Grid templates + item placement
   if Decls.TryGetValue('grid-template-columns', Temp) and not ShouldSkip(Temp) then
     Style.GridTemplateColumns := Temp.Trim.ToLower;
@@ -5337,10 +5409,30 @@ begin
   end;
   if Decls.TryGetValue('mask', Temp) and not ShouldSkip(Temp) then
   begin
-    // shorthand: take the image (gradient/url) part; ignore position/size/repeat
+    // shorthand keeps the whole value; the compositor parses image + geometry
     if SameText(Trim(Temp), 'none') then Style.MaskImage := ''
     else if (Pos('gradient(', LowerCase(Temp)) > 0) or (Pos('url(', LowerCase(Temp)) > 0) then
       Style.MaskImage := Trim(Temp);
+  end;
+  if Decls.TryGetValue('-webkit-mask', Temp) and not ShouldSkip(Temp) then
+  begin
+    if SameText(Trim(Temp), 'none') then Style.MaskImage := ''
+    else if (Pos('gradient(', LowerCase(Temp)) > 0) or (Pos('url(', LowerCase(Temp)) > 0) then
+      Style.MaskImage := Trim(Temp);
+  end;
+  // mask-mode / -size / -position / -repeat longhands: fold onto the image spec
+  // so the compositor's geometry parser (ParseMaskGeom) sees their keywords.
+  // Only for url() image masks — a gradient spec must reach ApplyGradientMask clean.
+  if (Style.MaskImage <> '') and (Pos('url(', LowerCase(Style.MaskImage)) > 0) then
+  begin
+    if (Decls.TryGetValue('mask-mode', Temp) or Decls.TryGetValue('-webkit-mask-mode', Temp))
+       and not ShouldSkip(Temp) then Style.MaskImage := Style.MaskImage + ' ' + Trim(Temp);
+    if (Decls.TryGetValue('mask-position', Temp) or Decls.TryGetValue('-webkit-mask-position', Temp))
+       and not ShouldSkip(Temp) then Style.MaskImage := Style.MaskImage + ' ' + Trim(Temp);
+    if (Decls.TryGetValue('mask-size', Temp) or Decls.TryGetValue('-webkit-mask-size', Temp))
+       and not ShouldSkip(Temp) then Style.MaskImage := Style.MaskImage + ' / ' + Trim(Temp);
+    if (Decls.TryGetValue('mask-repeat', Temp) or Decls.TryGetValue('-webkit-mask-repeat', Temp))
+       and not ShouldSkip(Temp) then Style.MaskImage := Style.MaskImage + ' ' + Trim(Temp);
   end;
   if Decls.TryGetValue('mix-blend-mode', Temp) and not ShouldSkip(Temp) then
   begin
