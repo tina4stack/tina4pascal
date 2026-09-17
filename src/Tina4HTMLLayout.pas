@@ -3022,7 +3022,7 @@ var
   trackW, trackFr, colX, rowH, rowFr: array of Single;
   trackFixed: array of Boolean;
   rowIsFr: array of Boolean;
-  ncols, nrows, i, curRow, curCol, span, k, spanRows, tplRows: Integer;
+  ncols, nrows, i, curRow, curCol, span, k, spanRows, tplRows, ci: Integer;
   colStart, rowStart, rowSpan, autoRow, autoCol: Integer;
   autoRowH: Single;
   toks: TStringArray;
@@ -3464,7 +3464,22 @@ begin
       asx := cb.Style.AlignSelf; if (asx = '') or (asx = 'auto') then asx := st.AlignItems;
       if asx = '' then asx := 'stretch';
       if (asx = 'stretch') and (ResolveSize(cb.Style.ExplicitHeight, 0) < 0) then
-      begin if cb.H < cellH then cb.H := cellH; aOff := 0; end
+      begin
+        if cb.H < cellH then
+        begin
+          // A nested flex/grid that centres its own content laid it out at the
+          // shorter content height; now that we stretch it to the taller cell,
+          // shift that content down so it stays centred (the tile-with-a-label
+          // case: place-items:center in a grid-auto-rows cell).
+          if IsFlexOrGrid(cb.Style) and
+             ((LowerCase(cb.Style.AlignItems) = 'center') or
+              (LowerCase(cb.Style.AlignContent) = 'center')) then
+            for ci := 0 to cb.Children.Count - 1 do
+              ShiftBoxTree(cb.Children[ci], 0, (cellH - cb.H) / 2);
+          cb.H := cellH;
+        end;
+        aOff := 0;
+      end
       else if asx = 'center' then aOff := (cellH - cb.H) / 2
       else if (asx = 'end') or (asx = 'flex-end') or (asx = 'self-end') then aOff := cellH - cb.H
       else aOff := 0;   // start
