@@ -109,7 +109,7 @@ type
     function MakeInlineContainer(Tag: THTMLTag; const St: TComputedStyle;
       AvailW: Single): TLayoutBox;
     function MakeContainerBox(Tag: THTMLTag; const ParentStyle: TComputedStyle;
-      AvailW: Single; const d: string): TLayoutBox;
+      AvailW: Single; const d: string; ForceH: Single = -1): TLayoutBox;
     { A replaced element (img/svg/qrcode) used directly as a block or flex
       item — build it as an atom instead of laying out its children. Returns
       nil when Tag is not a replaced element. }
@@ -119,7 +119,8 @@ type
     function LayoutControlBlock(Parent: TLayoutBox; Tag: THTMLTag;
       const St: TComputedStyle; X, Y, AvailW: Single): Single;
     function LayoutFlex(Parent: TLayoutBox; Tag: THTMLTag;
-      const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
+      const ParentStyle: TComputedStyle; X, Y, AvailW: Single;
+      ForceContentH: Single = -1): Single;
     function LayoutGrid(Parent: TLayoutBox; Tag: THTMLTag;
       const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
     { CSS multi-column: lay children into one narrow column, then balance them
@@ -2519,13 +2520,13 @@ end;
   extract it; the outer flex then ShiftBoxTree's it into place. Laid out at the
   origin. `d` is the lower-cased display. }
 function TLayoutEngine.MakeContainerBox(Tag: THTMLTag; const ParentStyle: TComputedStyle;
-  AvailW: Single; const d: string): TLayoutBox;
+  AvailW: Single; const d: string; ForceH: Single = -1): TLayoutBox;
 var tmp: TLayoutBox;
 begin
   Result := nil;
   tmp := TLayoutBox.Create;
   try
-    if (d = 'flex') or (d = 'inline-flex') then LayoutFlex(tmp, Tag, ParentStyle, 0, 0, AvailW)
+    if (d = 'flex') or (d = 'inline-flex') then LayoutFlex(tmp, Tag, ParentStyle, 0, 0, AvailW, ForceH)
     else if SameText(Tag.TagName, 'table') or (d = 'table') or (d = 'inline-table') then
       // a table flex/grid item keeps its internal table formatting (rows→columns),
       // not the inline stacking MakeInlineContainer would give it
@@ -2601,15 +2602,17 @@ end;
   align-items (cross axis). No wrap, no grow/shrink resolution yet — items
   keep their own size. Enough for the common row layouts. }
 function TLayoutEngine.LayoutFlex(Parent: TLayoutBox; Tag: THTMLTag;
-  const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
+  const ParentStyle: TComputedStyle; X, Y, AvailW: Single;
+  ForceContentH: Single = -1): Single;
 var
   st, cs: TComputedStyle;
-  box, cb: TLayoutBox;
+  box, cb, relaid: TLayoutBox;
   items: TObjectList<TLayoutBox>;
   itemTags: TList<THTMLTag>;
   c: THTMLTag;
+  ridx: Integer;
   runText: string;   // accumulates a contiguous text run → anonymous flex item
-  mL, mR, mT, mB, availInner, ew, eh: Single;
+  mL, mR, mT, mB, availInner, ew, eh, mnh: Single;
   edgeL, edgeT, edgeR, edgeB, contentX, contentY, contentW, contentH: Single;
   isCol: Boolean;
   dir, jc, ai, ia: string;
@@ -2858,6 +2861,20 @@ begin
       if SameText(st.BoxSizing, 'border-box') then contentH := Max(contentH, eh - edgeT - edgeB)
       else contentH := Max(contentH, eh);
     end;
+    // min-height grows the container's main/cross extent too — without this a
+    // `min-height` column flex stays at content height, so flex-grow children get
+    // no free space and align-items:center has nothing to centre within (content
+    // sticks to the top). Mirrors the block path's min-height clamp.
+    mnh := ResolveSize(st.MinHeight, 0);
+    if mnh >= 0 then
+    begin
+      if SameText(st.BoxSizing, 'border-box') then contentH := Max(contentH, mnh - edgeT - edgeB)
+      else contentH := Max(contentH, mnh);
+    end;
+    // a flex-grow item is re-laid-out by its parent at its final content height so
+    // its own align-items/justify-content can centre against that height (see the
+    // column re-flow pass below). ForceContentH is that definite content height.
+    if ForceContentH >= 0 then contentH := Max(contentH, ForceContentH);
 
     // flex-wrap (column): pack items down each column until the definite height
     // is exceeded, then stack columns across the cross (horizontal) axis — the
@@ -3070,6 +3087,33 @@ begin
             if items[i].H < 0 then items[i].H := 0;
           end;
     end;
+
+    // Re-flow grown flex items at their final height. A flex item is laid out at
+    // its NATURAL height during item-build; growing its box afterwards leaves the
+    // item's own content stuck to the top (align-items:center had no spare height
+    // to centre within). Re-lay-out each grown nested flex container with its final
+    // content height so its own align/justify re-centre. Grid/block items stack
+    // top-down, so they need no re-flow.
+    if isCol then
+      for i := 0 to items.Count - 1 do
+      begin
+        cb := items[i];
+        if (cb.Tag <> nil) and (cb.Style.FlexGrow > 0)
+           and ((LowerCase(cb.Style.Display) = 'flex') or (LowerCase(cb.Style.Display) = 'inline-flex'))
+           and (cb.H - cb.Style.Padding.Vert - cb.Style.BorderWidths.Vert > 0) then
+        begin
+          relaid := MakeContainerBox(cb.Tag, st, cb.W, 'flex',
+            cb.H - cb.Style.Padding.Vert - cb.Style.BorderWidths.Vert);
+          if relaid <> nil then
+          begin
+            relaid.W := cb.W;                 // keep the resolved cross-axis width
+            ridx := box.Children.IndexOf(cb);
+            if ridx >= 0 then box.Children[ridx] := relaid   // Children owns → frees old cb
+            else relaid.Free;
+            if ridx >= 0 then items[i] := relaid;
+          end;
+        end;
+      end;
 
     // auto margins on the main axis absorb the free space (margin-left:auto pushes
     // an item to the end) and override justify-content's distribution.
@@ -4062,18 +4106,34 @@ var
     lines: TStringArray;
     li, p: Integer;
     inSpace: Boolean;
+    { A tab advances to the next tab STOP — the next column that is a multiple of
+      TabW — not to N literal spaces. Per line so stops reset at each newline and
+      columns line up (CSS `tab-size`). Column is counted in characters, exact for
+      the monospace text tabs are used with. }
+    function ExpandTabStops(const Line: string; TabW: Integer): string;
+    var i, col, n: Integer;
+    begin
+      if TabW < 1 then TabW := 1;
+      Result := ''; col := 0;
+      for i := 1 to Length(Line) do
+        if Line[i] = #9 then
+        begin
+          n := TabW - (col mod TabW);
+          Result := Result + StringOfChar(' ', n); Inc(col, n);
+        end
+        else begin Result := Result + Line[i]; Inc(col); end;
+    end;
   begin
     s := StringReplace(Raw, #13#10, #10, [rfReplaceAll]);
     s := StringReplace(s, #13, #10, [rfReplaceAll]);
-    // tab-size: expand tabs to N space-widths (CSS default 8). pre-line collapses
-    // whitespace anyway; for pre / pre-wrap this makes tab indentation visible.
-    if Pos(#9, s) > 0 then
-      s := StringReplace(s, #9, StringOfChar(' ', Max(0, St.TabSize)), [rfReplaceAll]);
     lines := s.Split([#10]);
     for li := 0 to High(lines) do
     begin
       if li > 0 then AddHardBreak(St);
       seg := lines[li];
+      // tab-size: expand each tab to the next tab stop (default 8). pre-line/normal
+      // collapse the resulting spaces anyway; pre / pre-wrap keep the alignment.
+      if Pos(#9, seg) > 0 then seg := ExpandTabStops(seg, St.TabSize);
       if Mode = 'pre-line' then
       begin
         seg := Trim(CollapseWS(seg));

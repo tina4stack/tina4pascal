@@ -20,7 +20,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 |---|---|---|
 | width, height | ✅ | px/%/auto, box-sizing-aware |
 | min-width, max-width | ✅ | clamped in layout |
-| min-height, max-height | ✅ | clamped in LayoutBlock |
+| min-height, max-height | ✅ | clamped in LayoutBlock; **min-height also grows a flex container** (column main-axis / row cross-axis) so `flex:1` children get free space to stretch into and `align-items:center` has room to centre |
 | margin (+ 4 sides) | ✅ | shorthand, auto-center, vertical collapse |
 | padding (+ 4 sides) | ✅ | |
 | border-width (+ 4 sides) | ✅ | per-side widths painted (rectangular boxes); rounded boxes use a uniform stroke |
@@ -51,7 +51,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 
 | Property | Status | Note |
 |---|---|---|
-| flex, flex-grow, flex-basis | ✅ | **flex-basis is the item's base main size** (content-box), taking precedence over `width` — `flex: 0 0 60px` gives an exactly-60px item (was 0); grow distributes free main space. **Works on the column main axis too** (vertical `flex:1`/`flex:2` split the container height; basis, grow and shrink all applied). Reftests `flex-basis-fixed`, `flex-col-grow` |
+| flex, flex-grow, flex-basis | ✅ | **flex-basis is the item's base main size** (content-box), taking precedence over `width` — `flex: 0 0 60px` gives an exactly-60px item (was 0); grow distributes free main space. **Works on the column main axis too** (vertical `flex:1`/`flex:2` split the container height; basis, grow and shrink all applied). A grown nested flex item is **re-laid-out at its final height** so its own `align-items`/`justify-content` re-centre — content no longer sticks to the top of a stretched item. Reftests `flex-basis-fixed`, `flex-col-grow` |
 | flex-shrink | ✅ | weighted shrink pass on overflowing non-wrapping rows — **applies even when the item also flex-grows** (grow only adds positive free space; on overflow, shrink wins), verified 0.00% vs Chrome |
 | flex-direction | ✅ | row/column + row-reverse/column-reverse: items reverse order **and** pack from the far edge (a default `row-reverse` right-aligns, matching Chrome 0.00%) — the reverse flips `justify-content` flex-start↔flex-end. Reftest `css-flexreverse` |
 | flex-wrap | ✅ | wrap + wrap-reverse for **both** row and column directions (lines/columns stacked on the cross axis, reverse order for wrap-reverse, align-content honoured; grow disabled while wrapping). Column wrap packs down each column until the definite height is exceeded, then stacks columns across — verified matching Chrome (`flex-flow: column wrap` 0.25%). Reftest `flex-flow` |
@@ -101,7 +101,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | writing-mode | ✅ | `vertical-rl` **and** `vertical-lr` with a definite height do **real vertical block-flow**: the inline content is laid out against the height (so it wraps into columns), then painted 90° CW — text runs top-to-bottom, Latin glyphs rotated CW, the box background/border upright. `vertical-rl` fills right-to-left columns; `vertical-lr` reverses the column order in layout (each line box reflected about the content centre, half-leading preserved) so the same rotation fills left-to-right columns. Both verified matching Chrome. Inherited. A vertical block without a definite height falls back to the flat single-line rotation; upright CJK orientation (`text-orientation`) not modelled. Reftests `writing-mode-vertical`, `writing-mode-vertical-lr` |
 | direction | ✅ | `ltr`/`rtl`/`auto`, from the property, the `dir` attribute, or `dir="auto"` (first-strong detection). Mixed LTR/RTL lines are reordered logical→visual by the Unicode Bidi Algorithm L2 rule (Hebrew/Arabic classification, base level, simplified neutral resolution), verified pixel-matching Chrome. Mirrored punctuation (UBA L4: `(`↔`)`, `[`↔`]`, `<`↔`>`, guillemets…) is applied to RTL-level punctuation. Native text backends shape each run, so **per-character direction inside one token** (e.g. `abc99שלום`) resolves via the shaper and pixel-matches Chrome. `bdi`/`bdo` handled. Remaining: the *embedding effect* of `unicode-bidi` control codes, RTL shaping on the pure-raster path. Reftest `bidi-rtl-ltr` |
 | unicode-bidi | ✅ | accepted (its effect is the bidi algorithm, which we don't run — no-op alongside the `direction` right-alignment) |
-| tab-size | ✅ | `-moz-tab-size` too; tabs in `white-space:pre`/`pre-wrap` expand to N space-widths (default 8) |
+| tab-size | ✅ | `-moz-tab-size` too; each tab advances to the next **tab stop** (a column that is a multiple of N, default 8), expanded per line so columns line up — not N literal spaces |
 | text-align-last | ✅ | left/right/center/start/end/justify on the block's last line (and the line before a `<br>`) |
 | text-justify | ✅ | `none` disables the justification `text-align:justify` turns on; `inter-word`/`auto` keep it |
 | text-rendering | ✅ | accepted (a rendering hint with no required visual change — no-op) |
