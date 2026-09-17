@@ -204,7 +204,8 @@ for completeness — the engine renders correctly whether or not they are presen
 | widows, orphans, break-before / -after / -inside | ⬜ | fragmentation controls — no effect in the continuous single-column flow; `break-inside:avoid` is naturally satisfied since multicol never splits a child |
 | text-emphasis (+ -style / -color / -position) | ✅ | a small mark centred over (or under) each non-space glyph, from the `text-emphasis` shorthand or the longhands. Fill `filled`/`open` × shape `dot`/`circle`/`double-circle`/`triangle`/`sesame`, a custom quoted `<string>` mark, a colour token, and `-position: over`/`under`; inherited; mark sized 0.5em, positioned per-glyph (UTF-8 aware). Taken from the box style (emphasis set on a block, applying to its text — the common case). Reftest `css-text-emphasis` (0.23% ours; marks land within 1px of Chrome). `-webkit-` aliases parsed |
 | text-combine-upright | ⬜ | tate-chū-yoko — niche; not painted |
-| text-orientation, unicode-bidi | 🟡 | writing-mode vertical + the bidi reorder/mirror path (`<bdo>`/`<bdi>`) are done; `text-orientation:upright` glyph rotation and explicit `unicode-bidi` embedding levels are not |
+| text-orientation | ✅ | `upright` stands each glyph up inside a vertical column (counter-rotates every glyph -90° about its centre, cancelling the column's 90° rotation) so CJK reads top-to-bottom upright — verified against Chrome; reftest `css-text-orientation-upright` (0.28%). `mixed`/`sideways` = the default rotated flow. Inherited |
+| unicode-bidi | 🟡 | the bidi reorder/mirror path (`<bdo>`/`<bdi>`) is done; explicit `unicode-bidi` embedding levels are not |
 
 ## Prioritised roadmap (by real-world impact ÷ effort)
 
@@ -222,22 +223,43 @@ text-decoration overline + wavy/dotted/dashed/double + color/style,
 gradients, position:sticky, cursor). Remaining longhands: the sub-keyword
 resize cursors beyond col/row-resize.
 
-**Outstanding — the advanced tail** (each the last, hardest slice of an
-otherwise-working feature):
-1. **transform-style: preserve-3d** multi-plane 3D scenes — a shared 3D space
-    with z-sorting + backface-culling across sibling planes (single-element 3D
-    transforms, `perspective()`, `matrix3d` are done).
-2. **mask** last slivers — `mask-composite` (multi-layer combine) and PNG/JPEG
-    masks on the raster shell (WebP only there). `mask-mode:luminance`,
-    `mask-size` (contain/cover/auto + explicit length/percentage), `mask-position`
-    and `mask-repeat` are **done** (gradient **and** `url()` image masks, plus
+**Outstanding — the advanced tail.** Each remaining item below is a *deliberate
+scope boundary*, not an oversight: it needs a dedicated subsystem (not a
+one-feature change) and/or has a hard platform blocker, and/or has near-zero
+real-world use. The disposition + what it would actually take is recorded so the
+index stays honest — none is a quick win, and none is marked ✅ without proof.
+
+1. **`transform-style: preserve-3d` + the `perspective` property** — needs a real
+    3D scene compositor: compose each descendant's 4×4 transform with its
+    preserve-3d ancestor's (per-corner Z from `translateZ`, a single shared
+    perspective), then z-sort and backface-cull the flattened planes. Single-
+    element 3D (`rotateX/Y`, `perspective()`, `matrix3d`, projected + quad-warped)
+    is done. **Hard blocker:** the Linux X11 shell has no transform matrix at all
+    (see the `linux-x11-no-affine` note), so quad-warping — and thus preserve-3d —
+    can't run there regardless. A dedicated effort, not a tail fix.
+2. **`mask-composite`** (multi-layer `add`/`subtract`/`intersect`/`exclude`) —
+    needs the whole mask pipeline widened from one layer to a compositing stack.
+    Near-zero real-world use, so deliberately deferred. Everything else in the
+    mask family is done: `mask-mode:luminance`, `mask-size`
+    (contain/cover/auto + explicit length/percentage), `mask-position`,
+    `mask-repeat`, gradient **and** `url()` image masks, plus
     `filter`/`backdrop-filter`/`mix-blend-mode`/`drop-shadow` and clip-path basic
-    shapes).
-3. Typography remainder: `hyphens:auto` dictionary, `text-orientation:upright`
-    CJK glyph rotation (`text-emphasis` marks, `font-variant` small-caps,
-    soft-hyphen `hyphens:manual`, synthetic `font-stretch`, vertical block-flow,
-    bidi reorder/mirror/`<bdo>`/`<bdi>`, `text-wrap:balance`,
-    `text-decoration-thickness`/`-underline-offset` are done).
+    shapes. (PNG/JPEG masks on the raster shell need that shell's own PNG/JPEG
+    decoder — WebP works there today; a shell-decode gap, not a core one.)
+3. **`hyphens:auto`** — needs an embedded hyphenation dictionary (Liang/TeX
+    patterns); without one it degrades to `manual` (breaks only at author soft
+    hyphens), which is correct-but-conservative rather than wrong. A bad heuristic
+    hyphenator (breaking at the wrong points) would be worse than the current
+    fallback, so it waits for real patterns. The rest of typography is done:
+    `text-orientation:upright`, `text-emphasis`, `font-variant` small-caps,
+    `hyphens:manual`, synthetic `font-stretch`, vertical block-flow, bidi
+    reorder/mirror/`<bdo>`/`<bdi>`, `text-wrap:balance`,
+    `text-decoration-thickness`/`-underline-offset`.
+4. **multi-column line-level fragmentation** — the balancer distributes whole
+    block children across columns; splitting a single tall paragraph's *lines*
+    across a column break needs a fragmentation engine (the same machinery
+    page-break/`break-inside` would use). Whole-child balancing covers the common
+    cases; true fragmentation is a dedicated effort.
 
 `user-select` (drag-select with a painted highlight + `TinaSelectedText`) and
 `resize` (drag-resize handle with a corner grip) are now **done**.
@@ -248,7 +270,7 @@ image layers), CSS counters, the structural/combinator/`:not()` selectors,
 verified 0.00% vs headless Chrome. Behavioral, fragmentation and niche-i18n
 properties are catalogued above as ⬜ (out of core rendering scope).
 
-Coverage: **131 ✅ · 3 🟡 · 1 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
+Coverage: **132 ✅ · 3 🟡 · 1 📦 · 0 ❌**, plus the ⬜ behavioral/niche tail — no
 property is an unaccounted gap.
 
 Each ✅ item ships with a reftest under `examples/compliance/` and flips its row

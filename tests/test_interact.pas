@@ -152,6 +152,7 @@ const PAGE =
   '<div id="rz" style="box-sizing:border-box;width:100px;height:60px;' +
     'overflow:auto;resize:both;border:1px solid #333">box</div>' +
   '<p id="seltext" style="user-select:text;width:400px;height:24px;margin:0">ABCDEFGHIJKL</p>' +
+  '<p id="words" style="user-select:text;width:400px;height:24px;margin:0;font-size:16px">Alpha Bravo Charlie</p>' +
   '<p id="nosel" style="user-select:none;width:400px;height:24px;margin:0">no selecting here</p>' +
   '</body>';
 
@@ -263,6 +264,32 @@ begin
       Check(TinaCopySelection, 'copy reports a selection was copied');
       Check(LastClip = TinaSelectedText, 'clipboard got exactly the selected text');
     end;
+    // double-click selects the whole word under the point
+    BoxRect('words', selX, selY, selW, selH, ok);
+    if ok then
+    begin
+      // "Bravo" (the middle word) sits ~70px into the 16px-font line
+      TinaSelectWordAt(selX + 70, selY + selH * 0.5);
+      Frame;
+      Check(TinaSelectedText = 'Bravo',
+        'double-click selects the whole word ("' + TinaSelectedText + '")');
+    end;
+    // the real path: two rapid down/up at the same spot = a double-click
+    BoxRect('words', selX, selY, selW, selH, ok);
+    if ok then
+    begin
+      TinaTouch(0, selX + 70, selY + selH * 0.5); TinaTouch(1, selX + 70, selY + selH * 0.5);
+      TinaTouch(0, selX + 70, selY + selH * 0.5); TinaTouch(1, selX + 70, selY + selH * 0.5);
+      Frame;
+      Check(TinaSelectedText = 'Bravo', 'double-click (two rapid taps) selects the word');
+    end;
+
+    // select-all grabs every selectable glyph, skipping user-select:none
+    Check(TinaSelectAll, 'select-all reports success');
+    Frame;
+    Check(Pos('Bravo', TinaSelectedText) > 0, 'select-all includes selectable text');
+    Check(Pos('no selecting', TinaSelectedText) = 0, 'select-all skips user-select:none');
+
     // dragging over a user-select:none paragraph selects nothing (and clears)
     BoxRect('nosel', selX, selY, selW, selH, ok);
     if ok then

@@ -152,6 +152,11 @@ function TinaSelectedText: string;
   handler (Tina4SetClipboardHandler). The shell calls this on Cmd/Ctrl+C. Returns
   True when there was a selection and a handler ran. }
 function TinaCopySelection: Boolean;
+{ Select every selectable glyph on the page (Cmd/Ctrl+A). }
+function TinaSelectAll: Boolean;
+{ Select the whole word under (X,Y) device px — the shell calls this on a
+  double-click. Returns True if a word was found and selected. }
+function TinaSelectWordAt(X, Y: Single): Boolean;
 { Live DOM attribute of the element with the given id, AFTER interaction has
   mutated it (e.g. a checkbox's 'checked' set/cleared by a tap). Returns '' when
   the element or attribute is absent — use TinaHasAttr to tell an empty-valued
@@ -247,6 +252,9 @@ var
   GSelecting: Boolean = False;         // a user-select:text drag is in progress
   GHasSel: Boolean = False;            // a selection is currently shown
   GSelAnchorX: Single = 0; GSelAnchorY: Single = 0;   // anchor in document CSS px
+  GLastDownMs: QWord = 0;              // multi-click detection (double-click = select word)
+  GLastDownX: Single = -1e9; GLastDownY: Single = -1e9;
+  GClickCount: Integer = 0;
   GFileTag: THTMLTag = nil;            // <input type=file>/<camera> awaiting a result
   GOptCount: Integer = 0;
   GOptTop: array[0..63] of Single;    // screen-y of each option row
@@ -1420,6 +1428,69 @@ begin
   Result := Tina4SetClipboard(SelectedText);
 end;
 
+function TinaSelectAll: Boolean;
+begin
+  // a selection region covering the whole document; the paint filter still
+  // skips user-select:none subtrees, so only selectable text is gathered
+  SetTextSelection(True, -1e9, -1e9, 1e9, 1e9);
+  GHasSel := True; GLayoutDirty := True;
+  Result := True;
+end;
+
+{ Find the run under (cssX, docY); expand the char there to whitespace-delimited
+  word boundaries and set the selection to that word's pixel extent. }
+function FindWordSel(Box: TLayoutBox; cssX, docY: Single): Boolean;
+var i, ci, cl, ws, we: Integer; r: TTextRun; runW, cx0, wx0, wx1: Single; ch: string;
+begin
+  Result := False;
+  if (Box = nil) or (GCanvas = nil) then Exit;
+  if Box.Style.UserSelect = 'none' then Exit;
+  for i := 0 to Box.Runs.Count - 1 do
+  begin
+    r := Box.Runs[i];
+    runW := GCanvas.MeasureText(r.Text, r.FontSize, r.Styles).Width;
+    if (docY >= r.Y - 1) and (docY <= r.Y + r.FontSize * 1.3) and
+       (cssX >= r.X - 1) and (cssX <= r.X + runW + 1) and (r.Text <> '') then
+    begin
+      // locate the char whose x-span contains cssX
+      cx0 := r.X; ci := 1;
+      we := Length(r.Text) + 1; ws := 1;
+      while ci <= Length(r.Text) do
+      begin
+        cl := 1;
+        while (ci + cl <= Length(r.Text)) and ((Ord(r.Text[ci + cl]) and $C0) = $80) do Inc(cl);
+        ch := Copy(r.Text, ci, cl);
+        if cx0 + GCanvas.MeasureText(ch, r.FontSize, r.Styles).Width >= cssX then
+        begin
+          // expand left to a space/start
+          ws := ci;
+          while (ws > 1) and (r.Text[ws - 1] <> ' ') do Dec(ws);
+          // expand right to a space/end
+          we := ci + cl;
+          while (we <= Length(r.Text)) and (r.Text[we] <> ' ') do Inc(we);
+          Break;
+        end;
+        cx0 := cx0 + GCanvas.MeasureText(ch, r.FontSize, r.Styles).Width;
+        ci := ci + cl;
+      end;
+      wx0 := r.X + GCanvas.MeasureText(Copy(r.Text, 1, ws - 1), r.FontSize, r.Styles).Width;
+      wx1 := r.X + GCanvas.MeasureText(Copy(r.Text, 1, we - 1), r.FontSize, r.Styles).Width;
+      SetTextSelection(True, wx0 + 0.5, r.Y + r.FontSize * 0.5, wx1 - 0.5, r.Y + r.FontSize * 0.5);
+      GHasSel := True; GLayoutDirty := True;
+      Exit(True);
+    end;
+  end;
+  for i := 0 to Box.Children.Count - 1 do
+    if FindWordSel(Box.Children[i], cssX, docY) then Exit(True);
+end;
+
+function TinaSelectWordAt(X, Y: Single): Boolean;
+begin
+  Result := False;
+  if GRoot = nil then Exit;
+  Result := FindWordSel(GRoot, X / GDensity, Y / GDensity + GScrollY);
+end;
+
 function TinaHitTestInfo(X, Y: Single): string;
 var t: THTMLTag; b: TLayoutBox; s: TComputedStyle;
 begin
@@ -1707,6 +1778,23 @@ begin
     0: begin
          GDownX := cx; GDownY := cy; GLastX := cx; GLastY := cy;
          GVelX := 0; GVelY := 0; GFlingVX := 0; GFlingVY := 0; GMoved := False;
+         // multi-click: a double-click selects the word under the point (no drag)
+         if (GetTickCount64 - GLastDownMs < 400) and
+            (Abs(cx - GLastDownX) < 6) and (Abs(cy - GLastDownY) < 6) then
+           Inc(GClickCount)
+         else GClickCount := 1;
+         GLastDownMs := GetTickCount64; GLastDownX := cx; GLastDownY := cy;
+         // only over an opted-in (user-select:text/all) element, so a rapid
+         // double-tap on a control still just activates it twice
+         if GClickCount = 2 then
+         begin
+           selMode := TextSelectAt(cx, cy, sb);
+           if (selMode <> '') and TinaSelectWordAt(X, Y) then
+           begin
+             GSelecting := False; GDragBox := nil; GRangeDrag := nil;
+             Exit;
+           end;
+         end;
          // a resize grip grabs the gesture before anything else (drag to resize)
          GResizeTag := ResizeGripAt(cx, cy);
          if GResizeTag <> nil then

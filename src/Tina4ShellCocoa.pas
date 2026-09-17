@@ -1321,6 +1321,12 @@ begin
     TinaCopySelection;
     Exit;
   end;
+  // Cmd+A selects all selectable text
+  if ((event.modifierFlags and NSCommandKeyMask) <> 0) and (LowerCase(chars) = 'a') then
+  begin
+    if TinaSelectAll and (shell <> nil) then shell.Invalidate;
+    Exit;
+  end;
   case event.keyCode of
     36, 76: code := TK_RETURN;
     51:     code := TK_BACKSPACE;
