@@ -2472,7 +2472,8 @@ end;
 function TLayoutEngine.MakeInlineContainer(Tag: THTMLTag; const St: TComputedStyle;
   AvailW: Single): TLayoutBox;
 var
-  edgeL, edgeT, edgeR, edgeB, w, usedH, eh, savedCH: Single;
+  edgeL, edgeT, edgeR, edgeB, w, usedH, eh, savedCH, naturalH: Single;
+  ov: string;
 begin
   Result := TLayoutBox.Create;
   Result.Tag := Tag;
@@ -2504,8 +2505,19 @@ begin
   FContainingH := savedCH;
   if eh >= 0 then
   begin
+    naturalH := usedH;                 // content height before clamping to the box height
     if SameText(St.BoxSizing, 'border-box') then usedH := Max(0, eh - edgeT - edgeB)
     else usedH := eh;
+    // overflow-y: auto/scroll/hidden on a flex/inline-block item with a definite
+    // height — clip the taller content and (auto/scroll) drive the inner scroller,
+    // exactly as LayoutBlock does. Without this a `height:70px;overflow:auto` box
+    // as a flex item paints its content past its bounds instead of clipping.
+    ov := LowerCase(St.OverflowY); if ov = '' then ov := LowerCase(St.Overflow);
+    if ((ov = 'auto') or (ov = 'scroll') or (ov = 'hidden')) and (naturalH > usedH) then
+    begin
+      Result.Scrollable := (ov <> 'hidden');
+      Result.MaxScroll := naturalH - usedH;
+    end;
   end
   // aspect-ratio with an auto height: derive the height from the width (the same
   // rule LayoutBlock applies, but for a flex/inline-block item like a media box)
