@@ -3264,7 +3264,7 @@ function TLayoutEngine.LayoutGrid(Parent: TLayoutBox; Tag: THTMLTag;
   const ParentStyle: TComputedStyle; X, Y, AvailW: Single): Single;
 var
   st, cs: TComputedStyle;
-  box, cb: TLayoutBox;
+  box, cb, relaid: TLayoutBox;
   c: THTMLTag;
   itemTags: TList<THTMLTag>;
   mL, mR, mT, mB, availInner, ew, eh: Single;
@@ -3720,11 +3720,25 @@ begin
       begin
         if cb.H < cellH then
         begin
-          // A nested flex/grid that centres its own content laid it out at the
-          // shorter content height; now that we stretch it to the taller cell,
-          // shift that content down so it stays centred (the tile-with-a-label
-          // case: place-items:center in a grid-auto-rows cell).
-          if IsFlexOrGrid(cb.Style) and
+          // A nested flex container laid its content out at the shorter content
+          // height; stretching it to the taller cell by only setting cb.H would
+          // leave a `flex:1` child un-grown and the content stuck at the top.
+          // Re-lay-out the flex item at the cell height so its children grow and
+          // its own justify/align re-centre. Grid items (which can't yet take a
+          // forced height) keep the shift-the-centred-content fallback.
+          if ((LowerCase(cb.Style.Display) = 'flex') or
+              (LowerCase(cb.Style.Display) = 'inline-flex')) and (cb.Tag <> nil) then
+          begin
+            relaid := MakeContainerBox(cb.Tag, st, cb.W, 'flex',
+              cellH - cb.Style.Padding.Vert - cb.Style.BorderWidths.Vert);
+            if relaid <> nil then
+            begin
+              relaid.W := cb.W;
+              box.Children[i] := relaid;    // Children owns → frees old cb
+              cb := relaid;
+            end;
+          end
+          else if IsFlexOrGrid(cb.Style) and
              ((LowerCase(cb.Style.AlignItems) = 'center') or
               (LowerCase(cb.Style.AlignContent) = 'center')) then
             for ci := 0 to cb.Children.Count - 1 do
