@@ -2633,6 +2633,7 @@ var
   isCol: Boolean;
   dir, jc, ai, ia: string;
   sumMain, freeMain, curr, gap, crossOff, usedFixed, sumGrow, targetW, autoShare: Single;
+  natW: Single;   // box max-content width, so a parent can shrink this to content
   autoCount: Integer;
   lineW, lineH, lineFree, lx, lgap, lineY, totalH, flexGap: Single;
   baseW, growF, shrinkF: array of Single;
@@ -2745,6 +2746,15 @@ begin
         if (cb = nil) and (IsFlexOrGrid(cs) or SameText(itemTags[i].TagName, 'table')) then  // flex/grid/table item keeps its own formatting
           cb := MakeContainerBox(itemTags[i], st, contentW, LowerCase(cs.Display));
         if cb = nil then cb := MakeInlineContainer(itemTags[i], cs, contentW);
+        // A non-stretch column item (align-items/self center|start|end) shrinks to
+        // its content width so the cross-axis offset can actually place it — an
+        // auto-width flex/block item otherwise fills the container and
+        // align-items:center has nothing to centre (mirrors the grid non-stretch
+        // shrink at the justify-items path and the row's content-sized targetW).
+        ia := LowerCase(cs.AlignSelf); if (ia = '') or (ia = 'auto') then ia := ai;
+        if (ia <> 'stretch') and not crossFixed[i] and
+           (cb.NaturalW > 0) and (cb.NaturalW < cb.W) then
+          cb.W := cb.NaturalW;
         box.Children.Add(cb); items.Add(cb);
       end;
     end
@@ -3194,6 +3204,19 @@ begin
 
     box.H := contentH + edgeT + edgeB;
     Result := box.H + mT + mB;
+    // NaturalW = this box's max-content width (a row's items summed, a column's
+    // widest item) + horizontal edges. LayoutFlex left it 0, so a parent flex/grid
+    // that shrinks a non-stretch auto-width child to content (align-items != stretch)
+    // had nothing to shrink to and the item filled the container.
+    natW := 0;
+    if isCol then
+      for i := 0 to items.Count - 1 do natW := Max(natW, items[i].W)
+    else
+    begin
+      for i := 0 to items.Count - 1 do natW := natW + items[i].W;
+      natW := natW + flexGap * Max(0, items.Count - 1);
+    end;
+    if natW + edgeL + edgeR > box.NaturalW then box.NaturalW := natW + edgeL + edgeR;
   finally
     items.Free;
     itemTags.Free;

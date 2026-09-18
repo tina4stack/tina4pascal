@@ -57,7 +57,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | flex-wrap | ✅ | wrap + wrap-reverse for **both** row and column directions (lines/columns stacked on the cross axis, reverse order for wrap-reverse, align-content honoured; grow disabled while wrapping). Column wrap packs down each column until the definite height is exceeded, then stacks columns across — verified matching Chrome (`flex-flow: column wrap` 0.25%). Reftest `flex-flow` |
 | flex-flow | ✅ | shorthand for `flex-direction` \|\| `flex-wrap` (either order, one or both) |
 | justify-content | ✅ | start/center/end/space-between/around/evenly |
-| align-items | ✅ | center/flex-end/stretch (the default, fills the cross axis); no baseline |
+| align-items | ✅ | center/flex-end/stretch (the default, fills the cross axis); no baseline. On a **column** flex a non-stretch value (center/flex-end/start) **shrinks an auto-width item to its content** first (via the item's `NaturalW`) so it can actually be offset — otherwise a width-less flex/block child fills the container and centring has nothing to move. Reftest `flex-col-center-shrink` |
 | align-self, order | ✅ | `align-self` overrides `align-items` per item (stretch/center/start/end); `order` reorders items (stable) before layout |
 | align-content | ✅ | distributes wrapped lines on the cross axis (center/flex-end/space-between/space-around); stretch = default packing |
 | gap, row-gap, column-gap | ✅ | per-axis: `gap: <row> <col>`; flex uses column-gap on a row / row-gap on a column |
