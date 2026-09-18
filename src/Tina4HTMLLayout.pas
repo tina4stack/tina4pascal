@@ -2529,8 +2529,12 @@ begin
     if (d = 'flex') or (d = 'inline-flex') then LayoutFlex(tmp, Tag, ParentStyle, 0, 0, AvailW, ForceH)
     else if SameText(Tag.TagName, 'table') or (d = 'table') or (d = 'inline-table') then
       // a table flex/grid item keeps its internal table formatting (rows→columns),
-      // not the inline stacking MakeInlineContainer would give it
-      LayoutTable(tmp, Tag, ParentStyle, 0, 0, AvailW)
+      // not the inline stacking MakeInlineContainer would give it. LayoutTable uses
+      // its Style argument AS the table's own style (unlike LayoutFlex/Grid, which
+      // recompute from the parent), so pass the table's computed style — otherwise
+      // its width/table-layout come from the flex/grid parent and `width:100%`
+      // (and other table properties) are lost.
+      LayoutTable(tmp, Tag, TComputedStyle.ForTag(Tag, ParentStyle, FSheet), 0, 0, AvailW)
     else LayoutGrid(tmp, Tag, ParentStyle, 0, 0, AvailW);
     if tmp.Children.Count > 0 then Result := tmp.Children.Extract(tmp.Children[0]);
   finally
