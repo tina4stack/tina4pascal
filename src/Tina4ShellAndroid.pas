@@ -82,9 +82,20 @@ type
     FBlurPaint, FBlurObj: jobject;           // dedicated shadow Paint + current filter
     FBlurR: Single;                          // radius of FBlurObj (reused across cards)
     FBlurReady: Integer;                     // 0 unknown · 1 ok · -1 unavailable
+    // native linear/radial gradient shaders (hardware) — replaces the per-scanline
+    // FillRect fill that made a full-width gradient (e.g. the header) thousands of
+    // JNI calls per frame
+    clsLinGrad, clsRadGrad: jclass;
+    mLinGradInit, mRadGradInit, mSetShader: jmethodID;
+    tileClamp: jobject;                      // Shader.TileMode.CLAMP (global)
+    FGradPaint: jobject;                     // dedicated gradient Paint
+    FGradReady: Integer;                     // 0 unknown · 1 ok · -1 unavailable
     procedure EnsureImageMethods;
     procedure EnsureRGBA;
     procedure EnsureBlur;
+    procedure EnsureGrad;
+    function JIntArr(const V: array of Cardinal): jintArray;
+    function JFloatArr(const V: array of Single): jfloatArray;
     function MID(cls: jclass; const name, sig: string): jmethodID;
     function EnumVal(const clsName, field, sig: string): jobject;
     function JStr(const S: string): jstring;
@@ -101,6 +112,10 @@ type
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); override;
     procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); override;
     procedure FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color); override;
+    procedure FillLinearGradient(X, Y, W, H, Radius, AngleDeg: Single;
+      const Colors: array of TTina4Color; const Positions: array of Single); override;
+    procedure FillRadialGradient(X, Y, W, H, Radius: Single;
+      const Colors: array of TTina4Color; const Positions: array of Single); override;
     procedure StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color); override;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); override;
     procedure FillPolygon(const Contours: array of TTina4PointArray;
@@ -475,6 +490,127 @@ begin
   a[0].f := X; a[1].f := Y; a[2].f := X + W; a[3].f := Y + H;
   a[4].f := Radius; a[5].f := Radius; a[6].l := FBlurPaint;
   FEnv^.CallVoidMethodA(FEnv, FCanvas, mDrawRoundRect, @a[0]);
+end;
+
+{ Lazily wire LinearGradient/RadialGradient + Shader.TileMode.CLAMP + a dedicated
+  gradient Paint. Any gap → FGradReady = -1 and the base per-scanline fill is used. }
+procedure TAndroidCanvas.EnsureGrad;
+var lc: jclass; fid: jfieldID; p: jobject; a: array[0..0] of jvalue;
+begin
+  if FGradReady <> 0 then Exit;
+  FGradReady := -1;
+  lc := FEnv^.FindClass(FEnv, 'android/graphics/LinearGradient');
+  if lc = nil then begin FEnv^.ExceptionClear(FEnv); Exit; end;
+  clsLinGrad := FEnv^.NewGlobalRef(FEnv, lc);
+  mLinGradInit := FEnv^.GetMethodID(FEnv, clsLinGrad, '<init>',
+    '(FFFF[I[FLandroid/graphics/Shader$TileMode;)V');
+  lc := FEnv^.FindClass(FEnv, 'android/graphics/RadialGradient');
+  if lc = nil then begin FEnv^.ExceptionClear(FEnv); Exit; end;
+  clsRadGrad := FEnv^.NewGlobalRef(FEnv, lc);
+  mRadGradInit := FEnv^.GetMethodID(FEnv, clsRadGrad, '<init>',
+    '(FFF[I[FLandroid/graphics/Shader$TileMode;)V');
+  lc := FEnv^.FindClass(FEnv, 'android/graphics/Shader$TileMode');
+  if lc = nil then begin FEnv^.ExceptionClear(FEnv); Exit; end;
+  fid := FEnv^.GetStaticFieldID(FEnv, lc, 'CLAMP', 'Landroid/graphics/Shader$TileMode;');
+  if fid = nil then begin FEnv^.ExceptionClear(FEnv); Exit; end;
+  tileClamp := FEnv^.NewGlobalRef(FEnv, FEnv^.GetStaticObjectField(FEnv, lc, fid));
+  mSetShader := FEnv^.GetMethodID(FEnv, clsPaint, 'setShader',
+    '(Landroid/graphics/Shader;)Landroid/graphics/Shader;');
+  p := FEnv^.NewObject(FEnv, clsPaint, mPaintInit);
+  if p = nil then begin FEnv^.ExceptionClear(FEnv); Exit; end;
+  FGradPaint := FEnv^.NewGlobalRef(FEnv, p);
+  a[0].z := 1; FEnv^.CallVoidMethodA(FEnv, FGradPaint, mSetAntiAlias, @a[0]);
+  if (mLinGradInit <> nil) and (mRadGradInit <> nil) and (mSetShader <> nil)
+     and (tileClamp <> nil) then FGradReady := 1;
+end;
+
+function TAndroidCanvas.JIntArr(const V: array of Cardinal): jintArray;
+begin
+  Result := FEnv^.NewIntArray(FEnv, Length(V));
+  if Length(V) > 0 then FEnv^.SetIntArrayRegion(FEnv, Result, 0, Length(V), PJInt(@V[0]));
+end;
+
+function TAndroidCanvas.JFloatArr(const V: array of Single): jfloatArray;
+begin
+  Result := FEnv^.NewFloatArray(FEnv, Length(V));
+  if Length(V) > 0 then FEnv^.SetFloatArrayRegion(FEnv, Result, 0, Length(V), PJFloat(@V[0]));
+end;
+
+{ Build the colour int[] and a sanitised (clamped, monotonic) position float[] a
+  Shader constructor needs — shared by the linear and radial paths. }
+procedure BuildGradArrays(const Colors: array of TTina4Color; const Positions: array of Single;
+  var ci: array of Cardinal; var pos: array of Single);
+var n, i: Integer;
+begin
+  n := Length(Colors);
+  for i := 0 to n - 1 do
+  begin
+    ci[i] := Colors[i];
+    if (i < Length(Positions)) and (Positions[i] >= 0) then pos[i] := Positions[i]
+    else if n > 1 then pos[i] := i / (n - 1) else pos[i] := 0;
+    if pos[i] < 0 then pos[i] := 0; if pos[i] > 1 then pos[i] := 1;
+  end;
+  for i := 1 to n - 1 do if pos[i] < pos[i - 1] then pos[i] := pos[i - 1];   // Shader wants ↑
+end;
+
+{ Native linear gradient: one drawRoundRect through a LinearGradient shader.
+  Endpoints match the base SoftGradientFill (angle across the box centre). }
+procedure TAndroidCanvas.FillLinearGradient(X, Y, W, H, Radius, AngleDeg: Single;
+  const Colors: array of TTina4Color; const Positions: array of Single);
+var
+  n: Integer; ci: array of Cardinal; pos: array of Single;
+  ang, dxu, dyu, gl, cx, cy, r: Single;
+  jcol: jintArray; jpos: jfloatArray; shader: jobject; a: array[0..6] of jvalue;
+begin
+  n := Length(Colors);
+  if n = 0 then Exit;
+  if n = 1 then begin FillRoundRect(X, Y, W, H, Radius, Colors[0]); Exit; end;
+  EnsureGrad;
+  if FGradReady <> 1 then begin inherited FillLinearGradient(X, Y, W, H, Radius, AngleDeg, Colors, Positions); Exit; end;
+  ang := AngleDeg * Pi / 180; dxu := Sin(ang); dyu := -Cos(ang);
+  gl := Abs(W * Sin(ang)) + Abs(H * Cos(ang)); if gl <= 0 then gl := 1;
+  cx := X + W / 2; cy := Y + H / 2;
+  SetLength(ci, n); SetLength(pos, n);
+  BuildGradArrays(Colors, Positions, ci, pos);
+  jcol := JIntArr(ci); jpos := JFloatArr(pos);
+  a[0].f := cx - dxu * gl / 2; a[1].f := cy - dyu * gl / 2;
+  a[2].f := cx + dxu * gl / 2; a[3].f := cy + dyu * gl / 2;
+  a[4].l := jcol; a[5].l := jpos; a[6].l := tileClamp;
+  shader := FEnv^.NewObjectA(FEnv, clsLinGrad, mLinGradInit, @a[0]);
+  a[0].l := shader; FEnv^.CallObjectMethodA(FEnv, FGradPaint, mSetShader, @a[0]);
+  r := Radius; if r > W / 2 then r := W / 2; if r > H / 2 then r := H / 2; if r < 0 then r := 0;
+  a[0].f := X; a[1].f := Y; a[2].f := X + W; a[3].f := Y + H; a[4].f := r; a[5].f := r; a[6].l := FGradPaint;
+  FEnv^.CallVoidMethodA(FEnv, FCanvas, mDrawRoundRect, @a[0]);
+  a[0].l := nil; FEnv^.CallObjectMethodA(FEnv, FGradPaint, mSetShader, @a[0]);   // release
+  FEnv^.DeleteLocalRef(FEnv, shader); FEnv^.DeleteLocalRef(FEnv, jcol); FEnv^.DeleteLocalRef(FEnv, jpos);
+end;
+
+{ Native radial gradient: RadialGradient shader (radius = box half-diagonal, to
+  match the base fill), drawn into the rounded rect. }
+procedure TAndroidCanvas.FillRadialGradient(X, Y, W, H, Radius: Single;
+  const Colors: array of TTina4Color; const Positions: array of Single);
+var
+  n: Integer; ci: array of Cardinal; pos: array of Single; cx, cy, rad, r: Single;
+  jcol: jintArray; jpos: jfloatArray; shader: jobject; a: array[0..6] of jvalue;
+begin
+  n := Length(Colors);
+  if n = 0 then Exit;
+  if n = 1 then begin FillRoundRect(X, Y, W, H, Radius, Colors[0]); Exit; end;
+  EnsureGrad;
+  if FGradReady <> 1 then begin inherited FillRadialGradient(X, Y, W, H, Radius, Colors, Positions); Exit; end;
+  cx := X + W / 2; cy := Y + H / 2;
+  rad := Sqrt((W / 2) * (W / 2) + (H / 2) * (H / 2)); if rad <= 0 then rad := 1;
+  SetLength(ci, n); SetLength(pos, n);
+  BuildGradArrays(Colors, Positions, ci, pos);
+  jcol := JIntArr(ci); jpos := JFloatArr(pos);
+  a[0].f := cx; a[1].f := cy; a[2].f := rad; a[3].l := jcol; a[4].l := jpos; a[5].l := tileClamp;
+  shader := FEnv^.NewObjectA(FEnv, clsRadGrad, mRadGradInit, @a[0]);
+  a[0].l := shader; FEnv^.CallObjectMethodA(FEnv, FGradPaint, mSetShader, @a[0]);
+  r := Radius; if r > W / 2 then r := W / 2; if r > H / 2 then r := H / 2; if r < 0 then r := 0;
+  a[0].f := X; a[1].f := Y; a[2].f := X + W; a[3].f := Y + H; a[4].f := r; a[5].f := r; a[6].l := FGradPaint;
+  FEnv^.CallVoidMethodA(FEnv, FCanvas, mDrawRoundRect, @a[0]);
+  a[0].l := nil; FEnv^.CallObjectMethodA(FEnv, FGradPaint, mSetShader, @a[0]);
+  FEnv^.DeleteLocalRef(FEnv, shader); FEnv^.DeleteLocalRef(FEnv, jcol); FEnv^.DeleteLocalRef(FEnv, jpos);
 end;
 
 procedure TAndroidCanvas.StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color);
