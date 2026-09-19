@@ -24,7 +24,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | margin (+ 4 sides) | ✅ | shorthand, auto-center, vertical collapse |
 | padding (+ 4 sides) | ✅ | |
 | border-width (+ 4 sides) | ✅ | per-side widths painted (rectangular boxes); rounded boxes use a uniform stroke |
-| border-style (+ 4 sides) | ✅ | solid / dashed / dotted / double painted (rectangular boxes); groove/ridge/inset/outset → solid |
+| border-style (+ 4 sides) | ✅ | solid / dashed / dotted / double painted (rectangular boxes); groove/ridge/inset/outset → solid. **`double` on a rounded box** (border-radius) draws two concentric rounded lines with a gap (each ~1/3 the width, outer flush to the edge) instead of one solid stroke. Reftest `border-double` |
 | border-color (+ 4 sides) | ✅ | per-side colours painted (rectangular boxes) |
 | border-radius (+ 4 corners) | ✅ | 1–4 shorthand + per-corner |
 | box-sizing | ✅ | content-box/border-box |
@@ -82,7 +82,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 | font-variant: small-caps | ✅ | synthesised — a run splits at paint into per-case sub-runs: ASCII lowercase is uppercased at 0.78× on the shared baseline, everything else (caps, digits, punctuation) stays full size. The run stays one atomic wrapping unit. Non-ASCII lowercase not yet cased. Reftest `font-smallcaps` |
 | font-stretch | ✅ | synthetic horizontal glyph scale — keywords (`condensed`…`ultra-expanded`) and `<percentage>` parse to a factor; the run's advance is scaled to match and the glyphs painted through a horizontal `Scale` about the run's left edge. Bucketed (condensed 0.78× / expanded 1.28×) so measure and paint always agree; not width-variant face selection. Reftest `font-stretch` |
 | line-height | ✅ | unitless, px, em, % (÷100), rem (×16 root) |
-| letter-spacing | ✅ | applied in measure AND paint |
+| letter-spacing | ✅ | applied in measure AND paint — including a **flex item's** content-width measure, so an uppercase/letter-spaced flex pill sizes to its rendered text instead of wrapping. Reftest `flex-item-transform-width` |
 | word-spacing | ✅ | extra px added to every inter-word space (inherited; affects wrap + alignment) |
 | text-align | ✅ | left/center/right/justify (justify spreads slack across word gaps; last line stays left) |
 | text-decoration | ✅ | underline / line-through / overline; shorthand parses line + style + color in any order, plus `text-decoration-line/-style/-color` longhands. Solid same-color stays on the cheap font underline; a non-solid **style** (wavy zig-zag / dotted / dashed / double) or a distinct **color** is hand-painted (`PaintDecorLine`) with the font line suppressed |

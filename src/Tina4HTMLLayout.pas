@@ -2634,6 +2634,7 @@ var
   dir, jc, ai, ia: string;
   sumMain, freeMain, curr, gap, crossOff, usedFixed, sumGrow, targetW, autoShare: Single;
   natW: Single;   // box max-content width, so a parent can shrink this to content
+  txt: string;    // item text for content-width measure (transform + spacing applied)
   autoCount: Integer;
   lineW, lineH, lineFree, lx, lgap, lineY, totalH, flexGap: Single;
   baseW, growF, shrinkF: array of Single;
@@ -2801,7 +2802,17 @@ begin
           sb := TStringBuilder.Create;
           try
             CollectInlineText(itemTags[i], sb);
-            m := FCanvas.MeasureText(Trim(CollapseWS(sb.ToString)), cs.FontSize, FontStylesOf(cs));
+            txt := Trim(CollapseWS(sb.ToString));
+            // measure at the item's REAL metrics — text-transform (uppercase is
+            // wider), letter-spacing and the item's font/weight all change the
+            // width. Omitting them measured a too-narrow item, so the rendered
+            // text (e.g. an uppercase, letter-spaced pill) wrapped/clipped inside.
+            if (cs.TextTransform <> '') and not SameText(cs.TextTransform, 'none') then
+              txt := ApplyTextTransform(txt, cs.TextTransform);
+            FCanvas.FontFamily := cs.FontFamily; FCanvas.FontWeight := cs.FontWeight;
+            FCanvas.LetterSpacing := cs.LetterSpacing;
+            m := FCanvas.MeasureText(txt, cs.FontSize, FontStylesOf(cs));
+            FCanvas.FontFamily := ''; FCanvas.FontWeight := 0; FCanvas.LetterSpacing := 0;
           finally sb.Free; end;
           // reserve room for any explicitly-sized replaced graphic inside
           baseW[i] := Max(m.Width, MaxReplacedW(itemTags[i])) +
@@ -6752,6 +6763,7 @@ var
   lotTotal, lotFrame, lotFit, lsc: Single;
   lpw, lph: Integer;
   mcr: Single;   // resolved max border-radius (px; % resolved against this box)
+  bdSeg, bdIns: Single;   // double-border: line thickness (1/3) and inner inset
   olStyle: string; olw, olx, oly, olrw, olrh: Single;   // dashed/dotted/double outline edges
   shi: Integer;   // box-shadow list index
   ofIW, ofIH: Single;                  // intrinsic image size for object-fit
@@ -7173,9 +7185,24 @@ begin
      (st.BorderWidths.Bottom > 0) or (st.BorderWidths.Left > 0)) then
   begin
     if mcr > 0 then
+    begin
       // rounded: uniform stroke (per-side / dashed on a rounded box is out of scope)
-      Canvas.StrokeRoundRect(Box.X, y, Box.W, Box.H, mcr,
-        st.BorderWidths.Top, bd)
+      // — but `double` draws two concentric rounded lines with a gap (each ~1/3 of
+      // the width), the outer flush to the box edge, so a rounded pill/card with
+      // border-style:double no longer renders as one solid thick stroke.
+      if SameText(st.BorderStyle, 'double') and (st.BorderWidths.Top / 3 >= 1) then
+      begin
+        bdSeg := st.BorderWidths.Top / 3;
+        Canvas.StrokeRoundRect(Box.X + bdSeg / 2, y + bdSeg / 2,
+          Box.W - bdSeg, Box.H - bdSeg, Max(0, mcr - bdSeg / 2), bdSeg, bd);
+        bdIns := st.BorderWidths.Top - bdSeg / 2;   // inner line: outer 2/3 in
+        Canvas.StrokeRoundRect(Box.X + bdIns, y + bdIns,
+          Box.W - 2 * bdIns, Box.H - 2 * bdIns, Max(0, mcr - bdIns), bdSeg, bd);
+      end
+      else
+        Canvas.StrokeRoundRect(Box.X, y, Box.W, Box.H, mcr,
+          st.BorderWidths.Top, bd);
+    end
     else
       // rectangular: each side with its own width, colour and style
       PaintBorders(Canvas, Box, st, y, op);
