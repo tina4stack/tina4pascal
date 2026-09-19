@@ -171,6 +171,15 @@ var
     animation-only frame issues draw calls for the animated region only. }
   PaintClipActive: Boolean = False;
   PaintClipX0, PaintClipY0, PaintClipX1, PaintClipY1: Single;
+  { Full-frame viewport cull: the visible viewport height in CSS px (0 = no cull).
+    PaintBoxEx skips any box whose whole subtree sits above/below the viewport (plus
+    a margin), so a long page paints ~one screenful of boxes per frame instead of the
+    entire document — the difference between ~1 fps and smooth scrolling on a long,
+    effect-heavy page where each off-screen tile is an offscreen-layer capture. }
+  Tina4PaintViewH: Single = 0;
+
+const
+  PAINT_CULL_MARGIN = 200;   // CSS-px slack around the viewport for the full-frame cull
 
 procedure PaintBox(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single);
 function HitTest(Box: TLayoutBox; X, Y: Single): THTMLTag;
@@ -6773,6 +6782,9 @@ var
 begin
   st := Box.Style;
   vRotSaved := False;
+  hasRS := False;   // must be set before the try: an early cull Exit reaches the
+                    // finally, which restores the canvas only `if hasRS` — FPC does
+                    // not zero locals, so a garbage-true value underflows the stack.
   // CSS transition: ease transform/opacity/colours toward their computed value
   // when it changes (hover/focus/DOM). Per-element state on the tag.
   if st.TransitionDuration > 0 then ApplyTransition(Box, st);
@@ -6805,6 +6817,20 @@ begin
   if PaintClipActive and
      ((Box.X >= PaintClipX1) or (Box.X + Box.W <= PaintClipX0) or
       (y >= PaintClipY1) or (y + Box.H <= PaintClipY0)) then
+    Exit;
+  // Full-frame viewport cull: skip a box whose whole subtree is off-screen (plus a
+  // margin for shadows/overflow). Conservative — keep any box a transform, 3D or
+  // fixed/sticky position could pull back into view, and never cull during a modal
+  // or region repaint. This is what turns a long page from ~1 fps into smooth
+  // scrolling: without it every off-screen effect tile (an offscreen-layer capture)
+  // repaints every frame.
+  if (Tina4PaintViewH > 0) and (not GInModalPaint) and (not PaintClipActive) and
+     (not st.Transform3DSet) and (not st.TransformMatrixSet) and
+     (st.TransformRotate = 0) and (st.TransformScaleX = 1) and (st.TransformScaleY = 1) and
+     (st.TransformTranslateX = 0) and (st.TransformTranslateY = 0) and
+     (st.TransformSkewX = 0) and (st.TransformSkewY = 0) and
+     (not SameText(st.CSSPosition, 'fixed')) and (not SameText(st.CSSPosition, 'sticky')) and
+     ((y + Box.H <= -PAINT_CULL_MARGIN) or (y >= Tina4PaintViewH + PAINT_CULL_MARGIN)) then
     Exit;
   // CSS 3D transform: capture the element into an offscreen layer, then map that
   // texture onto its perspective-projected quad (EndLayer3D). Takes precedence

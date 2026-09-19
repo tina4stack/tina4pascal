@@ -221,7 +221,8 @@ public class Tina4View extends View implements Runnable,
     // round-trip, and a full-document repaint at 60fps saturates the main thread
     // (janky scroll, laggy <video> overlay). 30fps halves that cost with no visible
     // slow-mo because the clock is wall-clock driven.
-    private static final long FRAME_MS = 32;    // ~30fps ceiling on a fast device
+    private static final long FRAME_MS = 8;     // up to ~60fps; adaptive pacing (below) still
+                                                // stretches the delay to the real paint cost
     private static final long MAX_DELAY = 750;   // floor of ~1.3fps on a very slow device
     private boolean ticking = false;
     // Adaptive frame pacing: wait between anim frames in proportion to how long the

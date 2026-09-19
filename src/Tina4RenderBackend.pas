@@ -867,6 +867,16 @@ end;
   blits it in the shadow colour. Cocoa overrides FillSoftShadow with NSShadow, so
   this serves the OTHER backends; where DrawRGBA is unavailable it degrades to a
   hard-edged rect (drop) or nothing (inset). }
+const
+  SH_CACHE_MAX = 32;   // distinct (size,blur,colour) drop shadows kept blurred
+var
+  GShN: Integer = 0;                 // entries in use
+  GShTick: Cardinal = 0;             // LRU clock
+  GShKW, GShKH, GShKR, GShKB, GShKBW, GShKBH: array[0..SH_CACHE_MAX - 1] of Integer;
+  GShKCol: array[0..SH_CACHE_MAX - 1] of Cardinal;
+  GShUsed: array[0..SH_CACHE_MAX - 1] of Cardinal;
+  GShPix: array[0..SH_CACHE_MAX - 1] of array of Cardinal;
+
 procedure TTina4Canvas.SoftwareShadow(X, Y, W, H, Radius, DX, DY, Blur, Spread: Single;
   Color: TTina4Color; Inset: Boolean);
 var
@@ -875,6 +885,7 @@ var
   alpha, mask: array of Byte; rgba: array of Cardinal;
   wx, wy, cov, d, av: Single;
   cx, cy, hw, hh, hr: Single;      // shape (drop) / hole (inset)
+  kWi, kHi, kRi, kBi, hit, slot: Integer;   // drop-shadow cache key + slot
 begin
   cA := (Color shr 24) and $FF; cr := (Color shr 16) and $FF; cg := (Color shr 8) and $FF; cb := Color and $FF;
   if cA = 0 then Exit;
@@ -887,6 +898,21 @@ begin
     bx := Floor(X) - pad; by := Floor(Y) - pad;
     bw := Ceil(W) + 2 * pad + 2; bh := Ceil(H) + 2 * pad + 2;
     if (bw < 1) or (bh < 1) then Exit;
+    // Drop-shadow cache: the blurred alpha depends ONLY on W,H,Radius,Blur,Color
+    // (NOT position), and a page reuses one shadow on dozens of cards. Without this
+    // the gaussian blur reran per card per frame — the single biggest scroll cost
+    // (measured ~97% of a heavy page's paint). Blit the cached buffer at bx,by.
+    kWi := Round(W); kHi := Round(H); kRi := Round(Radius); kBi := boxR;
+    hit := -1;
+    for i := 0 to GShN - 1 do
+      if (GShKW[i] = kWi) and (GShKH[i] = kHi) and (GShKR[i] = kRi)
+         and (GShKB[i] = kBi) and (GShKCol[i] = Color) then begin hit := i; Break; end;
+    if hit >= 0 then
+    begin
+      Inc(GShTick); GShUsed[hit] := GShTick;
+      DrawRGBA(@GShPix[hit][0], GShKBW[hit], GShKBH[hit], bx, by, GShKBW[hit], GShKBH[hit]);
+      Exit;
+    end;
     SetLength(alpha, bw * bh);
     cx := X + W / 2; cy := Y + H / 2; hw := W / 2; hh := H / 2; hr := Radius;
     if hr > hw then hr := hw; if hr > hh then hr := hh; if hr < 0 then hr := 0;
@@ -936,6 +962,21 @@ begin
     rgba[i] := (Cardinal(Round(av)) shl 24) or (Cardinal(cr) shl 16) or (Cardinal(cg) shl 8) or Cardinal(cb);
   end;
   DrawRGBA(@rgba[0], bw, bh, bx, by, bw, bh);
+  // Cache the freshly-blurred DROP shadow (position-independent) for reuse next
+  // frame / next card. Skip very large buffers (rare, big memory) and inset shadows
+  // (position-dependent hole). Evict least-recently-used when the table is full.
+  if (not Inset) and (bw * bh <= 512 * 512) then
+  begin
+    if GShN < SH_CACHE_MAX then begin slot := GShN; Inc(GShN); end
+    else begin slot := 0;
+      for i := 1 to SH_CACHE_MAX - 1 do if GShUsed[i] < GShUsed[slot] then slot := i;
+    end;
+    GShKW[slot] := kWi; GShKH[slot] := kHi; GShKR[slot] := kRi; GShKB[slot] := kBi;
+    GShKCol[slot] := Color; GShKBW[slot] := bw; GShKBH[slot] := bh;
+    SetLength(GShPix[slot], bw * bh);
+    Move(rgba[0], GShPix[slot][0], bw * bh * SizeOf(Cardinal));
+    Inc(GShTick); GShUsed[slot] := GShTick;
+  end;
 end;
 
 { Sample a stop list at parameter t (0..1). Auto positions (-1) are spread evenly. }

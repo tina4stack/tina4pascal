@@ -1636,7 +1636,12 @@ begin
   ScrollFocusedIntoView;
   ClampScroll;
   AnimResetActive;   // paint re-marks it if animated content (<lottie>) is on screen
+  // Cull off-screen boxes this frame — a long page otherwise repaints its whole
+  // height (and every off-screen effect tile) each frame. cssH is the full canvas
+  // for a --snapshot/PDF (page fits → nothing culled) and the viewport when live.
+  Tina4PaintViewH := cssH;
   if GRoot <> nil then PaintBox(GCanvas, GRoot, GScrollY);
+  Tina4PaintViewH := 0;
   if GRoot <> nil then PaintModalOverlay(GCanvas, GRoot, cssW, cssH);  // modal <dialog>
   PaintSelectOverlay(cssW, cssH);
   PaintDateOverlay(cssW, cssH);

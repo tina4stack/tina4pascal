@@ -74,8 +74,17 @@ type
     FRgbaBmp: jobject;                       // cached Bitmap sized FRgbaW×FRgbaH (global)
     FRgbaArr: jintArray;                     // cached int[] (global ref)
     FRgbaW, FRgbaH: Integer;
+    // native soft shadow via BlurMaskFilter (hardware-accelerated blur) — avoids the
+    // software gaussian + per-card RGBA upload that dominated scroll paint time
+    clsBlur: jclass;
+    mBlurInit, mSetMaskFilter: jmethodID;
+    blurNormal: jobject;                     // BlurMaskFilter.Blur.NORMAL (global)
+    FBlurPaint, FBlurObj: jobject;           // dedicated shadow Paint + current filter
+    FBlurR: Single;                          // radius of FBlurObj (reused across cards)
+    FBlurReady: Integer;                     // 0 unknown · 1 ok · -1 unavailable
     procedure EnsureImageMethods;
     procedure EnsureRGBA;
+    procedure EnsureBlur;
     function MID(cls: jclass; const name, sig: string): jmethodID;
     function EnumVal(const clsName, field, sig: string): jobject;
     function JStr(const S: string): jstring;
@@ -91,6 +100,7 @@ type
     procedure FillRect(X, Y, W, H: Single; Color: TTina4Color); override;
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); override;
     procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); override;
+    procedure FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color); override;
     procedure StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color); override;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); override;
     procedure FillPolygon(const Contours: array of TTina4PointArray;
@@ -410,6 +420,60 @@ begin
   a[0].l := styleFill;   FEnv^.CallVoidMethodA(FEnv, FPaint, mSetStyle, @a[0]);
   a[0].f := X; a[1].f := Y; a[2].f := X + W; a[3].f := Y + H;
   a[4].f := Radius; a[5].f := Radius; a[6].l := FPaint;
+  FEnv^.CallVoidMethodA(FEnv, FCanvas, mDrawRoundRect, @a[0]);
+end;
+
+{ Lazily wire android.graphics.BlurMaskFilter (constructor + Blur.NORMAL) and a
+  dedicated shadow Paint. Any missing piece leaves FBlurReady = -1 so FillSoftShadow
+  falls back to the (cached) software path — never a crash on an odd device. }
+procedure TAndroidCanvas.EnsureBlur;
+var lc: jclass; fid: jfieldID; a: array[0..0] of jvalue; p: jobject;
+begin
+  if FBlurReady <> 0 then Exit;
+  FBlurReady := -1;                                  // pessimistic until fully wired
+  lc := FEnv^.FindClass(FEnv, 'android/graphics/BlurMaskFilter');
+  if lc = nil then begin FEnv^.ExceptionClear(FEnv); Exit; end;
+  clsBlur := FEnv^.NewGlobalRef(FEnv, lc);
+  mBlurInit := FEnv^.GetMethodID(FEnv, clsBlur, '<init>',
+    '(FLandroid/graphics/BlurMaskFilter$Blur;)V');
+  lc := FEnv^.FindClass(FEnv, 'android/graphics/BlurMaskFilter$Blur');
+  if lc = nil then begin FEnv^.ExceptionClear(FEnv); Exit; end;
+  fid := FEnv^.GetStaticFieldID(FEnv, lc, 'NORMAL', 'Landroid/graphics/BlurMaskFilter$Blur;');
+  if fid = nil then begin FEnv^.ExceptionClear(FEnv); Exit; end;
+  blurNormal := FEnv^.NewGlobalRef(FEnv, FEnv^.GetStaticObjectField(FEnv, lc, fid));
+  mSetMaskFilter := FEnv^.GetMethodID(FEnv, clsPaint, 'setMaskFilter',
+    '(Landroid/graphics/MaskFilter;)Landroid/graphics/MaskFilter;');
+  p := FEnv^.NewObject(FEnv, clsPaint, mPaintInit);
+  if p = nil then begin FEnv^.ExceptionClear(FEnv); Exit; end;
+  FBlurPaint := FEnv^.NewGlobalRef(FEnv, p);
+  a[0].z := 1; FEnv^.CallVoidMethodA(FEnv, FBlurPaint, mSetAntiAlias, @a[0]);   // AA on
+  if (mBlurInit <> nil) and (mSetMaskFilter <> nil) and (blurNormal <> nil) then
+    FBlurReady := 1;
+end;
+
+{ Native soft drop shadow: draw the rounded rect through a Paint carrying a
+  BlurMaskFilter, so Android's own (hardware) blur produces the softness. Replaces
+  the base software gaussian + per-card pixel upload — the single biggest scroll cost. }
+procedure TAndroidCanvas.FillSoftShadow(X, Y, W, H, Radius, Blur: Single; Color: TTina4Color);
+var a: array[0..6] of jvalue; r: Single;
+begin
+  if Blur <= 0 then begin FillRoundRect(X, Y, W, H, Radius, Color); Exit; end;
+  EnsureBlur;
+  if FBlurReady <> 1 then begin inherited FillSoftShadow(X, Y, W, H, Radius, Blur, Color); Exit; end;
+  r := Blur * 0.5; if r < 1 then r := 1;             // CSS blur ≈ 2× the mask radius
+  // rebuild the BlurMaskFilter only when the radius changes (cards share one radius)
+  if (FBlurObj = nil) or (Abs(r - FBlurR) > 0.01) then
+  begin
+    if FBlurObj <> nil then FEnv^.DeleteGlobalRef(FEnv, FBlurObj);
+    a[0].f := r; a[1].l := blurNormal;
+    FBlurObj := FEnv^.NewGlobalRef(FEnv, FEnv^.NewObjectA(FEnv, clsBlur, mBlurInit, @a[0]));
+    FBlurR := r;
+    a[0].l := FBlurObj; FEnv^.CallObjectMethodA(FEnv, FBlurPaint, mSetMaskFilter, @a[0]);
+  end;
+  a[0].i := jint(Color); FEnv^.CallVoidMethodA(FEnv, FBlurPaint, mSetColor, @a[0]);
+  a[0].l := styleFill;   FEnv^.CallVoidMethodA(FEnv, FBlurPaint, mSetStyle, @a[0]);
+  a[0].f := X; a[1].f := Y; a[2].f := X + W; a[3].f := Y + H;
+  a[4].f := Radius; a[5].f := Radius; a[6].l := FBlurPaint;
   FEnv^.CallVoidMethodA(FEnv, FCanvas, mDrawRoundRect, @a[0]);
 end;
 
