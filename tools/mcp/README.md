@@ -51,6 +51,7 @@ taken — then use the new URL everywhere below.
 | `tina4_build` `{target, project?}` | build a project's app (with `project`) or cross-compile the engine (`android`/`ios`/`macos`/`win64`/`linux`/`all`) |
 | `tina4_run` `{project, target?}` | build a project + launch its native app detached; returns the exe path |
 | `tina4_render` `{project, target?, overlay?}` | build + render one frame HEADLESS to an image (optional layout overlay) → returns the image path to read |
+| `tina4_pdf` `{project, out?, page_width?}` | build + render the project document to a searchable vector PDF |
 | `tina4_dom` `{project}` | dump the running DOM tree as JSON (headless) |
 | `tina4_boxes` `{project}` | dump the layout-box tree (geometry + box model) as JSON |
 | `tina4_inspect` `{project, x, y}` | inspect the element at (x,y): tag, box, computed styles ("inspect element") |
@@ -58,6 +59,7 @@ taken — then use the new URL everywhere below.
 | `tina4_where` `{project, target?}` | print the built artifact's path |
 | `tina4_test` | run the DOM/CSS unit suites |
 | `tina4_compliance` `{glob?}` | run the W3C reftest suite |
+| `tina4_snapshot` `{page, out}` | render a standalone HTML fixture to PNG with the native macOS renderer |
 | `tina4_deploy` `{target}` | build + install/open + launch |
 | `tina4_launch` `{target}` | re-foreground the installed app, no rebuild |
 | `tina4_debug` `{project?, breakpoint?, target?}` | with `project`: native gdb debug (build w/ symbols, run headless, Pascal backtrace on crash); else on-device build→launch→screenshot→tail log |

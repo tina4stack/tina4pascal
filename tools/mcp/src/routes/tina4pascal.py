@@ -32,16 +32,24 @@ def _host_target():
     return {"Windows": "win64", "Darwin": "macos"}.get(s, "linux")
 
 
-def _run(args, timeout=1800, cwd=None):
-    """Run the tina4pascal CLI; return its combined output (or an error line)."""
+def _run_result(args, timeout=1800, cwd=None):
+    """Run the CLI and preserve its exit status alongside the combined output."""
     try:
         p = subprocess.run([*CLI_CMD, *args], cwd=(cwd or REPO), capture_output=True,
                            text=True, timeout=timeout)
-        return ((p.stdout or "") + (p.stderr or "")).strip() or "(no output)"
+        return {
+            "ok": p.returncode == 0,
+            "log": ((p.stdout or "") + (p.stderr or "")).strip() or "(no output)",
+        }
     except subprocess.TimeoutExpired:
-        return f"error: timed out after {timeout}s"
+        return {"ok": False, "log": f"error: timed out after {timeout}s"}
     except Exception as e:  # noqa: BLE001
-        return f"error: {e}"
+        return {"ok": False, "log": f"error: {e}"}
+
+
+def _run(args, timeout=1800, cwd=None):
+    """Run the tina4pascal CLI and return its combined output."""
+    return _run_result(args, timeout, cwd)["log"]
 
 
 # Where new projects are scaffolded when the caller doesn't say. Override with
@@ -122,6 +130,17 @@ def render(project: str, target: str = "", out: str = "shot",
     return {"image": img, "log": log}
 
 
+@mcp_tool("tina4_pdf", description="Build a project and render its document to "
+          "a searchable vector PDF. `out` defaults to <project-name>.pdf; "
+          "`page_width` is in points.", server=mcp)
+def pdf(project: str, out: str = "", page_width: int = 800):
+    filename = out or f"{os.path.basename(os.path.normpath(project))}.pdf"
+    path = filename if os.path.isabs(filename) else os.path.join(project, filename)
+    result = _run_result(["pdf", filename, str(page_width)], cwd=project)
+    ok = result["ok"] and os.path.isfile(path) and os.path.getsize(path) > 0
+    return {"ok": ok, "path": path if ok else None, "log": result["log"]}
+
+
 # ── debug / inspect (DevTools for Tina4) ──────────────────────────────
 @mcp_tool("tina4_dom", description="Dump the running app's DOM tree as JSON "
           "(headless one-frame render). Pass the project dir.", server=mcp)
@@ -166,6 +185,16 @@ def compliance(glob: str = "*"):
     return _run(["compliance", glob])
 
 
+@mcp_tool("tina4_snapshot", description="Render a standalone HTML page with the "
+          "native macOS renderer and save a PNG. Useful for fixture and visual "
+          "regression checks.", server=mcp)
+def snapshot(page: str, out: str):
+    result = _run_result(["snapshot", page, out])
+    path = out if os.path.isabs(out) else os.path.join(REPO, out)
+    ok = result["ok"] and os.path.isfile(path) and os.path.getsize(path) > 0
+    return {"ok": ok, "path": path if ok else None, "log": result["log"]}
+
+
 # ── deploy / debug ────────────────────────────────────────────────────
 @mcp_tool("tina4_deploy", description=f"Build + install/open + launch the app "
           f"on a target ({TARGETS}).", server=mcp)
@@ -193,11 +222,15 @@ def debug(target: str = "", project: str = "", breakpoint: str = ""):
           "| macos). Returns the saved PNG path — read it to view.", server=mcp)
 def screenshot(target: str):
     out = os.path.join(REPO, "build", f"{target}.png")
-    log = _run(["screenshot", target, out])
+    try:
+        os.remove(out)
+    except FileNotFoundError:
+        pass
+    result = _run_result(["screenshot", target, out])
     # The CLI gates success on a real, non-empty PNG (pymobiledevice3 exits 0 even
     # when it writes nothing); mirror that here so callers never get a phantom path.
-    ok = os.path.isfile(out) and os.path.getsize(out) > 0
-    return {"ok": ok, "path": out if ok else None, "log": log}
+    ok = result["ok"] and os.path.isfile(out) and os.path.getsize(out) > 0
+    return {"ok": ok, "path": out if ok else None, "log": result["log"]}
 
 
 @mcp_tool("tina4_ios_tunnel", description="Manage the no-root iOS RemoteXPC "
@@ -272,4 +305,3 @@ def release(keystore: str = "", alias: str = "", store_pass: str = "",
 from tina4_python.core import router as _router  # noqa: E402
 
 mcp.register_routes(_router)
-
