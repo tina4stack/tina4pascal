@@ -22,6 +22,6 @@ the simulator.
 - [x] README did not expose the mobile emulator/simulator lifecycle commands.
 
 ## Commits
-- Pending
+- 08b3c51  docs: document mobile emulator commands
 
 ## Status: Complete
