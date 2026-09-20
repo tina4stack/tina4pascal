@@ -23,6 +23,6 @@
 - [x] iOS log collection did not receive the cached Remote Service Discovery address.
 
 ## Commits
-- Pending verification
+- 7444757  fix(ios): reuse native device tunnel
 
-## Status: In Progress
+## Status: Complete
