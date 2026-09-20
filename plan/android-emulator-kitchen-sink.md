@@ -38,6 +38,6 @@ and iOS simulators so this verification path is self-service.
 - [x] Headless GPU overrides caused the earlier pre-ADB failures; the CLI uses the emulator's default renderer.
 
 ## Commits
-- Pending commit
+- ec92dca  feat(tooling): launch mobile emulators
 
 ## Status: Complete
