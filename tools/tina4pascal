@@ -157,10 +157,17 @@ cmd_doctor() {
     n="$(adb devices 2>/dev/null | grep -cw device || true)"
     [ "${n:-0}" -gt 0 ] && ok "adb — $n device(s) attached" || warn "adb — no devices attached"
   else warn "adb not on PATH"; fi
+  [ -x "$ANDROID_SDK/emulator/emulator" ] && ok "Android emulator  ${D}$ANDROID_SDK/emulator/emulator${Z}" \
+    || warn "Android emulator missing → tina4pascal setup android"
   say ""
   say "${B}iOS${Z}"
   command -v xcodebuild >/dev/null 2>&1 && ok "$(xcodebuild -version 2>/dev/null | head -1)" || warn "Xcode missing → install from the App Store"
   command -v xcodegen >/dev/null 2>&1 && ok "xcodegen" || warn "xcodegen missing → tina4pascal setup ios"
+  if xcrun simctl list devices booted 2>/dev/null | grep -q 'Booted'; then
+    ok "iOS Simulator — booted"
+  else
+    warn "iOS Simulator — none booted (tina4pascal emulator ios start)"
+  fi
   u="$(ios_udid)"
   [ -n "$u" ] && ok "device ${D}$u${Z}" || warn "no iOS device attached (idevice_id / devicectl)"
   { [ -x "$PMD3" ] || command -v pymobiledevice3 >/dev/null 2>&1; } && ok "pymobiledevice3 (device screenshots)" || warn "pymobiledevice3 missing → tina4pascal setup ios"
@@ -230,7 +237,8 @@ setup_android() {
   JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home 2>/dev/null || true)}"; export JAVA_HOME
   say "→ accepting licenses + installing platform/build-tools…"
   yes | "$SM" --licenses >/dev/null 2>&1 || true
-  "$SM" "platforms;$PLATFORM_VER" "build-tools;$BT_VER" "platform-tools" >/dev/null
+  "$SM" "platforms;$PLATFORM_VER" "build-tools;$BT_VER" "platform-tools" "emulator" \
+    "system-images;android-34;google_apis;arm64-v8a" >/dev/null
   ok "Android toolchain ready"
   cmd_doctor | sed -n '/Android/,/Java/p'
 }
@@ -1494,6 +1502,123 @@ cmd_clean() { rm -rf "$BUILD" "$ROOT/android/out" "$ROOT/android/tina4pascal-deb
 # ---- device screenshot / logs / debug loop ----------------------------------
 adb_have_device() { [ "$(adb devices | grep -cw device)" -gt 0 ]; }
 
+# ---- emulator / simulator lifecycle -----------------------------------------
+# The CLI owns only the process it records under TINA4_HOME. A pre-existing
+# emulator or simulator is reported and reused; it is never stopped here.
+android_emulator_bin() {
+  [ -x "$ANDROID_SDK/emulator/emulator" ] && { printf '%s' "$ANDROID_SDK/emulator/emulator"; return; }
+  command -v emulator 2>/dev/null || true
+}
+
+android_avd_manager() {
+  [ -x "$ANDROID_SDK/cmdline-tools/latest/bin/avdmanager" ] && { printf '%s' "$ANDROID_SDK/cmdline-tools/latest/bin/avdmanager"; return; }
+  command -v avdmanager 2>/dev/null || true
+}
+
+android_emulator_udid() {
+  adb devices 2>/dev/null | awk '$1 ~ /^emulator-/ && $2 == "device" {print $1; exit}'
+}
+
+android_emulator_ready() {
+  serial="$(android_emulator_udid)"
+  [ -n "$serial" ] || return 1
+  boot="$(adb -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
+  [ "$boot" = 1 ] || return 1
+  printf '%s' "$serial"
+}
+
+android_avd_exists() {
+  "$1" -list-avds 2>/dev/null | grep -Fxq "$2"
+}
+
+ios_sim_booted_udid() {
+  xcrun simctl list devices booted 2>/dev/null \
+    | grep -iE 'iPhone|iPad' \
+    | grep -oE '[0-9A-F-]{36}' | head -1
+}
+
+ios_sim_available_udid() {
+  xcrun simctl list devices available 2>/dev/null \
+    | grep -iE 'iPhone|iPad' \
+    | grep -oE '[0-9A-F-]{36}' | head -1
+}
+
+cmd_emulator() {
+  platform="${1:-}"; shift 2>/dev/null || true
+  [ -n "$platform" ] || die "usage: tina4pascal emulator <android|ios> [list|status|start] [name-or-udid]"
+  action="${1:-start}"; target="${2:-}"
+  case "$platform" in
+    android)
+      bin="$(android_emulator_bin)"
+      [ -n "$bin" ] || die "Android emulator missing — run: tina4pascal setup android"
+      case "$action" in
+        list)
+          "$bin" -list-avds
+          return ;;
+        status)
+          serial="$(android_emulator_ready || true)"
+          if [ -n "$serial" ]; then ok "Android emulator ready — $serial"; else warn "no Android emulator ready"; fi
+          return ;;
+        start) ;;
+        *) die "emulator android: unknown action '$action' (list|status|start)" ;;
+      esac
+      serial="$(android_emulator_ready || true)"
+      [ -n "$serial" ] && { ok "Android emulator already ready — $serial"; return; }
+      avd="${target:-${TINA4_ANDROID_AVD:-tina4-api34-arm64}}"
+      if ! android_avd_exists "$bin" "$avd"; then
+        manager="$(android_avd_manager)"
+        [ -n "$manager" ] || die "avdmanager missing — run: tina4pascal setup android"
+        [ -f "$ANDROID_SDK/system-images/android-34/google_apis/arm64-v8a/package.xml" ] \
+          || die "Android 34 arm64 system image missing — run: tina4pascal setup android"
+        say "→ creating Android AVD $avd (API 34 arm64)…"
+        printf 'no\n' | "$manager" create avd --name "$avd" \
+          --package 'system-images;android-34;google_apis;arm64-v8a' --device pixel_6 >/dev/null 2>&1 || true
+        android_avd_exists "$bin" "$avd" || die "could not create AVD $avd — check the system image with: tina4pascal doctor"
+      fi
+      mkdir -p "$TINA4_STATE"
+      elog="$TINA4_STATE/android-emulator.log"
+      say "→ starting Android emulator ${avd}…"
+      nohup "$bin" -avd "$avd" -no-boot-anim >"$elog" 2>&1 < /dev/null &
+      ep="$!"; echo "$ep" > "$TINA4_STATE/android-emulator.pid"
+      i=0
+      while [ "$i" -lt 60 ]; do
+        serial="$(android_emulator_ready || true)"
+        if [ -n "$serial" ]; then ok "Android emulator ready — $serial"; return; fi
+        kill -0 "$ep" 2>/dev/null || die "Android emulator exited — see $elog"
+        sleep 1; i=$((i + 1))
+      done
+      die "Android emulator did not become ready within 60 seconds — see $elog" ;;
+    ios|simulator)
+      command -v xcrun >/dev/null 2>&1 || die "Xcode command-line tools missing — install Xcode"
+      case "$action" in
+        list)
+          xcrun simctl list devices available
+          return ;;
+        status)
+          udid="$(ios_sim_booted_udid)"
+          if [ -n "$udid" ]; then ok "iOS Simulator ready — $udid"; else warn "no iOS Simulator booted"; fi
+          return ;;
+        start) ;;
+        *) die "emulator ios: unknown action '$action' (list|status|start)" ;;
+      esac
+      udid="${target:-${IOS_SIM_UDID:-}}"
+      [ -n "$udid" ] || udid="$(ios_sim_booted_udid)"
+      [ -n "$udid" ] || udid="$(ios_sim_available_udid)"
+      [ -n "$udid" ] || die "no available iPhone/iPad simulator — install an iOS Simulator runtime in Xcode"
+      xcrun simctl boot "$udid" >/dev/null 2>&1 || true
+      i=0
+      while [ "$i" -lt 60 ]; do
+        xcrun simctl list devices booted 2>/dev/null | grep -q "$udid" && break
+        sleep 1; i=$((i + 1))
+      done
+      xcrun simctl list devices booted 2>/dev/null | grep -q "$udid" \
+        || die "iOS Simulator did not boot within 60 seconds — open Xcode > Devices and Simulators"
+      open -a Simulator >/dev/null 2>&1 || true
+      ok "iOS Simulator ready — $udid" ;;
+    *) die "emulator: unsupported target '$platform' (android|ios)" ;;
+  esac
+}
+
 # ---- iOS RemoteXPC tunnel (no root) -----------------------------------------
 # iOS 17+ developer services (screenshot, syslog) run over a RemoteXPC tunnel.
 # `pymobiledevice3 remote tunneld` (the daemon) needs ROOT; `remote start-tunnel`
@@ -1746,6 +1871,9 @@ ${B}deploy & run${Z}  (targets: android · ios · macos · win64 · linux)
   launch <target>        re-foreground the installed app, NO rebuild (fast run)
   ios                    (alias) build engine + xcodebuild sign + install + launch on iPhone
   apk                    Android: native .so (all ABIs) + signed debug APK
+  emulator <target> [action] [id]
+                         bring up a local Android emulator or iOS Simulator
+                         targets: android · ios; actions: list · status · start
 
 ${B}release signing${Z}  (Android)
   keygen [out.jks] [alias]   create a release keystore (one-time; keep it safe)
@@ -1816,6 +1944,7 @@ case "$cmd" in
   debug)      if is_project; then debug_native "$@"; else cmd_debug "$@"; fi ;;
   script)     if is_project; then script_project "$@"; else die "script: run inside a project dir"; fi ;;
   screenshot) cmd_screenshot "$@" ;;
+  emulator)   cmd_emulator "$@" ;;
   ios-tunnel) cmd_ios_tunnel "$@" ;;
   tap)        cmd_tap "$@" ;;
   swipe)      cmd_swipe "$@" ;;
