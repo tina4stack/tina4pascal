@@ -9,7 +9,7 @@ for truly local animation repaints.
 - [x] Coalesce Android drag/fling redraw requests to the next display frame
 - [x] Preserve full repaints for scrolling, layout, and input changes
 - [x] Build both native shells and run the portable regression suite
-- [ ] Commit and push the completed work
+- [x] Commit and push the completed work
 
 ## Parity
 | Change | Android | iOS | Shared output |
@@ -27,6 +27,6 @@ for truly local animation repaints.
 - [x] iOS requested a small animation dirty rect but always called the full-frame painter.
 
 ## Commits
-- [ ] Pending
+- 3d204af  perf(mobile): coalesce scroll paints
 
-## Status: In progress
+## Status: Complete
