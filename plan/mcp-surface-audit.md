@@ -27,6 +27,6 @@
 - [x] MCP screenshot could report a pre-existing image even when the CLI call failed.
 
 ## Commits
-- Pending verification
+- 5b3399f  feat(mcp): expose PDF and snapshot tooling
 
-## Status: In Progress
+## Status: Complete
