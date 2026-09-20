@@ -67,6 +67,27 @@ tina4pascal build android   # ship an APK (arm64 + armv7 + x86_64), signed
 tina4pascal doctor          # see the whole toolchain
 ```
 
+### Run mobile targets locally
+
+Start a local Android emulator before you build or debug an APK. The command
+finds a ready emulator, or creates an API 34 arm64 device when none exists.
+
+```sh
+tina4pascal setup android
+tina4pascal emulator android start
+tina4pascal debug android
+```
+
+Start an iPhone Simulator with the same CLI. It reuses a booted simulator or
+selects an available iPhone or iPad. The normal `deploy ios` flow still targets
+a signed physical device; see [iOS Simulator notes](docs/fpc-iphonesim.md) for
+the separate simulator toolchain.
+
+```sh
+tina4pascal emulator ios start
+tina4pascal emulator ios status
+```
+
 ## Guess the browser
 
 One of these is Chrome. The other is a **~1.4 MB native binary** with no browser,
@@ -133,7 +154,7 @@ Everything you drive the stack with — by hand, from an IDE, or from an AI agen
 
 | Tool | Where | What it does |
 |---|---|---|
-| **`tools/tina4pascal`** | macOS / Linux (POSIX sh) | `setup · doctor · init · build · run · render · dom · boxes · inspect · debug · script · deploy · screenshot · compliance` |
+| **`tools/tina4pascal`** | macOS / Linux (POSIX sh) | `setup · doctor · init · build · run · render · dom · boxes · inspect · debug · script · deploy · emulator · screenshot · compliance` |
 | **`tools/tina4pascal.ps1`** | Windows (PowerShell) | same surface, native to Windows; `build {win64,win32,linux,android,all}`, `setup android`, `doctor` |
 | **`tools/mcp`** | any MCP client (tina4-python) | **MCP server** — exposes the whole loop (`tina4_init/build/run/render/dom/boxes/inspect/script/debug/deploy/screenshot`) so any agent or IDE drives it. Tool-agnostic quick-start in [tools/mcp/README.md](tools/mcp/README.md) |
 | **`skills/tina4pascal-developer`** | any skill-aware agent | agent skill: architecture rules, toolchain formula, verification discipline (`./scripts/install-skills.sh`; presets for Claude Code · Codex · Cursor) |
