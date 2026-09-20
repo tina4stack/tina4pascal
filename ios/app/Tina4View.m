@@ -13,6 +13,10 @@
 @property (strong, nonatomic) NSTimer *caret;
 @property (strong, nonatomic) CADisplayLink *pump;   // redraws while HTTP is in flight
 @property (strong, nonatomic) CADisplayLink *sheepLink;  // ThreePascal demo: drives the walking ram every frame
+// Set only by -tick when it invalidates the previous animation bounds. It lets
+// drawRect select the engine's region painter without ever using it for a
+// scroll/layout/input repaint that happened to be coalesced with that frame.
+@property (assign, nonatomic) BOOL animationRegionPending;
 // native <barcode-scanner>: one AVCaptureSession with a metadata (QR/barcode)
 // output + a preview layer, positioned over the engine's scanner box each frame.
 @property (strong, nonatomic) AVCaptureSession *scanSession;
@@ -86,11 +90,15 @@
     // engine's CSS-px space — so hand it points and density 1.
     int w = (int)(self.bounds.size.width  - s.left - s.right);
     int h = (int)(self.bounds.size.height - s.top  - s.bottom);
-    // Partial redraw: if iOS handed us a sub-rect (an animation-only frame
-    // invalidated just the animated region) — not the whole view — repaint only
-    // that region; the layer retains the rest. A full invalidate (input, scroll,
-    // relayout) coalesces to ~the full bounds → full repaint.
-    tina4_frame(ctx, w, h, 1.0f);   // HTML page (shadow/border-radius test)
+    // UIKit retains pixels outside a setNeedsDisplayInRect: region. Use the
+    // matching engine paint path only for an animation region we scheduled
+    // ourselves. A coalesced full invalidation (scroll/layout/input) must keep
+    // using TinaFrame, even if it arrived alongside a previous animation tick.
+    if (self.animationRegionPending && !CGRectContainsRect(rect, self.bounds))
+        tina4_frame_region(ctx, w, h, 1.0f);
+    else
+        tina4_frame(ctx, w, h, 1.0f);
+    self.animationRegionPending = NO;
     CGContextRestoreGState(ctx);
     // overlay/position native <video> players over their poster boxes. Do this
     // OFF the drawRect pass — mutating the layer tree (addSublayer) inside
@@ -401,10 +409,12 @@
     if (t == 0) { [self stopFling]; return; }
     float r[4];
     if (t == 1 && tina4_anim_region(&r[0], &r[1], &r[2], &r[3])) {
+        self.animationRegionPending = YES;
         UIEdgeInsets s = self.safeAreaInsets;         // region is in engine points; un-inset
         // inflate to match TinaFrameRegion's AA/shadow padding
         [self setNeedsDisplayInRect:CGRectInset(CGRectMake(r[0] + s.left, r[1] + s.top, r[2], r[3]), -4, -4)];
     } else {
+        self.animationRegionPending = NO;
         [self setNeedsDisplay];                       // fling / no confined region → full
     }
 }

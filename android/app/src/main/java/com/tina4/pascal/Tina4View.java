@@ -236,7 +236,7 @@ public class Tina4View extends View implements Runnable,
     public void run() {
         ticking = false;
         int t = nativeTick();                    // 0 idle · 1 anim-only · 2 fling (content moving)
-        if (t != 0) { invalidate(); ensureTicking(); }
+        if (t != 0) { postInvalidateOnAnimation(); ensureTicking(); }
     }
     // Post one throttled tick if none is pending. onDraw calls this whenever the
     // last paint marked animated content active, so animation runs on load without
@@ -416,7 +416,11 @@ public class Tina4View extends View implements Runnable,
         // focused. Any touch that leaves nothing focused (checkbox, radio,
         // select, button, empty space) dismisses it — no stray pop-ups.
         if (r != 1 && nativeFocusKind() == 0) hideKeyboard();
-        invalidate();
+        // MOVE events can arrive faster than the display refresh rate. Keep the
+        // latest native scroll position, but render it once at the next vsync;
+        // this avoids duplicate JNI paints during a fast drag.
+        if (action == 2) postInvalidateOnAnimation();
+        else invalidate();
         return true;
     }
 
