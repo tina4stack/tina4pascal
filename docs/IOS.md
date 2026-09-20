@@ -99,18 +99,25 @@ tina4pascal setup ios            # xcodegen + libimobiledevice + pymobiledevice3
 tina4pascal doctor               # reports Xcode / xcodegen / device / screenshots
 tina4pascal ios                  # engine → xcodegen → xcodebuild (sign) → install → launch
 tina4pascal screenshot shot.png ios   # live screen grab from the iPhone
+tina4pascal ios-tunnel status    # inspect the reusable native iOS 17+ tunnel
 ```
 
 **Screenshotting a physical iPhone (iOS 17+).** The classic libimobiledevice
-`screenshotr` service can't see the CoreDevice-mounted developer image, so use
-`pymobiledevice3`, which opens the iOS 17+ native tunnel itself:
+`screenshotr` service can't see the CoreDevice-mounted developer image. The CLI
+starts and reuses `pymobiledevice3 remote start-tunnel`, Apple's native,
+no-root iOS 17+ tunnel, then passes its Remote Service Discovery address to
+`pymobiledevice3`:
 
 ```sh
-pymobiledevice3 developer dvt screenshot out.png   # phone must be UNLOCKED
+tina4pascal ios-tunnel start                       # optional: warm the tunnel
+tina4pascal screenshot ios out.png                 # phone must be UNLOCKED
+tina4pascal ios-tunnel stop                        # stop it when device work ends
 ```
 
-That is exactly what `tina4pascal screenshot out.png ios` runs. `setup ios`
-installs it (via pipx) alongside `idevice_id` (device listing) and `xcodegen`.
+`screenshot` and `logs ios` start the tunnel automatically. The command only
+reports success when it received a non-empty PNG. `setup ios` installs
+`pymobiledevice3` (via pipx) alongside `idevice_id` (device listing) and
+`xcodegen`.
 
 ## Shipping your app's Pascal — `appUnits`
 

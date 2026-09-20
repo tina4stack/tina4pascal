@@ -63,6 +63,7 @@ taken — then use the new URL everywhere below.
 | `tina4_debug` `{project?, breakpoint?, target?}` | with `project`: native gdb debug (build w/ symbols, run headless, Pascal backtrace on crash); else on-device build→launch→screenshot→tail log |
 | `tina4_release` `{keystore,alias,store_pass,key_pass}` | build a release-signed Android APK |
 | `tina4_screenshot` `{target}` | grab the app screen → returns the PNG path |
+| `tina4_ios_tunnel` `{op?}` | start, inspect or stop the reusable no-root iOS 17+ tunnel |
 | `tina4_tap` `{target,x,y}` | click/tap at screen coords |
 | `tina4_swipe` `{target,x1,y1,x2,y2,ms?}` | scroll / drag |
 | `tina4_text` `{target,value}` | type into the focused field |

@@ -194,7 +194,18 @@ def debug(target: str = "", project: str = "", breakpoint: str = ""):
 def screenshot(target: str):
     out = os.path.join(REPO, "build", f"{target}.png")
     log = _run(["screenshot", target, out])
-    return {"path": out, "log": log}
+    # The CLI gates success on a real, non-empty PNG (pymobiledevice3 exits 0 even
+    # when it writes nothing); mirror that here so callers never get a phantom path.
+    ok = os.path.isfile(out) and os.path.getsize(out) > 0
+    return {"ok": ok, "path": out if ok else None, "log": log}
+
+
+@mcp_tool("tina4_ios_tunnel", description="Manage the no-root iOS RemoteXPC "
+          "tunnel that screenshot/logs need on iOS 17+ (op: start | status | "
+          "stop). Auto-started by tina4_screenshot; call start to warm it.",
+          server=mcp)
+def ios_tunnel(op: str = "start"):
+    return _run(["ios-tunnel", op])
 
 
 @mcp_tool("tina4_tap", description="Tap/click at screen coords (device px).",

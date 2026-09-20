@@ -40,10 +40,26 @@ _b/
 _rel/
 _chk/
 _fpcbuild/
-
-# watchOS engine static lib (tools/tina4pascal build watchsim)
-watch/app/*.a
 *.exe
 
 # signed release artifacts
 dist/
+
+# generated watchOS xcode project + build output
+watch/Tina4Watch.xcodeproj/
+watch/Tina4WatchMirror.xcodeproj/
+watch/build/
+watch/mirror-dd/
+watch/app/*.a
+watch/Tina4Watch/demo.png
+watch/Tina4Watch/Assets.xcassets/AppIcon.appiconset/icon1024.png
+watch/Tina4Watch/Info.plist
+watch/Mirror/Info.plist
+watch/modelb/*.xcodeproj/
+watch/modelb/dd/
+watch/modelb/*.a
+watch/modelb/HostWatch/Info.plist
+watch/modelb/HostiOS/Info.plist
+
+# generated helper binaries
+examples/watch/watchrender

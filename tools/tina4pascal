@@ -678,6 +678,18 @@ proj_android_aab() {
 # the project's rendered UI + icon, and generate an xcodeproj with the project's
 # bundle id / team / version. Sets globals ihost/iname/ibundle/iwork (NOT a
 # subshell — progress prints would otherwise pollute a captured value).
+# Resolve the Apple Team ID for signing: TINA4_IOS_TEAM env wins, else the
+# literal tina4.json ios.team (a ${...} placeholder is ignored). Prints empty if
+# neither is set, so a zip-portable project can carry its own signing team.
+ios_team() {
+  _t="${TINA4_IOS_TEAM:-}"
+  if [ -z "$_t" ]; then
+    _t="$(grep -oE '"team"[[:space:]]*:[[:space:]]*"[^"]*"' "$PWD/tina4.json" 2>/dev/null | head -1 | sed -E 's/.*"team"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/')"
+    case "$_t" in ''|*'${'*) _t="" ;; esac
+  fi
+  printf '%s' "$_t"
+}
+
 proj_ios_stage() {
   command -v xcodebuild >/dev/null 2>&1 || die "Xcode required — tina4pascal setup ios"
   command -v xcodegen  >/dev/null 2>&1 || die "xcodegen required — tina4pascal setup ios"
@@ -685,13 +697,7 @@ proj_ios_stage() {
   proj_dump_html "$iwork/index.html"
   iname="$(jget name "$(basename "$PWD")")"
   ibundle="$(jget bundleId "com.tina4.$iname")"
-  # team: env wins, else the literal tina4.json ios.team (a ${...} placeholder is
-  # ignored), so a zip-portable project can carry its own signing team.
-  iteam="${TINA4_IOS_TEAM:-}"
-  if [ -z "$iteam" ]; then
-    jt="$(grep -oE '"team"[[:space:]]*:[[:space:]]*"[^"]*"' "$PWD/tina4.json" 2>/dev/null | head -1 | sed -E 's/.*"team"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/')"
-    case "$jt" in ''|*'${'*) : ;; *) iteam="$jt" ;; esac
-  fi
+  iteam="$(ios_team)"    # env wins, else tina4.json ios.team (see ios_team)
   ivname="$(jget versionName 1.0)"; ivcode="$(jget_num versionCode 1)"
   # stage the reference iOS host, then build the ENGINE from the STAGED copy so a
   # project's own action units splice in without touching the repo.
@@ -768,20 +774,20 @@ proj_ios_build() {
 # `release ios` — signed .xcarchive → App Store .ipa. Needs an Apple team +
 # provisioning (TINA4_IOS_TEAM or tina4.json ios.team). Upload with `publish ios`.
 proj_ios_release() {
-  [ -n "${TINA4_IOS_TEAM:-}" ] || die "set TINA4_IOS_TEAM (your Apple Team ID) for a signed release"
-  proj_ios_stage    # sets ihost/iname/ibundle/iwork
+  [ -n "$(ios_team)" ] || die "set TINA4_IOS_TEAM (your Apple Team ID) or \"ios\":{\"team\":\"…\"} in tina4.json for a signed release"
+  proj_ios_stage    # sets ihost/iname/ibundle/iwork/iteam
   arch="$iwork/$iname.xcarchive"
   say "${D}xcodebuild archive (device, signed)${Z}"
   xcodebuild -project "$ihost/Tina4Pascal.xcodeproj" -scheme Tina4Pascal \
     -destination 'generic/platform=iOS' -archivePath "$arch" \
-    DEVELOPMENT_TEAM="$TINA4_IOS_TEAM" -allowProvisioningUpdates archive 2>&1 \
+    DEVELOPMENT_TEAM="$iteam" -allowProvisioningUpdates archive 2>&1 \
     | grep -qE "ARCHIVE SUCCEEDED" || die "archive failed (signing/provisioning — set your team in App Store Connect)"
   cat > "$iwork/exportOptions.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>method</key><string>app-store</string>
-  <key>teamID</key><string>$TINA4_IOS_TEAM</string>
+  <key>teamID</key><string>$iteam</string>
   <key>destination</key><string>export</string>
 </dict></plist>
 PLIST
@@ -1328,12 +1334,12 @@ proj_ios_deploy() {
   # iPhone). There is NO Simulator build — the engine lib is device-arm64 and a
   # simulator would reject it. So a real iPhone + a signing team are required;
   # there is no simulator fallback to offer.
-  [ -n "${TINA4_IOS_TEAM:-}" ] || die "iOS is device-only (no Simulator): set TINA4_IOS_TEAM (your Apple Team ID) for a signed device install"
+  [ -n "$(ios_team)" ] || die "iOS is device-only (no Simulator): set TINA4_IOS_TEAM (your Apple Team ID) or \"ios\":{\"team\":\"…\"} in tina4.json for a signed device install"
   udid="$(ios_udid)"; [ -n "$udid" ] || die "no iOS device found — iOS is device-only (no Simulator build exists). Pair + unlock a physical iPhone (xcrun devicectl list devices). To verify off-device, link-check with: tools/tina4pascal build ios"
-  proj_ios_stage    # sets ihost/iname/ibundle/iwork
+  proj_ios_stage    # sets ihost/iname/ibundle/iwork/iteam
   say "${D}xcodebuild build (device, signed)${Z}"
   xcodebuild -project "$ihost/Tina4Pascal.xcodeproj" -scheme Tina4Pascal \
-    -destination 'generic/platform=iOS' DEVELOPMENT_TEAM="$TINA4_IOS_TEAM" \
+    -destination 'generic/platform=iOS' DEVELOPMENT_TEAM="$iteam" \
     -allowProvisioningUpdates -derivedDataPath "$iwork/dd" build 2>&1 \
     | grep -qE "BUILD SUCCEEDED" || die "build/sign failed (set your team in App Store Connect)"
   app="$(find "$iwork/dd/Build/Products" -maxdepth 2 -name '*.app' -path '*iphoneos*' | head -1)"
@@ -1488,6 +1494,64 @@ cmd_clean() { rm -rf "$BUILD" "$ROOT/android/out" "$ROOT/android/tina4pascal-deb
 # ---- device screenshot / logs / debug loop ----------------------------------
 adb_have_device() { [ "$(adb devices | grep -cw device)" -gt 0 ]; }
 
+# ---- iOS RemoteXPC tunnel (no root) -----------------------------------------
+# iOS 17+ developer services (screenshot, syslog) run over a RemoteXPC tunnel.
+# `pymobiledevice3 remote tunneld` (the daemon) needs ROOT; `remote start-tunnel`
+# uses Apple's NATIVE tunnel on macOS with NO root. We keep one background
+# start-tunnel alive and cache its RSD addr/port so repeated screenshot/logs
+# calls reuse it. State lives under $TINA4_HOME (default ~/.tina4).
+TINA4_STATE="${TINA4_HOME:-$HOME/.tina4}"
+ios_tunnel_rsd() {  # echo "<addr> <port>" if a cached tunnel is still alive, else nothing (always exits 0 — set -e safe)
+  _pf="$TINA4_STATE/ios-tunnel.pid"; _rf="$TINA4_STATE/ios-tunnel.rsd"
+  _pid="$(cat "$_pf" 2>/dev/null || true)"
+  if [ -n "$_pid" ] && [ -f "$_rf" ] && kill -0 "$_pid" 2>/dev/null \
+     && ps -p "$_pid" -o command= 2>/dev/null | grep -q 'pymobiledevice3.*remote start-tunnel'; then
+    cat "$_rf"
+  else
+    rm -f "$_pf" "$_rf"
+  fi
+  return 0
+}
+ios_ensure_tunnel() {  # prints "<addr> <port>" to STDOUT; progress/errors to STDERR; nonzero on failure
+  _rsd="$(ios_tunnel_rsd)"
+  if [ -n "$_rsd" ]; then printf '%s' "$_rsd"; return 0; fi
+  if ! { [ -x "$PMD3" ] || command -v pymobiledevice3 >/dev/null 2>&1; }; then
+    echo "pymobiledevice3 missing — run: tina4pascal setup ios" >&2; return 1
+  fi
+  mkdir -p "$TINA4_STATE"; _log="$TINA4_STATE/ios-tunnel.log"; : > "$_log"
+  say "→ starting iOS tunnel (remote start-tunnel, no root)…" >&2
+  nohup "$PMD3" remote start-tunnel >"$_log" 2>&1 &
+  echo $! > "$TINA4_STATE/ios-tunnel.pid"
+  _i=0
+  while [ "$_i" -lt 60 ]; do
+    _addr="$(awk '/RSD Address:/{print $NF; exit}' "$_log")"
+    _port="$(awk '/RSD Port:/{print $NF; exit}' "$_log")"
+    if [ -n "$_addr" ] && [ -n "$_port" ]; then
+      printf '%s %s' "$_addr" "$_port" > "$TINA4_STATE/ios-tunnel.rsd"
+      printf '%s %s' "$_addr" "$_port"
+      return 0
+    fi
+    sleep 0.5; _i=$((_i + 1))
+  done
+  kill "$(cat "$TINA4_STATE/ios-tunnel.pid" 2>/dev/null || true)" 2>/dev/null || true
+  rm -f "$TINA4_STATE/ios-tunnel.pid" "$TINA4_STATE/ios-tunnel.rsd"
+  echo "iOS tunnel did not come up — see $_log (iPhone paired + unlocked?)" >&2; return 1
+}
+# ios-tunnel [start|status|stop] — manage the background RemoteXPC tunnel.
+cmd_ios_tunnel() {
+  case "${1:-start}" in
+    stop)
+      _pf="$TINA4_STATE/ios-tunnel.pid"
+      if [ -f "$_pf" ] && kill "$(cat "$_pf" 2>/dev/null)" 2>/dev/null; then ok "iOS tunnel stopped"; else warn "no iOS tunnel running"; fi
+      rm -f "$_pf" "$TINA4_STATE/ios-tunnel.rsd" ;;
+    status)
+      _r="$(ios_tunnel_rsd)"; if [ -n "$_r" ]; then ok "iOS tunnel up — RSD $_r"; else warn "no iOS tunnel running"; fi ;;
+    *)
+      _r="$(ios_ensure_tunnel)" || die "could not start iOS tunnel"
+      ok "iOS tunnel up — RSD $_r  (reused by screenshot/logs; stop with: tina4pascal ios-tunnel stop)" ;;
+  esac
+}
+
 # screenshot [android|ios|macos] [out.png]   — grab the app screen for a target.
 # (legacy order `screenshot out.png platform` still accepted)
 cmd_screenshot() {
@@ -1499,10 +1563,16 @@ cmd_screenshot() {
   mkdir -p "$(dirname "$out")"
   case "$plat" in
     ios)
-      [ -x "$PMD3" ] || command -v pymobiledevice3 >/dev/null 2>&1 || die "pymobiledevice3 missing — run: tina4pascal setup ios"
-      # pymobiledevice3 opens the iOS 17+ native tunnel itself; the phone must
-      # be unlocked. No app focus needed — it grabs the whole screen.
-      "$PMD3" developer dvt screenshot "$out" >/dev/null 2>&1 || die "iOS screenshot failed (unlock the iPhone?)"
+      # iOS 17+ needs a RemoteXPC tunnel; ensure the no-root native one is up and
+      # grab its RSD addr/port (auto-started, cached, reused). Phone must be
+      # unlocked. pymobiledevice3 EXITS 0 even on failure (e.g. "Device is not
+      # connected") and writes nothing, so gate success on a real, non-empty PNG
+      # — never on the exit code.
+      rsd="$(ios_ensure_tunnel)" || die "iOS screenshot needs a developer tunnel — start it with: tina4pascal ios-tunnel"
+      set -- $rsd; raddr="$1"; rport="$2"
+      rm -f "$out"
+      serr="$("$PMD3" developer dvt screenshot --rsd "$raddr" "$rport" "$out" 2>&1 >/dev/null)" || true
+      [ -s "$out" ] || { rm -f "$out"; die "iOS screenshot failed — is the iPhone unlocked? ${serr:-empty output file}"; }
       ok "iOS screenshot → $out" ;;
     macos)
       # bring the running app forward, then capture its window (no shadow, PNG)
@@ -1533,14 +1603,15 @@ cmd_logs() {
       # CoreDevice (iOS 17+) syslog over the tunnel — same transport as the
       # screenshots; idevicesyslog needs USB libimobiledevice and won't see a
       # network-paired phone. Filter to the app + its media stack.
-      PMD3="$(command -v pymobiledevice3 2>/dev/null || echo "$HOME/.local/bin/pymobiledevice3")"
       { [ -x "$PMD3" ] || command -v pymobiledevice3 >/dev/null 2>&1; } \
         || die "pymobiledevice3 missing — run: tina4pascal setup ios"
+      rsd="$(ios_ensure_tunnel)" || die "iOS logs need a developer tunnel — start it with: tina4pascal ios-tunnel"
+      set -- $rsd; raddr="$1"; rport="$2"
       filt='Tina4Pascal|tina4|AVPlayer|CoreMedia|VideoToolbox'
       case "${1:-}" in
-        -f|--follow) "$PMD3" syslog live 2>/dev/null | grep --line-buffered -iE "$filt" ;;
+        -f|--follow) "$PMD3" syslog live --rsd "$raddr" "$rport" 2>/dev/null | grep --line-buffered -iE "$filt" ;;
         *) tmp="$(mktemp)"
-           "$PMD3" syslog live 2>/dev/null | grep --line-buffered -iE "$filt" > "$tmp" & p=$!
+           "$PMD3" syslog live --rsd "$raddr" "$rport" 2>/dev/null | grep --line-buffered -iE "$filt" > "$tmp" & p=$!
            sleep "${1:-5}"; kill "$p" 2>/dev/null || true
            tail -"${2:-60}" "$tmp"; rm -f "$tmp" ;;
       esac ;;
@@ -1701,6 +1772,8 @@ ${B}debug loop${Z}
 
 ${B}drive the app${Z}  (the device-automation the IDE builds on)
   screenshot <target> [out.png]   grab the app screen  (android · ios · macos)
+  ios-tunnel [start|status|stop]  manage the no-root iOS RemoteXPC tunnel
+                                  (auto-started by screenshot/logs ios)
   tap <target> X Y                click/tap at screen coords
   swipe <target> X1 Y1 X2 Y2 [ms] scroll / drag
   text <target> "..."             type into the focused field
@@ -1743,6 +1816,7 @@ case "$cmd" in
   debug)      if is_project; then debug_native "$@"; else cmd_debug "$@"; fi ;;
   script)     if is_project; then script_project "$@"; else die "script: run inside a project dir"; fi ;;
   screenshot) cmd_screenshot "$@" ;;
+  ios-tunnel) cmd_ios_tunnel "$@" ;;
   tap)        cmd_tap "$@" ;;
   swipe)      cmd_swipe "$@" ;;
   text)       cmd_text "$@" ;;
