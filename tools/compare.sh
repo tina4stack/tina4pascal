@@ -26,8 +26,8 @@ cp "$PAGE" "$VIEW/$NAME.html"
 DRV="$OUT/$NAME.drive"; printf 'snap %s/%s.ours.png\nquit\n' "$OUT" "$NAME" > "$DRV"
 ( cd "$VIEW" && ./htmlviewer "$NAME.html" --script "$DRV" >/dev/null 2>&1 )
 
-# chrome reference
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+# chrome reference (override with $CHROME, e.g. a Chrome-for-Testing binary)
+CHROME="${CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 "$CHROME" --headless --disable-gpu --hide-scrollbars \
   --screenshot="$OUT/$NAME.chrome.png" --window-size="$W,$H" \
   "file://$VIEW/$NAME.html" >/dev/null 2>&1

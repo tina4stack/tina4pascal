@@ -10,7 +10,7 @@ program htmlviewer;
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}   // SSE/WS worker threads (Tina4Live) need a thread driver
-  SysUtils, StrUtils, Classes, Math, Generics.Collections,
+  SysUtils, StrUtils, Classes, Math, DateUtils, Generics.Collections,
   Tina4HTMLDom, Tina4RenderBackend, Tina4ShellCocoa, Tina4HTMLLayout, Tina4Canvas2D,
   Tina4Lottie, Tina4Events, Tina4Builtins, Tina4Live, Tina4Elements, Tina4LinkOpen;
 
@@ -106,6 +106,14 @@ type
     FocusTag: THTMLTag;
     ActiveTag: THTMLTag;
     OpenSelect: THTMLTag;         // dropdown currently expanded, nil = none
+    OpenDate: THTMLTag;           // <input type=date> calendar open, nil = none
+    CalYear, CalMonth: Integer;   // month the open calendar is showing
+    CalX, CalW: Single;           // overlay geometry (screen CSS px), set in Paint
+    CalHdrY, CalHdrH: Single;     // header band (‹ Month YYYY ›)
+    CalGridY, CalCellW, CalCellH: Single;   // 6×7 day grid
+    CalTodayY, CalTodayH: Single; // Today footer button
+    CalDays, CalFirstDow: Integer;// days in month, weekday of the 1st (0=Sun)
+    CalYearMinusMs, CalYearPlusMs: QWord;   // « / » decade double-tap timing
     DragBox: TLayoutBox;          // scroller being drag-scrolled, nil = none
     DragStartX, DragStartY: Single;
     DragStartLeft, DragStartTop: Single;
@@ -129,6 +137,9 @@ type
     procedure Event(const S: string);
     procedure FireInput(T: THTMLTag);
     procedure SetFocus(T: THTMLTag);
+    procedure OpenDatePicker(T: THTMLTag);
+    procedure PaintDateOverlay(Canvas: TTina4Canvas; W, H: Single);
+    procedure HandleDateTap(X, Y: Single);
     procedure SubmitForm(FromTag: THTMLTag);
     procedure CollectTags(T: THTMLTag; const TagNames: array of string; L: TList<THTMLTag>);
     function OptionAt(X, Y: Single; out OptText, OptValue: string): Boolean;
@@ -307,6 +318,185 @@ begin
   Rebuild;
 end;
 
+{ ---- native <input type=date> calendar overlay ----------------------------
+  Ported from the shared Tina4Interact engine so the desktop viewer opens the
+  same canvas-drawn calendar the mobile shells do (rather than treating a date
+  field as a plain text input). Same overlay model as the <select> dropdown:
+  Paint draws it last (top layer) and MouseUp routes taps to it while open. }
+
+function CalMonthName(M: Integer): string;
+const N: array[1..12] of string = ('January','February','March','April','May',
+  'June','July','August','September','October','November','December');
+begin
+  if (M >= 1) and (M <= 12) then Result := N[M] else Result := '';
+end;
+
+{ Open the calendar for a date control, starting on the value's month (or today). }
+procedure TViewer.OpenDatePicker(T: THTMLTag);
+var iso: string; y, mo, e: Integer;
+begin
+  // focus the field (ring) without the SetFocus Rebuild — the caller Rebuilds
+  if FocusTag <> nil then FocusTag.IsFocused := False;
+  FocusTag := T; T.IsFocused := True;
+  OpenDate := T;
+  iso := Trim(T.GetAttribute('value'));
+  y := 0; mo := 0;
+  if Length(iso) >= 10 then
+  begin
+    Val(Copy(iso, 1, 4), y, e); if e <> 0 then y := 0;
+    Val(Copy(iso, 6, 2), mo, e); if (e <> 0) or (mo < 1) or (mo > 12) then mo := 0;
+  end;
+  if (y = 0) or (mo = 0) then begin y := YearOf(Date); mo := MonthOf(Date); end;
+  CalYear := y; CalMonth := mo;
+end;
+
+{ Paint the month calendar on top of the page. Header ‹ Month YYYY ›, weekday
+  row, a 6×7 day grid (today ringed, selected filled), and a Today button. }
+procedure TViewer.PaintDateOverlay(Canvas: TTina4Canvas; W, H: Single);
+const
+  INK=$FF15162E; BLUE=$FF2B41E6; TINT=$FFEFF1FE; BORDER=$FFE6E5F0;
+  MUTED=$FF9698B4; PAPER=$FFFFFFFF;
+  DOW: array[0..6] of string = ('Su','Mo','Tu','We','Th','Fr','Sa');
+var
+  box: TLayoutBox; bx, by, pad, w2, h2, titleY, aY, cx, cy: Single;
+  i, col, row, day, selY, selMo, selD, e, tY, tMo, tD: Integer;
+  title, iso, cell: string; isToday, isSel: Boolean;
+begin
+  if (OpenDate = nil) or (RootBox = nil) then Exit;
+  box := FindBoxForTag(RootBox, OpenDate);
+  if box = nil then begin OpenDate := nil; Exit; end;
+
+  pad := 12; CalCellW := 46; CalCellH := 44;    // finger-friendly tap targets
+  w2 := 7 * CalCellW + 2 * pad;                  // 346
+  CalHdrH := 52;
+  h2 := CalHdrH + 26 + 6 * CalCellH + 48 + pad;  // header + dow + 6 rows + footer
+  bx := box.X; by := box.Y - ScrollY + box.H + 6;
+  if bx + w2 > W then bx := W - w2 - 6;
+  if bx < 6 then bx := 6;
+  if by + h2 > H then by := box.Y - ScrollY - h2 - 6;   // flip above
+  if by < 6 then by := 6;
+  CalX := bx; CalW := w2;
+
+  CalDays := DaysInAMonth(CalYear, CalMonth);
+  CalFirstDow := DayOfWeek(EncodeDate(CalYear, CalMonth, 1)) - 1;   // 0=Sun
+
+  // panel + soft shadow (rounded to match the fill)
+  Canvas.FillRoundRect(bx - 1, by + 8, w2 + 2, h2, 18, $14000000);
+  Canvas.FillRoundRect(bx, by, w2, h2, 18, PAPER);
+  Canvas.StrokeRoundRect(bx, by, w2, h2, 18, 1, BORDER);
+
+  // header: « year‹ month  Title  month› year »
+  CalHdrY := by;
+  titleY := by + (CalHdrH - 16) / 2;
+  aY := by + (CalHdrH - 19) / 2;
+  Canvas.DrawText(bx + 14, aY, #$C2#$AB, 19, [tfsBold], BLUE);          // « year prev
+  Canvas.DrawText(bx + 38, aY, #$E2#$80#$B9, 19, [tfsBold], BLUE);      // ‹ month prev
+  Canvas.DrawText(bx + w2 - 40, aY, #$E2#$80#$BA, 19, [tfsBold], BLUE); // › month next
+  Canvas.DrawText(bx + w2 - 26, aY, #$C2#$BB, 19, [tfsBold], BLUE);     // » year next
+  title := CalMonthName(CalMonth) + ' ' + IntToStr(CalYear);
+  Canvas.DrawText(bx + (w2 - Canvas.MeasureText(title, 16, [tfsBold]).Width) / 2,
+    titleY, title, 16, [tfsBold], INK);
+
+  // weekday labels
+  for i := 0 to 6 do
+    Canvas.DrawText(bx + pad + i * CalCellW + (CalCellW - 16) / 2,
+      by + CalHdrH, DOW[i], 12, [tfsBold], MUTED);
+
+  // selected + today
+  selY := 0; selMo := 0; selD := 0;
+  iso := Trim(OpenDate.GetAttribute('value'));
+  if Length(iso) >= 10 then
+  begin
+    Val(Copy(iso,1,4), selY, e); Val(Copy(iso,6,2), selMo, e); Val(Copy(iso,9,2), selD, e);
+  end;
+  tY := YearOf(Date); tMo := MonthOf(Date); tD := DayOf(Date);
+
+  CalGridY := by + CalHdrH + 26;
+  for day := 1 to CalDays do
+  begin
+    i := CalFirstDow + day - 1;
+    col := i mod 7; row := i div 7;
+    cx := bx + pad + col * CalCellW;
+    cy := CalGridY + row * CalCellH;
+    isSel := (selY = CalYear) and (selMo = CalMonth) and (selD = day);
+    isToday := (tY = CalYear) and (tMo = CalMonth) and (tD = day);
+    if isSel then
+      Canvas.FillRoundRect(cx + 3, cy + 2, CalCellW - 6, CalCellH - 6, 9, BLUE)
+    else if isToday then
+      Canvas.StrokeRoundRect(cx + 3, cy + 2, CalCellW - 6, CalCellH - 6, 9, 1.5, BLUE);
+    cell := IntToStr(day);
+    if isSel then
+      Canvas.DrawText(cx + (CalCellW - Canvas.MeasureText(cell,15,[tfsBold]).Width)/2,
+        cy + 10, cell, 15, [tfsBold], PAPER)
+    else
+      Canvas.DrawText(cx + (CalCellW - Canvas.MeasureText(cell,15,[]).Width)/2,
+        cy + 10, cell, 15, [], INK);
+  end;
+
+  // footer: Today
+  CalTodayH := 34;
+  CalTodayY := by + h2 - CalTodayH - 8;
+  Canvas.FillRoundRect(bx + pad, CalTodayY, w2 - 2 * pad, CalTodayH, 9, TINT);
+  Canvas.DrawText(bx + (w2 - Canvas.MeasureText('Today', 14, [tfsBold]).Width) / 2,
+    CalTodayY + 9, 'Today', 14, [tfsBold], BLUE);
+end;
+
+{ A tap while the calendar is open: nav arrows keep it open; a day / Today picks. }
+procedure TViewer.HandleDateTap(X, Y: Single);
+var i, col, row, day: Integer; iso: string;
+begin
+  if OpenDate = nil then Exit;
+  // header arrows: « year- | ‹ month- (left) … month+ › | » year+ (right)
+  if (Y >= CalHdrY) and (Y < CalHdrY + CalHdrH) then
+  begin
+    if (X >= CalX) and (X < CalX + 28) then                      // « year prev
+    begin
+      if GetTickCount64 - CalYearMinusMs < 400 then
+        begin CalYear := CalYear - 9; CalYearMinusMs := 0; end   // 2nd tap → −10 total
+      else begin Dec(CalYear); CalYearMinusMs := GetTickCount64; end;
+      Rebuild; Exit;
+    end;
+    if (X >= CalX + 28) and (X < CalX + 56) then                 // ‹ month prev
+    begin Dec(CalMonth); if CalMonth < 1 then begin CalMonth := 12; Dec(CalYear); end;
+      Rebuild; Exit; end;
+    if (X >= CalX + CalW - 56) and (X < CalX + CalW - 28) then   // › month next
+    begin Inc(CalMonth); if CalMonth > 12 then begin CalMonth := 1; Inc(CalYear); end;
+      Rebuild; Exit; end;
+    if (X >= CalX + CalW - 28) and (X < CalX + CalW) then        // » year next
+    begin
+      if GetTickCount64 - CalYearPlusMs < 400 then
+        begin CalYear := CalYear + 9; CalYearPlusMs := 0; end    // 2nd tap → +10 total
+      else begin Inc(CalYear); CalYearPlusMs := GetTickCount64; end;
+      Rebuild; Exit;
+    end;
+  end;
+  // Today
+  if (Y >= CalTodayY) and (Y < CalTodayY + CalTodayH) and
+     (X >= CalX) and (X <= CalX + CalW) then
+  begin
+    OpenDate.Attributes.AddOrSetValue('value', FormatDateTime('yyyy-mm-dd', Date));
+    Event('change ' + OpenDate.GetAttribute('name', 'date') + '=' + OpenDate.GetAttribute('value'));
+    OpenDate := nil; Rebuild; Exit;
+  end;
+  // a day cell
+  if (X >= CalX + 12) and (X < CalX + 12 + 7 * CalCellW) and
+     (Y >= CalGridY) and (Y < CalGridY + 6 * CalCellH) then
+  begin
+    col := Trunc((X - CalX - 12) / CalCellW);
+    row := Trunc((Y - CalGridY) / CalCellH);
+    i := row * 7 + col;
+    day := i - CalFirstDow + 1;
+    if (day >= 1) and (day <= CalDays) then
+    begin
+      iso := Format('%.4d-%.2d-%.2d', [CalYear, CalMonth, day]);
+      OpenDate.Attributes.AddOrSetValue('value', iso);
+      Event('change ' + OpenDate.GetAttribute('name', 'date') + '=' + iso);
+      OpenDate := nil; Rebuild; Exit;
+    end;
+  end;
+  OpenDate := nil; Rebuild;   // tap elsewhere dismisses
+end;
+
 procedure TViewer.SubmitForm(FromTag: THTMLTag);
 var
   form, t: THTMLTag;
@@ -455,6 +645,9 @@ begin
       Canvas.StrokeRoundRect(sb.X, dropTop, ow, dropH, dropR, 1, $FFE6E5F0);  // crisp outline on top
     end;
   end;
+
+  // open <input type=date> calendar paints last (top layer)
+  if OpenDate <> nil then PaintDateOverlay(Canvas, W, H);
 
   if RootBox.H > H then
   begin
@@ -682,6 +875,13 @@ begin
     Exit;
   end;
 
+  // an open date calendar eats the click too (arrows re-navigate, a day picks)
+  if OpenDate <> nil then
+  begin
+    HandleDateTap(X, Y);
+    Exit;
+  end;
+
   hit := HitTest(RootBox, X, Y + ScrollY);
 
   // Tier-2 custom element: a registered native element with an OnTap hook
@@ -804,6 +1004,14 @@ begin
       end;
       t.Attributes.AddOrSetValue('checked', 'checked');
       Event('change ' + t.GetAttribute('name', 'radio') + '=' + t.GetAttribute('value', 'on'));
+      Rebuild;
+      Exit;
+    end;
+    // <input type=date>: open the canvas-drawn calendar overlay (Paint draws it,
+    // a follow-up click routes to HandleDateTap) rather than a text caret.
+    if SameText(t.TagName, 'input') and (typ = 'date') then
+    begin
+      OpenDatePicker(t);
       Rebuild;
       Exit;
     end;
@@ -1057,6 +1265,7 @@ begin
     TK_ESCAPE:
       begin
         OpenSelect := nil;
+        OpenDate := nil;
         SetFocus(nil);
       end;
   else

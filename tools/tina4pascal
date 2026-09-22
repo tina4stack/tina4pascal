@@ -1139,6 +1139,13 @@ cmd_test() {
 cmd_run() {
   cmd_build macos
   page="${1:-$ROOT/examples/pages/bootstrap_test.html}"
+  # Resolve a relative page against the caller's PWD before we cd into the
+  # viewer's folder (the viewer loads the page relative to ITS cwd, so a bare
+  # relative path would otherwise be looked up under examples/htmlviewer/).
+  case "$page" in
+    /*) : ;;                                  # already absolute
+    *)  page="$PWD/$page" ;;
+  esac
   say "→ $page"
   ( cd "$ROOT/examples/htmlviewer" && exec "$BUILD/macos/htmlviewer" "$page" )
 }
