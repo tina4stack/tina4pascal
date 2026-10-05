@@ -2079,16 +2079,31 @@ end;
 
 { Apply the element's @keyframes animation to its style for the current clock —
   mutates transform/opacity/colours in-place, keeping the ticker alive. }
-procedure ApplyKeyframeAnim(var st: TComputedStyle);
+procedure ApplyKeyframeAnim(Tag: THTMLTag; var st: TComputedStyle);
 var
   offs: TArray<Single>; blocks: TArray<string>;
-  t, frac, o0, o1, lt: Single;
+  t, frac, o0, o1, lt, animStart: Single;
   iter, i, i0, i1: Integer;
   s0, s1: TComputedStyle; rev: Boolean;
 begin
   if (GAnimSheet = nil) or (st.AnimName = '') or (st.AnimDuration <= 0) then Exit;
   if not GAnimSheet.KeyframeStops(st.AnimName, offs, blocks) then Exit;
-  t := (AnimClock - st.AnimDelay) / st.AnimDuration;
+  // Per-element start: a node present at parse animates against the global clock
+  // (animStart 0 — unchanged). A dynamically-added node (marked _dyn by
+  // Tina4Builtins.AppendChild) zeroes its clock on first paint, so its animation
+  // starts when it appears instead of being instantly past its duration.
+  animStart := 0;
+  if Tag <> nil then
+  begin
+    if Tag.HasAttribute('_anim0') then
+      animStart := StrToFloatDef(Tag.GetAttribute('_anim0'), 0)
+    else if Tag.HasAttribute('_dyn') then
+    begin
+      animStart := AnimClock;
+      Tag.Attributes.AddOrSetValue('_anim0', FloatToStr(AnimClock));
+    end;
+  end;
+  t := (AnimClock - animStart - st.AnimDelay) / st.AnimDuration;
   if t < 0 then t := 0;
   iter := Trunc(t);
   frac := t - iter;
@@ -7053,7 +7068,7 @@ begin
   if st.TransitionDuration > 0 then ApplyTransition(Box, st);
   // CSS animation: interpolate this frame's transform/opacity/colours from the
   // element's @keyframes (drives the ticker while it runs).
-  if st.AnimName <> '' then ApplyKeyframeAnim(st);
+  if st.AnimName <> '' then ApplyKeyframeAnim(Box.Tag, st);
   // A modal <dialog> is skipped in the normal pass — PaintModalOverlay draws it
   // last, centred over a backdrop (GInModalPaint is set only during that pass).
   if IsModalDialogBox(Box) and not GInModalPaint then Exit;

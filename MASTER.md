@@ -58,6 +58,7 @@ gets an **ADR**. Conventions and templates: [`plan/README.md`](plan/README.md).
 - [ADR-0011](plan/adr/0011-transform-percent-resolution.md) — `translate()` `%` resolves against the element's own box
 - [ADR-0012](plan/adr/0012-onmousemove-event.md) — `onmousemove` DOM event dispatched to app code
 - [ADR-0013](plan/adr/0013-builtins-dom-node-api.md) — runtime DOM node primitives in Tina4Builtins
+- [ADR-0014](plan/adr/0014-dynamic-node-animation-and-viewport.md) — dynamically-added nodes animate; apps can read the viewport
 
 ### Task plans — `plan/`
 - [code-editing-highlighting](plan/code-editing-highlighting.md) — `<codearea>` + Tina4Highlight

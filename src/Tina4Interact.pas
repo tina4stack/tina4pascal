@@ -95,6 +95,9 @@ procedure TinaHover(X, Y: Single);
   TinaHover and Invalidates on True, so plain hover stays repaint-free while a
   cursor-driven effect repaints each move. }
 function TinaTakeMoveRepaint: Boolean;
+{ The current layout viewport in CSS px (0 before the first layout). Apps need it
+  to turn an onmousemove "x,y" into a cursor-from-centre offset, resolution-free. }
+procedure TinaViewport(out W, H: Single);
 { OS pointer shape for the element under (X,Y) in device px — the CSS `cursor`
   of the hovered element, inheriting from its ancestors. Desktop shells feed
   this straight to Shell.SetCursor on mouse move. }
@@ -430,6 +433,12 @@ function TinaTakeMoveRepaint: Boolean;
 begin
   Result := GMoveRepaint;
   GMoveRepaint := False;
+end;
+
+procedure TinaViewport(out W, H: Single);
+begin
+  if GLayoutW > 0 then W := GLayoutW else W := 0;
+  H := GViewH;
 end;
 
 { Control kind of a tag, but ckNone for anything that is NOT a form-control

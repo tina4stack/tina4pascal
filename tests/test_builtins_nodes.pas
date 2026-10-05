@@ -50,6 +50,8 @@ begin
     Check(ChildAt(Root, 0) = a, 'ChildAt returns the appended node');
     Check(a.Parent = Root, 'appended node points back at its new parent');
     Check(FindById(Root, 'x1') = a, 'appended node is findable by id');
+    Check(a.GetAttribute('_dyn') = '1',
+      'AppendChild marks the node _dyn (so a CSS @keyframes on it starts from when it appears)');
 
     { move semantics: appending elsewhere detaches from the old parent }
     b := CreateElement('i');
