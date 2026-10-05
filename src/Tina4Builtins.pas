@@ -40,6 +40,21 @@ function FindByName(Root: THTMLTag; const Name: string): THTMLTag;
 { Set an element's rendered text (reuses/creates its #text child). Exposed so the
   live data layer (Tina4Live) can bind an SSE/WS event to a DOM node by id. }
 procedure SetElementText(T: THTMLTag; const S: string);
+
+{ --- Runtime DOM node primitives -------------------------------------------
+  Agnostic building blocks: the engine knows nothing of what an app composes
+  from them (a particle, a toast, a list row — all app concerns). Each mutation
+  that changes the live tree sets BuiltinsDirty so the host relayouts next frame.
+  Removal is a plain node.Free — THTMLTag's destructor self-detaches from its
+  parent and frees its subtree, so never Remove-then-Free the same node. }
+function CreateElement(const TagName: string): THTMLTag;
+procedure AppendChild(Parent, Child: THTMLTag);
+procedure RemoveNode(Node: THTMLTag);
+procedure SetAttr(Node: THTMLTag; const Name, Value: string);
+procedure SetStyleProp(Node: THTMLTag; const Prop, Value: string);
+function ChildCount(Node: THTMLTag): Integer;
+function ChildAt(Node: THTMLTag; Index: Integer): THTMLTag;
+
 { Strip surrounding quotes from an action argument ('info' → info). }
 function Unquote(const S: string): string;
 
@@ -206,6 +221,55 @@ begin
   tn.Text := S;
   tn.Parent := T;
   T.Children.Add(tn);
+end;
+
+function CreateElement(const TagName: string): THTMLTag;
+begin
+  Result := THTMLTag.Create;      // detached; not in the tree until AppendChild
+  Result.TagName := LowerCase(TagName);
+end;
+
+procedure AppendChild(Parent, Child: THTMLTag);
+begin
+  if (Parent = nil) or (Child = nil) then Exit;
+  if (Child.Parent <> nil) and (Child.Parent.Children <> nil) then
+    Child.Parent.Children.Remove(Child);   // move: detach from any old parent first
+  Child.Parent := Parent;
+  Parent.Children.Add(Child);
+  BuiltinsDirty := True;
+end;
+
+procedure RemoveNode(Node: THTMLTag);
+begin
+  if Node = nil then Exit;
+  Node.Free;   // self-detaches from Parent.Children and frees the subtree
+  BuiltinsDirty := True;
+end;
+
+procedure SetAttr(Node: THTMLTag; const Name, Value: string);
+begin
+  if Node = nil then Exit;
+  Node.Attributes.AddOrSetValue(LowerCase(Name), Value);   // keys are stored lowercase
+  BuiltinsDirty := True;
+end;
+
+procedure SetStyleProp(Node: THTMLTag; const Prop, Value: string);
+begin
+  if Node = nil then Exit;
+  Node.Style.AddOrSetValue(LowerCase(Prop), Value);        // inline style = highest priority
+  BuiltinsDirty := True;
+end;
+
+function ChildCount(Node: THTMLTag): Integer;
+begin
+  if Node = nil then Result := 0 else Result := Node.Children.Count;
+end;
+
+function ChildAt(Node: THTMLTag; Index: Integer): THTMLTag;
+begin
+  Result := nil;
+  if (Node <> nil) and (Index >= 0) and (Index < Node.Children.Count) then
+    Result := Node.Children[Index];
 end;
 
 procedure RecalcOutputs(Root: THTMLTag);
