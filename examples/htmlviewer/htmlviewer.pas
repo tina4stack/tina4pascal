@@ -704,8 +704,6 @@ end;
   natively: each layer translates by (cursor-from-centre) x per-layer depth. --- }
 var
   GParallaxOn: Boolean = False;
-  GHeroW: Integer = 1024;
-  GHeroH: Integer = 800;
 
 function HeroHasLayers(T: THTMLTag): Boolean;
 var
@@ -844,8 +842,10 @@ begin
   if RootBox = nil then Exit;
   if GParallaxOn then
   begin
-    pnx := (X / GHeroW) * 2 - 1;
-    pny := (Y / GHeroH) * 2 - 1;
+    // Normalise the cursor against the LIVE viewport (LastW/ViewH track resize),
+    // so parallax is correct at any window size / resolution, and after a resize.
+    pnx := (X / Max(1, LastW)) * 2 - 1;
+    pny := (Y / Max(1, ViewH)) * 2 - 1;
     if pnx < -1 then pnx := -1 else if pnx > 1 then pnx := 1;
     if pny < -1 then pny := -1 else if pny > 1 then pny := 1;
     HeroParallax(BuiltinsRoot, pnx, pny);
@@ -1528,7 +1528,6 @@ begin
   RegisterBuiltinActions;
   RegisterLiveActions;    // sse.connect / ws.connect / live.close
   BuiltinsRoot := Viewer.Parser.Root;
-  GHeroW := WinW; GHeroH := WinH;         // hero parallax: viewport for cursor mapping
   GParallaxOn := HeroHasLayers(BuiltinsRoot);
   RecalcOutputs(BuiltinsRoot);            // seed <output> values before first paint
   // custom-element registry demos: a Tier-1 template button and a Tier-2 native
