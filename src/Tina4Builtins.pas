@@ -236,6 +236,9 @@ begin
     Child.Parent.Children.Remove(Child);   // move: detach from any old parent first
   Child.Parent := Parent;
   Parent.Children.Add(Child);
+  // Mark as dynamically added so a CSS @keyframes animation on it starts from
+  // when it appears (not the global clock) — lets app-spawned nodes animate.
+  Child.Attributes.AddOrSetValue('_dyn', '1');
   BuiltinsDirty := True;
 end;
 
