@@ -669,8 +669,11 @@ proj_android_build() {
   # bundle the project's fonts/ at assets/fonts/ so the shell can register them
   # on-device (extracted under filesDir/assets); see docs/BUNDLED-FONTS.md.
   [ -d "$PWD/fonts" ] && { mkdir -p "$APPDIR/assets/fonts"; cp "$PWD/fonts/"*.ttf "$APPDIR/assets/fonts/" 2>/dev/null; } || true
-  [ -f "$PWD/assets/icon.png" ] && find "$APPDIR/res" -name 'ic_launcher*.png' \
-    -exec cp "$PWD/assets/icon.png" {} \; 2>/dev/null || true
+  # launcher icon: the project's own assets/icon.png, else the tina4 brand icon
+  # (same fallback the macOS .app uses) so every example is branded, not generic.
+  aicon="$PWD/assets/icon.png"; [ -f "$aicon" ] || aicon="$ROOT/branding/icon.png"
+  [ -f "$aicon" ] && find "$APPDIR/res" -name 'ic_launcher*.png' \
+    -exec cp "$aicon" {} \; 2>/dev/null || true
 
   # project app-units (tina4.json "appUnits") → the staged app_units.inc, spliced
   # into tina4jni.pas's uses; their source dirs join the FPC path. Each unit's
@@ -889,7 +892,10 @@ proj_ios_stage() {
     TINA4_APP_UNIT_DIRS="$iappdirs" sh "$ihost/build.sh" >/dev/null 2>&1 \
     || die "iOS engine build failed (run: TINA4_IOS_ENG_DIR=\"$ihost\" TINA4_SRC=\"$ROOT/src\" sh \"$ihost/build.sh\")"
   cp "$iwork/index.html" "$ihost/app/showcase.html"
-  [ -f "$PWD/assets/icon.png" ] && cp "$PWD/assets/icon.png" \
+  # app icon: the project's own assets/icon.png, else the tina4 brand icon (same
+  # fallback the macOS .app uses) so every example is branded, not generic.
+  iicon="$PWD/assets/icon.png"; [ -f "$iicon" ] || iicon="$ROOT/branding/icon.png"
+  [ -f "$iicon" ] && cp "$iicon" \
     "$ihost/app/Assets.xcassets/AppIcon.appiconset/icon_1024.png" 2>/dev/null || true
   # bundle the project's assets/ as a FOLDER so a relative <img src="assets/…">
   # resolves against the app bundle's resourcePath (iOS asset base).
