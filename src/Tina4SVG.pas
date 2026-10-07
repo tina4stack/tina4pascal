@@ -468,15 +468,10 @@ end;
 { device-space stroke of a polyline (already transformed) }
 procedure StrokePath(Canvas: TTina4Canvas; const Pts: TTina4PointArray;
   Color: TTina4Color; Width: Single; Closed: Boolean);
-var i, n: Integer;
 begin
-  n := Length(Pts);
-  if n < 2 then Exit;
+  if Length(Pts) < 2 then Exit;
   if Width <= 0 then Width := 1;
-  for i := 0 to n - 2 do
-    Canvas.DrawLine(Pts[i].X, Pts[i].Y, Pts[i + 1].X, Pts[i + 1].Y, Width, Color);
-  if Closed then
-    Canvas.DrawLine(Pts[n - 1].X, Pts[n - 1].Y, Pts[0].X, Pts[0].Y, Width, Color);
+  Canvas.StrokePolyline(Pts, Width, Color, Closed);
 end;
 
 { append a user-space point, transformed by CTM, to a device contour }
@@ -878,8 +873,15 @@ begin
         until not MoreNums;
       'Z', 'z':
         begin
+          { Preserve the closing edge in the flattened contour. StrokePath
+            consumes a polyline, so moving only the parser cursor back to the
+            subpath start silently left stroked SVG paths open. }
+          AddPt(cur, M, startX, startY);
           cx := startX; cy := startY;
           NewSub;
+          { SVG commands following Z continue from the close point. Seed the
+            next contour so a following L/C/etc starts at that current point. }
+          AddPt(cur, M, cx, cy);
         end;
     end;
     if not (hadCubic) then begin lastCX := cx; lastCY := cy; end;
@@ -1087,7 +1089,9 @@ begin
   try
     GDefs.CaseSensitive := True;   // ids already lowercased on insert/lookup
     CollectGradients(Root);
-    st := DefaultState(ctm);
+    { The root <svg> is also a presentation-attribute source. In particular,
+      merge its color before children resolve stroke="currentColor". }
+    st := MergeState(Root, DefaultState(ctm));
     for c in Root.Children do PaintNode(Canvas, c, st);
   finally
     FreeAndNil(GDefs);

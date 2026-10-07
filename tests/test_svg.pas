@@ -14,13 +14,16 @@ type
   { records the calls the SVG painter makes }
   TRecCanvas = class(TTina4Canvas)
   public
-    FillCount, LineCount, TextCount: Integer;
-    LastFillColor: TTina4Color;
+    FillCount, LineCount, StrokeCount, TextCount: Integer;
+    LastFillColor, LastStrokeColor: TTina4Color;
     LastContours: array of TTina4PointArray;
+    LastStrokePoints: TTina4PointArray;
     LastText: string;
     procedure FillRect(X, Y, W, H: Single; Color: TTina4Color); override;
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); override;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); override;
+    procedure StrokePolyline(const Pts: TTina4PointArray; Width: Single;
+      Color: TTina4Color; Closed: Boolean); override;
     procedure FillPolygon(const Contours: array of TTina4PointArray;
       Color: TTina4Color; EvenOdd: Boolean = False); override;
     procedure DrawText(X, Y: Single; const Text: string; FontSize: Single;
@@ -38,7 +41,15 @@ procedure TRecCanvas.SetClip(X, Y, W, H: Single); begin end;
 procedure TRecCanvas.ClearClip; begin end;
 
 procedure TRecCanvas.DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color);
-begin Inc(LineCount); end;
+begin Inc(LineCount); LastStrokeColor := Color; end;
+
+procedure TRecCanvas.StrokePolyline(const Pts: TTina4PointArray; Width: Single;
+  Color: TTina4Color; Closed: Boolean);
+begin
+  Inc(StrokeCount);
+  LastStrokePoints := Copy(Pts);
+  inherited StrokePolyline(Pts, Width, Color, Closed);
+end;
 
 procedure TRecCanvas.FillPolygon(const Contours: array of TTina4PointArray;
   Color: TTina4Color; EvenOdd: Boolean);
@@ -183,7 +194,26 @@ begin
   Run('<svg viewBox="0 0 100 100"><line x1="0" y1="0" x2="100" y2="100" ' +
       'stroke="#000" stroke-width="2"/></svg>', C, 0, 0, 100, 100);
   Check(C.LineCount >= 1, 'stroke line drawn');
+  Check(C.StrokeCount >= 1, 'SVG stroke uses one connected polyline (joined path)');
   Check(C.FillCount = 0, 'line does not fill');
+  C.Free;
+
+  WriteLn('closed stroked path retains the final closing segment');
+  C := TRecCanvas.Create;
+  Run('<svg viewBox="0 0 100 100"><path d="M10 10 L90 10 L50 90 Z" ' +
+      'fill="none" stroke="#000" stroke-width="4"/></svg>', C, 0, 0, 100, 100);
+  Check(C.StrokeCount = 1, 'closed path emits a single stroke polyline');
+  Check((Length(C.LastStrokePoints) >= 4) and
+      Near(C.LastStrokePoints[High(C.LastStrokePoints)].X, C.LastStrokePoints[0].X) and
+      Near(C.LastStrokePoints[High(C.LastStrokePoints)].Y, C.LastStrokePoints[0].Y),
+      'Z appends the start point so the final path edge is rendered');
+  C.Free;
+
+  WriteLn('root color → currentColor stroke');
+  C := TRecCanvas.Create;
+  Run('<svg viewBox="0 0 100 100" color="#315c3a"><path d="M0 0 L100 100" ' +
+      'stroke="currentColor" stroke-width="4"/></svg>', C, 0, 0, 100, 100);
+  Check(C.LastStrokeColor = $FF315C3A, 'root svg color inherited by currentColor stroke');
   C.Free;
 
   WriteLn('text anchor middle');

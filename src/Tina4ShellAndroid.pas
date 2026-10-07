@@ -32,12 +32,13 @@ type
     // cached classes (global refs)
     clsCanvas, clsPaint, clsPath: jclass;
     // Paint.Style + Path.FillType enum values (global refs)
-    styleFill, styleStroke, fillWinding, fillEvenOdd: jobject;
+    styleFill, styleStroke, fillWinding, fillEvenOdd, strokeRoundJoin, strokeRoundCap: jobject;
     // Canvas methods
     mDrawRect, mDrawLine, mDrawText, mDrawPath, mDrawRoundRect,
     mSave, mRestore, mClipRect, mScale: jmethodID;
     // Paint methods
     mPaintInit, mSetColor, mSetStyle, mSetStrokeWidth, mSetAntiAlias,
+    mSetStrokeJoin, mSetStrokeCap,
     mSetTextSize, mMeasureText, mAscent, mDescent, mSetFakeBold,
     mSetSkewX, mSetUnderline, mSetStrike, mSetFillType: jmethodID;
     // Typeface / font-family
@@ -119,6 +120,8 @@ type
       const Colors: array of TTina4Color; const Positions: array of Single); override;
     procedure StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color); override;
     procedure DrawLine(X1, Y1, X2, Y2, Thickness: Single; Color: TTina4Color); override;
+    procedure StrokePolyline(const Pts: TTina4PointArray; Width: Single;
+      Color: TTina4Color; Closed: Boolean); override;
     procedure FillPolygon(const Contours: array of TTina4PointArray;
       Color: TTina4Color; EvenOdd: Boolean = False); override;
     procedure DrawText(X, Y: Single; const Text: string; FontSize: Single;
@@ -236,6 +239,8 @@ begin
   mSetColor := MID(clsPaint, 'setColor', '(I)V');
   mSetStyle := MID(clsPaint, 'setStyle', '(' + PAINT_STYLE_SIG + ')V');
   mSetStrokeWidth := MID(clsPaint, 'setStrokeWidth', '(F)V');
+  mSetStrokeJoin := MID(clsPaint, 'setStrokeJoin', '(Landroid/graphics/Paint$Join;)V');
+  mSetStrokeCap := MID(clsPaint, 'setStrokeCap', '(Landroid/graphics/Paint$Cap;)V');
   mSetAntiAlias := MID(clsPaint, 'setAntiAlias', '(Z)V');
   mSetTextSize := MID(clsPaint, 'setTextSize', '(F)V');
   mMeasureText := MID(clsPaint, 'measureText', '(Ljava/lang/String;)F');
@@ -274,6 +279,8 @@ begin
   // enum values
   styleFill := EnumVal('android/graphics/Paint$Style', 'FILL', PAINT_STYLE_SIG);
   styleStroke := EnumVal('android/graphics/Paint$Style', 'STROKE', PAINT_STYLE_SIG);
+  strokeRoundJoin := EnumVal('android/graphics/Paint$Join', 'ROUND', 'Landroid/graphics/Paint$Join;');
+  strokeRoundCap := EnumVal('android/graphics/Paint$Cap', 'ROUND', 'Landroid/graphics/Paint$Cap;');
   fillWinding := EnumVal('android/graphics/Path$FillType', 'WINDING', PATH_FILLTYPE_SIG);
   fillEvenOdd := EnumVal('android/graphics/Path$FillType', 'EVEN_ODD', PATH_FILLTYPE_SIG);
 
@@ -648,6 +655,31 @@ begin
   a[0].f := Thickness;   FEnv^.CallVoidMethodA(FEnv, FPaint, mSetStrokeWidth, @a[0]);
   a[0].f := X1; a[1].f := Y1; a[2].f := X2; a[3].f := Y2; a[4].l := FPaint;
   FEnv^.CallVoidMethodA(FEnv, FCanvas, mDrawLine, @a[0]);
+end;
+
+procedure TAndroidCanvas.StrokePolyline(const Pts: TTina4PointArray; Width: Single;
+  Color: TTina4Color; Closed: Boolean);
+var pathObj: jobject; a: array[0..1] of jvalue; i: Integer;
+begin
+  if Length(Pts) < 2 then Exit;
+  if Width <= 0 then Width := 1;
+  pathObj := FEnv^.NewObject(FEnv, clsPath, mPathInit);
+  a[0].f := Pts[0].X; a[1].f := Pts[0].Y;
+  FEnv^.CallVoidMethodA(FEnv, pathObj, mMoveTo, @a[0]);
+  for i := 1 to High(Pts) do
+  begin
+    a[0].f := Pts[i].X; a[1].f := Pts[i].Y;
+    FEnv^.CallVoidMethodA(FEnv, pathObj, mLineTo, @a[0]);
+  end;
+  if Closed then FEnv^.CallVoidMethodA(FEnv, pathObj, mClose, nil);
+  a[0].i := jint(Color); FEnv^.CallVoidMethodA(FEnv, FPaint, mSetColor, @a[0]);
+  a[0].l := styleStroke; FEnv^.CallVoidMethodA(FEnv, FPaint, mSetStyle, @a[0]);
+  a[0].f := Width; FEnv^.CallVoidMethodA(FEnv, FPaint, mSetStrokeWidth, @a[0]);
+  a[0].l := strokeRoundJoin; FEnv^.CallVoidMethodA(FEnv, FPaint, mSetStrokeJoin, @a[0]);
+  a[0].l := strokeRoundCap; FEnv^.CallVoidMethodA(FEnv, FPaint, mSetStrokeCap, @a[0]);
+  a[0].l := pathObj; a[1].l := FPaint;
+  FEnv^.CallVoidMethodA(FEnv, FCanvas, mDrawPath, @a[0]);
+  FEnv^.DeleteLocalRef(FEnv, pathObj);
 end;
 
 procedure TAndroidCanvas.FillPolygon(const Contours: array of TTina4PointArray;

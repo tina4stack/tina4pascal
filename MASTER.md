@@ -67,6 +67,7 @@ gets an **ADR**. Conventions and templates: [`plan/README.md`](plan/README.md).
 - [ios-device-tooling-maintenance](plan/ios-device-tooling-maintenance.md)
 - [mcp-surface-audit](plan/mcp-surface-audit.md)
 - [mobile-scroll-render-optimizations](plan/mobile-scroll-render-optimizations.md)
+- [svg-close-path-strokes](plan/svg-close-path-strokes.md) — preserve the closing edge in stroked SVG paths
 - [readme-mobile-emulators](plan/readme-mobile-emulators.md)
 
 ## Skills
