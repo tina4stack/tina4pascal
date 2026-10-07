@@ -120,6 +120,14 @@ begin
   try Result := DecodeStringBase64(t, False); except Result := ''; end;
 end;
 
+{$IFDEF WINDOWS}
+{ The system CSPRNG. hAlgorithm nil + USE_SYSTEM_PREFERRED_RNG = draw from the
+  OS entropy pool. Returns 0 (STATUS_SUCCESS) on success. }
+function BCryptGenRandom(hAlgorithm, pbBuffer: Pointer; cbBuffer, dwFlags: LongWord): LongInt;
+  stdcall; external 'bcrypt.dll' name 'BCryptGenRandom';
+const BCRYPT_USE_SYSTEM_PREFERRED_RNG = 2;
+{$ENDIF}
+
 function RandomBytes(n: Integer): RawByteString;
 {$IFNDEF WINDOWS}
 var f: file; got: Integer;
@@ -127,7 +135,13 @@ var f: file; got: Integer;
 var i: Integer;
 begin
   SetLength(Result, n);
-  {$IFNDEF WINDOWS}
+  if n <= 0 then Exit;
+  {$IFDEF WINDOWS}
+  { cryptographically-secure, non-repeating — NOT Randomize, which reseeds from
+    the clock and collides for calls in the same tick (PKCE verifiers must be
+    unique + unpredictable). }
+  if BCryptGenRandom(nil, @Result[1], LongWord(n), BCRYPT_USE_SYSTEM_PREFERRED_RNG) = 0 then Exit;
+  {$ELSE}
   AssignFile(f, '/dev/urandom');
   {$I-} Reset(f, 1); {$I+}
   if IOResult = 0 then
