@@ -419,13 +419,14 @@ end;
   before. So dynamic content is never served a stale frame. }
 const
   SCALE_CACHE_MAX = 16;                        // max distinct scaled bitmaps (slots)
-  SCALE_CACHE_BYTES = 64 * 1024 * 1024;        // total memory cap (this is a 32-bit build)
-  SCALE_MAX_AREA = 2200000;                    // per-entry pixel cap (~1920x1080); larger
-                                               // targets (e.g. a maximised 4K window) are
-                                               // NOT cached — holding several big owned
-                                               // GpBitmaps exhausts the 32-bit address
-                                               // space. Those fall back to a direct
-                                               // per-frame rescale, which is stable.
+  SCALE_CACHE_BYTES = 128 * 1024 * 1024;       // total memory budget (LRU-evicted). This is
+                                               // a 32-bit process (~2 GB address space), so
+                                               // keep it modest: 128 MB caches a full set of
+                                               // layers for a maximised window up to ~2560x1440
+                                               // (they then blit 1:1 each frame instead of
+                                               // being rescaled — parallax only moves offset).
+                                               // Beyond that (true 4K) the LRU keeps the hottest
+                                               // layers cached and rescales the rest per frame.
   PixelFormat32bppARGB = $26200A;
 type
   TScaledEntry = record
@@ -477,7 +478,7 @@ begin
     end;
 
   entryBytes := Int64(DW) * DH * 4;
-  if Int64(DW) * DH > SCALE_MAX_AREA then Exit;  // too large to hold — caller rescales directly
+  if entryBytes > SCALE_CACHE_BYTES then Exit;   // single frame bigger than the whole budget → rescale directly
 
   if GdipCreateBitmapFromScan0(BW, BH, BW * 4, PixelFormat32bppARGB, PByte(Buf), src) <> 0 then Exit;
   bmp := nil;
