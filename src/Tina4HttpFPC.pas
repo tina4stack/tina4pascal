@@ -17,13 +17,20 @@ procedure InstallFPCHttp;
 implementation
 
 uses
-  SysUtils, Classes, fphttpclient, opensslsockets, openssl, Tina4Http;
+  SysUtils, Classes, fphttpclient, opensslsockets, openssl, ssockets, sslsockets, Tina4Http;
 
 type
   { One request, one thread. Frees itself when done. }
   THttpThread = class(TThread)
   private
     FReq: TTina4HttpRequest;
+    { SECURITY: TFPHTTPClient does NOT verify the server certificate by default
+      (TSSLSocketHandler.VerifyPeerCert defaults False), so an MITM could present
+      any cert. Supply a handler with verification ON — the cert chain is checked
+      against the system CA store and SNI is sent (default), so a bad/self-signed/
+      wrong-host cert fails the handshake instead of being silently accepted. }
+    procedure GetVerifiedHandler(Sender: TObject; const UseSSL: Boolean;
+      out AHandler: TSocketHandler);
   protected
     procedure Execute; override;
   public
@@ -63,6 +70,21 @@ begin
   end;
 end;
 
+procedure THttpThread.GetVerifiedHandler(Sender: TObject; const UseSSL: Boolean;
+  out AHandler: TSocketHandler);
+var ssl: TSSLSocketHandler;
+begin
+  if UseSSL then
+  begin
+    ssl := TSSLSocketHandler.GetDefaultHandler;   // OpenSSL (opensslsockets)
+    ssl.VerifyPeerCert := True;                    // ← validate the server cert chain
+    ssl.SendHostAsSNI := True;                     // SNI → the right cert + host match
+    AHandler := ssl;
+  end
+  else
+    AHandler := TSocketHandler.Create;
+end;
+
 procedure THttpThread.Execute;
 var
   client: TFPHTTPClient;
@@ -76,6 +98,7 @@ begin
   respStream := TStringStream.Create('');
   try
     client.AllowRedirect := True;
+    client.OnGetSocketHandler := GetVerifiedHandler;   // verify TLS certs (see above)
     client.AddHeader('User-Agent', 'Tina4Pascal');
     ApplyHeaders(client, FReq.Headers);
     if (FReq.Body <> '') then
