@@ -147,6 +147,8 @@ function GdipCreateHICONFromBitmap(bitmap: Pointer; out hicon: HICON): Integer;
   stdcall; external 'gdiplus.dll';
 function GdipCreateBitmapFromScan0(w, h, stride, format: Integer; scan0: PByte;
   out bitmap: Pointer): Integer; stdcall; external 'gdiplus.dll';
+function GdipGetImageGraphicsContext(image: Pointer; out graphics: Pointer): Integer;
+  stdcall; external 'gdiplus.dll';
 function GdipSaveImageToFile(image: Pointer; filename: PWideChar;
   const clsid: TGUID; encoderParams: Pointer): Integer; stdcall; external 'gdiplus.dll';
 { vector shapes with anti-aliasing + true ARGB alpha }
@@ -403,29 +405,145 @@ begin
   Result := True;
 end;
 
+{ ---- scaled-blit cache ------------------------------------------------------
+  A photographic layer blitted at the same target size each frame (the parallax
+  hero: scale is fixed by the viewport, only the offset DX/DY moves) was being
+  rescaled from scratch on EVERY DrawRGBA call — the dominant cost on the GDI+
+  software path. Here we scale the source into an owned GpBitmap ONCE and keep it,
+  so later frames do a straight 1:1 blit at the new offset instead of a resample.
+
+  Correctness: entries are keyed by a cheap content hash of the source buffer (+
+  its size and the target size), not just the pointer. A static image hashes the
+  same every frame → cache hit. A buffer whose pixels change (video, a composited
+  layer, a reused allocation) hashes differently → miss → rebuild, exactly as
+  before. So dynamic content is never served a stale frame. }
+const
+  SCALE_CACHE_MAX = 16;              // distinct scaled bitmaps kept (LRU)
+  PixelFormat32bppARGB = $26200A;
+type
+  TScaledEntry = record
+    Hash: Cardinal;                 // content hash of the source buffer
+    SW, SH, DW, DH: Integer;        // source + target pixel sizes
+    Bmp: Pointer;                   // owned GpBitmap, already DW x DH
+    Used: Cardinal;                 // LRU tick
+  end;
+var
+  GScale: array[0..SCALE_CACHE_MAX - 1] of TScaledEntry;
+  GScaleN: Integer = 0;
+  GScaleTick: Cardinal = 0;
+
+{ Sparse FNV-1a over up to 64 pixels: enough to tell a static image from a
+  changed one at a fraction of the cost of a single rescaled frame. }
+function BufHash(Buf: Pointer; BW, BH: Integer): Cardinal;
+var n, stride, idx, i: Integer; h: Cardinal;
+begin
+  n := BW * BH; h := 2166136261;
+  stride := n div 64; if stride < 1 then stride := 1;
+  idx := 0; i := 0;
+  while (idx < n) and (i < 64) do
+  begin
+    h := (h xor PCardinal(PByte(Buf) + idx * 4)^) * 16777619;
+    Inc(idx, stride); Inc(i);
+  end;
+  Result := h xor Cardinal(BW) xor (Cardinal(BH) shl 16);
+end;
+
+{ Return a GpBitmap of exactly DWxDH holding Buf scaled once (bilinear). Cached;
+  nil only if GDI+ could not build it. The returned bitmap is owned by the cache
+  — callers must NOT dispose it. }
+function ScaledBitmap(Buf: Pointer; BW, BH, DW, DH: Integer): Pointer;
+var i, slot: Integer; hash: Cardinal; src, g2, bmp: Pointer;
+begin
+  Result := nil;
+  Inc(GScaleTick);
+  hash := BufHash(Buf, BW, BH);
+  for i := 0 to GScaleN - 1 do
+    if (GScale[i].Hash = hash) and (GScale[i].SW = BW) and (GScale[i].SH = BH)
+       and (GScale[i].DW = DW) and (GScale[i].DH = DH) then
+    begin
+      GScale[i].Used := GScaleTick;
+      Exit(GScale[i].Bmp);
+    end;
+
+  if GdipCreateBitmapFromScan0(BW, BH, BW * 4, PixelFormat32bppARGB, PByte(Buf), src) <> 0 then Exit;
+  bmp := nil;
+  if GdipCreateBitmapFromScan0(DW, DH, 0, PixelFormat32bppARGB, nil, bmp) = 0 then
+    if GdipGetImageGraphicsContext(bmp, g2) = 0 then
+    begin
+      GdipSetInterpolationMode(g2, 3);   // Bilinear — the ONE resample
+      GdipDrawImageRectRectI(g2, src, 0, 0, DW, DH, 0, 0, BW, BH, 2 {UnitPixel}, nil, nil, nil);
+      GdipDeleteGraphics(g2);
+      Result := bmp;
+    end
+    else begin GdipDisposeImage(bmp); bmp := nil; end;
+  GdipDisposeImage(src);
+  if Result = nil then Exit;
+
+  if GScaleN < SCALE_CACHE_MAX then begin slot := GScaleN; Inc(GScaleN); end
+  else
+  begin
+    slot := 0;
+    for i := 1 to SCALE_CACHE_MAX - 1 do
+      if GScale[i].Used < GScale[slot].Used then slot := i;
+    if GScale[slot].Bmp <> nil then GdipDisposeImage(GScale[slot].Bmp);
+  end;
+  GScale[slot].Hash := hash; GScale[slot].SW := BW; GScale[slot].SH := BH;
+  GScale[slot].DW := DW; GScale[slot].DH := DH;
+  GScale[slot].Bmp := Result; GScale[slot].Used := GScaleTick;
+end;
+
+procedure DisposeScaleCache;
+var i: Integer;
+begin
+  for i := 0 to GScaleN - 1 do
+    if GScale[i].Bmp <> nil then begin GdipDisposeImage(GScale[i].Bmp); GScale[i].Bmp := nil; end;
+  GScaleN := 0;
+end;
+
 { Blit a straight-alpha $AARRGGBB buffer through GDI+. PixelFormat32bppARGB
   stores B,G,R,A in memory — exactly a little-endian $AARRGGBB word — so the
-  buffer maps in with no per-pixel copy; GdipDrawImageRectRectI scales it. }
+  buffer maps in with no per-pixel copy. A 1:1 blit wraps + copies directly; a
+  scaled blit goes through the scale-once cache above. }
 procedure TWinCanvas.DrawRGBA(Buf: Pointer; BW, BH: Integer; DX, DY, DW, DH: Single);
-const PixelFormat32bppARGB = $26200A;
-var g, bmp: Pointer;
+var g, bmp, scaled: Pointer; rdw, rdh: Integer;
 begin
   if (Buf = nil) or (BW <= 0) or (BH <= 0) or (DW <= 0) or (DH <= 0) then Exit;
   EnsureGdiplus; if not GGdiplusOK then Exit;
   if GdipCreateFromHDC(DC, g) <> 0 then Exit;
-  bmp := nil;
-  if GdipCreateBitmapFromScan0(BW, BH, BW * 4, PixelFormat32bppARGB, PByte(Buf), bmp) = 0 then
+  rdw := Round(DW); rdh := Round(DH);
+
+  if (rdw = BW) and (rdh = BH) then
   begin
-    // Bilinear, not bicubic: for full-screen photographic layers rescaled every
-    // frame (e.g. parallax), HighQualityBicubic is the dominant per-frame cost on
-    // the software GDI+ path and bilinear is visually indistinguishable here.
-    if (Abs(DW - BW) < 0.5) and (Abs(DH - BH) < 0.5) then
-      GdipSetInterpolationMode(g, 5)  // NearestNeighbor — 1:1 blit, no resample
+    // exact 1:1 — wrap the buffer and copy with no resample (shadows, composites)
+    bmp := nil;
+    if GdipCreateBitmapFromScan0(BW, BH, BW * 4, PixelFormat32bppARGB, PByte(Buf), bmp) = 0 then
+    begin
+      GdipSetInterpolationMode(g, 5);  // NearestNeighbor
+      GdipDrawImageRectI(g, bmp, Round(DX), Round(DY), rdw, rdh);
+      GdipDisposeImage(bmp);
+    end;
+  end
+  else
+  begin
+    // scaled — reuse the pre-scaled bitmap and straight-blit at the new offset
+    scaled := ScaledBitmap(Buf, BW, BH, rdw, rdh);
+    if scaled <> nil then
+    begin
+      GdipSetInterpolationMode(g, 5);  // cached bitmap is already rdw x rdh
+      GdipDrawImageRectI(g, scaled, Round(DX), Round(DY), rdw, rdh);
+    end
     else
-      GdipSetInterpolationMode(g, 3);  // Bilinear
-    GdipDrawImageRectRectI(g, bmp, Round(DX), Round(DY), Round(DW), Round(DH),
-      0, 0, BW, BH, 2 {UnitPixel}, nil, nil, nil);
-    GdipDisposeImage(bmp);
+    begin
+      // cache build failed — fall back to a direct one-off bilinear rescale
+      bmp := nil;
+      if GdipCreateBitmapFromScan0(BW, BH, BW * 4, PixelFormat32bppARGB, PByte(Buf), bmp) = 0 then
+      begin
+        GdipSetInterpolationMode(g, 3);  // Bilinear
+        GdipDrawImageRectRectI(g, bmp, Round(DX), Round(DY), rdw, rdh,
+          0, 0, BW, BH, 2 {UnitPixel}, nil, nil, nil);
+        GdipDisposeImage(bmp);
+      end;
+    end;
   end;
   GdipDeleteGraphics(g);
 end;
@@ -1032,5 +1150,8 @@ begin
     FreeMem(buf);
   end;
 end;
+
+finalization
+  DisposeScaleCache;   // free the owned scaled GpBitmaps before GDI+ goes away
 
 end.
