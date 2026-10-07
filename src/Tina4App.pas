@@ -232,25 +232,51 @@ var
 
 procedure WRepaint; begin InvalidateRect(GHwnd, nil, False); end;
 
-procedure WPaint(dc: HDC);
-var mem: HDC; dib, oldb: HGDIOBJ; r: Windows.RECT; white: HBRUSH; bmi: BITMAPINFO; bits: PByte; i: Integer;
+{ The back-buffer (memory DC + 32bpp top-down DIB) is kept across frames and only
+  rebuilt when the window size changes — recreating a full-screen DIB every frame
+  is a large alloc/free + GDI churn that dominates paint at high resolution. }
+var
+  GBbDC: HDC = 0; GBbDib: HBITMAP = 0; GBbOld: HGDIOBJ = 0;
+  GBbBits: PByte = nil; GBbW: Integer = 0; GBbH: Integer = 0;
+
+procedure EnsureBackBuffer(dc: HDC);
+var bmi: BITMAPINFO;
 begin
-  mem := CreateCompatibleDC(dc);
+  if (GBbDC <> 0) and (GBbW = GW) and (GBbH = GH) then Exit;   // reuse
+  if GBbDC <> 0 then
+  begin
+    SelectObject(GBbDC, GBbOld); DeleteObject(GBbDib); DeleteDC(GBbDC);
+    GBbDC := 0; GBbDib := 0; GBbBits := nil;
+  end;
+  GBbDC := CreateCompatibleDC(dc);
   FillChar(bmi, SizeOf(bmi), 0);
   bmi.bmiHeader.biSize := SizeOf(BITMAPINFOHEADER);
   bmi.bmiHeader.biWidth := GW; bmi.bmiHeader.biHeight := -GH;
   bmi.bmiHeader.biPlanes := 1; bmi.bmiHeader.biBitCount := 32; bmi.bmiHeader.biCompression := BI_RGB;
-  bits := nil; dib := CreateDIBSection(0, bmi, DIB_RGB_COLORS, bits, 0, 0);
-  oldb := SelectObject(mem, dib);
-  r.Left := 0; r.Top := 0; r.Right := GW; r.Bottom := GH;
-  white := CreateSolidBrush($00FFFFFF); Windows.FillRect(mem, r, white); DeleteObject(white);
-  GdiFlush;
-  if bits <> nil then for i := 0 to GW * GH - 1 do bits[i*4+3] := 255;
-  GCanvas.BeginFrame(mem, bits, GW, GH);
+  GBbBits := nil; GBbDib := CreateDIBSection(0, bmi, DIB_RGB_COLORS, GBbBits, 0, 0);
+  GBbOld := SelectObject(GBbDC, GBbDib);
+  GBbW := GW; GBbH := GH;
+end;
+
+procedure FreeBackBuffer;
+begin
+  if GBbDC = 0 then Exit;
+  SelectObject(GBbDC, GBbOld); DeleteObject(GBbDib); DeleteDC(GBbDC);
+  GBbDC := 0; GBbDib := 0; GBbBits := nil; GBbW := 0; GBbH := 0;
+end;
+
+procedure WPaint(dc: HDC);
+begin
+  EnsureBackBuffer(dc);
+  if (GBbDib = 0) or (GBbBits = nil) then Exit;
+  // One memset clears RGB and alpha to opaque white in a single pass — replaces a
+  // per-frame GDI FillRect plus a GW*GH per-pixel alpha loop. TinaFrame repaints
+  // the whole viewport over this each frame.
+  FillChar(GBbBits^, GW * GH * 4, $FF);
+  GCanvas.BeginFrame(GBbDC, GBbBits, GW, GH);
   TinaFrame(GW, GH, 1.0);
   GdiFlush;
-  BitBlt(dc, 0, 0, GW, GH, mem, 0, 0, SRCCOPY);
-  SelectObject(mem, oldb); DeleteObject(dib); DeleteDC(mem);
+  BitBlt(dc, 0, 0, GW, GH, GBbDC, 0, 0, SRCCOPY);
 end;
 
 function WWndProc(hwnd: HWND; msg: UINT; wp: WPARAM; lp: LPARAM): LRESULT; stdcall;
@@ -271,7 +297,7 @@ begin
     WM_MOUSEWHEEL: begin dz := SmallInt((wp shr 16) and $FFFF); TinaScrollBy(GW div 2, GH div 2, 0, -dz); WRepaint; end;
     WM_CHAR: begin TinaKey(Integer(wp)); WRepaint; end;
     WM_TIMER: if TinaTick = 1 then WRepaint;
-    WM_DESTROY: PostQuitMessage(0);
+    WM_DESTROY: begin FreeBackBuffer; PostQuitMessage(0); end;
   else
     Result := DefWindowProcW(hwnd, msg, wp, lp);
   end;
