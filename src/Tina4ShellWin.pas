@@ -418,18 +418,26 @@ end;
   layer, a reused allocation) hashes differently → miss → rebuild, exactly as
   before. So dynamic content is never served a stale frame. }
 const
-  SCALE_CACHE_MAX = 16;              // distinct scaled bitmaps kept (LRU)
+  SCALE_CACHE_MAX = 16;                        // max distinct scaled bitmaps (slots)
+  SCALE_CACHE_BYTES = 64 * 1024 * 1024;        // total memory cap (this is a 32-bit build)
+  SCALE_MAX_AREA = 2200000;                    // per-entry pixel cap (~1920x1080); larger
+                                               // targets (e.g. a maximised 4K window) are
+                                               // NOT cached — holding several big owned
+                                               // GpBitmaps exhausts the 32-bit address
+                                               // space. Those fall back to a direct
+                                               // per-frame rescale, which is stable.
   PixelFormat32bppARGB = $26200A;
 type
   TScaledEntry = record
     Hash: Cardinal;                 // content hash of the source buffer
     SW, SH, DW, DH: Integer;        // source + target pixel sizes
-    Bmp: Pointer;                   // owned GpBitmap, already DW x DH
+    Bytes: Int64;                   // DW*DH*4 — this entry's footprint
+    Bmp: Pointer;                   // owned GpBitmap, already DW x DH (nil = free slot)
     Used: Cardinal;                 // LRU tick
   end;
 var
   GScale: array[0..SCALE_CACHE_MAX - 1] of TScaledEntry;
-  GScaleN: Integer = 0;
+  GScaleBytes: Int64 = 0;           // total bytes currently held
   GScaleTick: Cardinal = 0;
 
 { Sparse FNV-1a over up to 64 pixels: enough to tell a static image from a
@@ -448,29 +456,38 @@ begin
   Result := h xor Cardinal(BW) xor (Cardinal(BH) shl 16);
 end;
 
-{ Return a GpBitmap of exactly DWxDH holding Buf scaled once (bilinear). Cached;
-  nil only if GDI+ could not build it. The returned bitmap is owned by the cache
-  — callers must NOT dispose it. }
+{ Return a GpBitmap of exactly DWxDH holding Buf scaled once (HighQualityBicubic).
+  Cached under a hard memory cap; returns nil when it won't cache (too large, or
+  GDI+ could not build it), and the caller then does a one-off direct rescale —
+  so a maximised window can't blow out the address space. The returned bitmap is
+  owned by the cache; callers must NOT dispose it. }
 function ScaledBitmap(Buf: Pointer; BW, BH, DW, DH: Integer): Pointer;
-var i, slot: Integer; hash: Cardinal; src, g2, bmp: Pointer;
+var i, slot, lru: Integer; hash: Cardinal; src, g2, bmp: Pointer; entryBytes: Int64;
 begin
   Result := nil;
   Inc(GScaleTick);
   hash := BufHash(Buf, BW, BH);
-  for i := 0 to GScaleN - 1 do
-    if (GScale[i].Hash = hash) and (GScale[i].SW = BW) and (GScale[i].SH = BH)
+  for i := 0 to SCALE_CACHE_MAX - 1 do
+    if (GScale[i].Bmp <> nil) and (GScale[i].Hash = hash)
+       and (GScale[i].SW = BW) and (GScale[i].SH = BH)
        and (GScale[i].DW = DW) and (GScale[i].DH = DH) then
     begin
       GScale[i].Used := GScaleTick;
       Exit(GScale[i].Bmp);
     end;
 
+  entryBytes := Int64(DW) * DH * 4;
+  if Int64(DW) * DH > SCALE_MAX_AREA then Exit;  // too large to hold — caller rescales directly
+
   if GdipCreateBitmapFromScan0(BW, BH, BW * 4, PixelFormat32bppARGB, PByte(Buf), src) <> 0 then Exit;
   bmp := nil;
   if GdipCreateBitmapFromScan0(DW, DH, 0, PixelFormat32bppARGB, nil, bmp) = 0 then
     if GdipGetImageGraphicsContext(bmp, g2) = 0 then
     begin
-      GdipSetInterpolationMode(g2, 3);   // Bilinear — the ONE resample
+      // This resample happens ONCE per (image,size) and is then reused every
+      // frame, so spend on quality: HighQualityBicubic keeps the layers as crisp
+      // as the original images (Bilinear here softened them on upscale).
+      GdipSetInterpolationMode(g2, 7);   // HighQualityBicubic — the ONE resample
       GdipDrawImageRectRectI(g2, src, 0, 0, DW, DH, 0, 0, BW, BH, 2 {UnitPixel}, nil, nil, nil);
       GdipDeleteGraphics(g2);
       Result := bmp;
@@ -479,25 +496,36 @@ begin
   GdipDisposeImage(src);
   if Result = nil then Exit;
 
-  if GScaleN < SCALE_CACHE_MAX then begin slot := GScaleN; Inc(GScaleN); end
-  else
+  // Make room: evict least-recently-used entries until this one fits (both the
+  // byte budget and a free slot). Keeps old windowed sizes from piling up when
+  // the window is resized or maximised.
+  slot := -1;
+  for i := 0 to SCALE_CACHE_MAX - 1 do
+    if GScale[i].Bmp = nil then begin slot := i; Break; end;
+  while (slot < 0) or (GScaleBytes + entryBytes > SCALE_CACHE_BYTES) do
   begin
-    slot := 0;
-    for i := 1 to SCALE_CACHE_MAX - 1 do
-      if GScale[i].Used < GScale[slot].Used then slot := i;
-    if GScale[slot].Bmp <> nil then GdipDisposeImage(GScale[slot].Bmp);
+    lru := -1;
+    for i := 0 to SCALE_CACHE_MAX - 1 do
+      if (GScale[i].Bmp <> nil) and ((lru < 0) or (GScale[i].Used < GScale[lru].Used)) then lru := i;
+    if lru < 0 then Break;   // cache empty — nothing left to evict
+    GdipDisposeImage(GScale[lru].Bmp); GScale[lru].Bmp := nil;
+    Dec(GScaleBytes, GScale[lru].Bytes);
+    if slot < 0 then slot := lru;
   end;
+  if slot < 0 then slot := 0;   // should not happen; keep the store well-defined
+
   GScale[slot].Hash := hash; GScale[slot].SW := BW; GScale[slot].SH := BH;
-  GScale[slot].DW := DW; GScale[slot].DH := DH;
+  GScale[slot].DW := DW; GScale[slot].DH := DH; GScale[slot].Bytes := entryBytes;
   GScale[slot].Bmp := Result; GScale[slot].Used := GScaleTick;
+  Inc(GScaleBytes, entryBytes);
 end;
 
 procedure DisposeScaleCache;
 var i: Integer;
 begin
-  for i := 0 to GScaleN - 1 do
+  for i := 0 to SCALE_CACHE_MAX - 1 do
     if GScale[i].Bmp <> nil then begin GdipDisposeImage(GScale[i].Bmp); GScale[i].Bmp := nil; end;
-  GScaleN := 0;
+  GScaleBytes := 0;
 end;
 
 { Blit a straight-alpha $AARRGGBB buffer through GDI+. PixelFormat32bppARGB
@@ -534,11 +562,13 @@ begin
     end
     else
     begin
-      // cache build failed — fall back to a direct one-off bilinear rescale
+      // Not cached (too large to hold, or GDI+ could not build the cache entry):
+      // rescale directly this frame, transiently — no persistent big bitmap, so
+      // a maximised window stays stable. HighQualityBicubic keeps it crisp.
       bmp := nil;
       if GdipCreateBitmapFromScan0(BW, BH, BW * 4, PixelFormat32bppARGB, PByte(Buf), bmp) = 0 then
       begin
-        GdipSetInterpolationMode(g, 3);  // Bilinear
+        GdipSetInterpolationMode(g, 7);  // HighQualityBicubic
         GdipDrawImageRectRectI(g, bmp, Round(DX), Round(DY), rdw, rdh,
           0, 0, BW, BH, 2 {UnitPixel}, nil, nil, nil);
         GdipDisposeImage(bmp);
