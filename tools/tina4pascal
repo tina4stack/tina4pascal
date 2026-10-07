@@ -1300,7 +1300,7 @@ cmd_test() {
   need_fpc
   fail=0
   clean_src_units   # never let a stray src/*.ppu shadow an engine edit
-  for t in dom keyframe_anim sparkstress highlight codearea codefold flexrebuild includes qr svg picture services http docs frond pseudo media webp pdf scanner barcode crypto auth rbacui authflow secrets ssoflow share_items location; do
+  for t in dom keyframe_anim sparkstress resizedom sparkpaint highlight codearea codefold flexrebuild includes qr svg picture services http docs frond pseudo media webp pdf scanner barcode crypto auth rbacui authflow secrets ssoflow share_items location; do
     [ -f "$ROOT/tests/test_$t.pas" ] || continue
     o="$BUILD/test/$t"; mkdir -p "$o"
     "$FPC" -Mdelphi -Fu"$SRC" -FE"$o" -FU"$o" "$ROOT/tests/test_$t.pas" >/dev/null 2>&1 \

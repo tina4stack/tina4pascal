@@ -1975,10 +1975,12 @@ begin
     background (canvas-background propagation) rather than a fixed colour. }
   if GHtml <> '' then
   begin
-    if GDocDirty or (Abs(GLayoutW - cssW) > 0.5) then
+    if GDocDirty then
       ParseDoc(cssW)
-    else if GLayoutDirty then
-      LayoutDoc(cssW);
+    else if GLayoutDirty or (Abs(GLayoutW - cssW) > 0.5) then
+      LayoutDoc(cssW);   // width change RELAYOUTS (keeps the DOM) — re-parsing here
+                         // frees nodes an app may still reference (e.g. runtime-
+                         // added children), and loses them across a resize.
   end;
   GCanvas.FillRect(0, 0, cssW, cssH, DocCanvasBg);
   if GHtml = '' then Exit;
@@ -2005,8 +2007,8 @@ begin
   if Density > 0 then GDensity := Density;
   cssW := WPx / GDensity;
   if GHtml = '' then Exit;
-  if GDocDirty or (Abs(GLayoutW - cssW) > 0.5) then ParseDoc(cssW)
-  else if GLayoutDirty then LayoutDoc(cssW);
+  if GDocDirty then ParseDoc(cssW)
+  else if GLayoutDirty or (Abs(GLayoutW - cssW) > 0.5) then LayoutDoc(cssW);
   if GRoot <> nil then Result := GRoot.H;
 end;
 
