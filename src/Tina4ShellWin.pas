@@ -923,21 +923,27 @@ begin
   if FClipSaved then begin RestoreDC(DC, -1); FClipSaved := False; end;
 end;
 
-{ CSS clip-path: intersect a polygon (device coords) into the current clip.
-  Undone by the surrounding SaveState/RestoreState, matching the Cocoa backend.
-  The GDI region is in device space, so it ignores any active world transform —
-  fine for a plain clip-path (the transform is identity); a clip-path combined
-  with rotate/scale is a known limitation. }
+{ CSS clip-path: intersect a polygon into the current clip. Undone by the
+  surrounding SaveState/RestoreState, matching the Cocoa backend. A GDI clip
+  region is in DEVICE space and ignores the active world transform, but the
+  element's fill IS drawn through it — so we map the polygon through the current
+  world transform here. That makes clip-path track transform:scale()/rotate()
+  (e.g. the hero's sparkle stars, which animate from scale(.2) to scale(1)). }
 procedure TWinCanvas.ClipPolygon(const Pts: TTina4PointArray);
-var rgn: HRGN; i, n: Integer; gp: array of TPoint;
+var rgn: HRGN; i, n: Integer; gp: array of TPoint; xf: XFORM;
 begin
   n := Length(Pts);
   if n < 3 then Exit;
+  if not GetWorldTransform(DC, xf) then
+  begin
+    xf.eM11 := 1; xf.eM12 := 0; xf.eM21 := 0; xf.eM22 := 1; xf.eDx := 0; xf.eDy := 0;
+  end;
   SetLength(gp, n);
   for i := 0 to n - 1 do
   begin
-    gp[i].X := Round(Pts[i].X);
-    gp[i].Y := Round(Pts[i].Y);
+    // GDI XFORM: x' = x*eM11 + y*eM21 + eDx ; y' = x*eM12 + y*eM22 + eDy
+    gp[i].X := Round(Pts[i].X * xf.eM11 + Pts[i].Y * xf.eM21 + xf.eDx);
+    gp[i].Y := Round(Pts[i].X * xf.eM12 + Pts[i].Y * xf.eM22 + xf.eDy);
   end;
   rgn := CreatePolygonRgn(gp[0], n, WINDING);
   if rgn <> 0 then
