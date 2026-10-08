@@ -416,7 +416,13 @@ begin
   bmp := nil;
   if GdipCreateBitmapFromScan0(BW, BH, BW * 4, PixelFormat32bppARGB, PByte(Buf), bmp) = 0 then
   begin
-    GdipSetInterpolationMode(g, 7);   // HighQualityBicubic
+    // Bilinear, not bicubic: for full-screen photographic layers rescaled every
+    // frame (e.g. parallax), HighQualityBicubic is the dominant per-frame cost on
+    // the software GDI+ path and bilinear is visually indistinguishable here.
+    if (Abs(DW - BW) < 0.5) and (Abs(DH - BH) < 0.5) then
+      GdipSetInterpolationMode(g, 5)  // NearestNeighbor — 1:1 blit, no resample
+    else
+      GdipSetInterpolationMode(g, 3);  // Bilinear
     GdipDrawImageRectRectI(g, bmp, Round(DX), Round(DY), Round(DW), Round(DH),
       0, 0, BW, BH, 2 {UnitPixel}, nil, nil, nil);
     GdipDisposeImage(bmp);
