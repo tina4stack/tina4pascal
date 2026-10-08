@@ -2685,7 +2685,7 @@ begin
   Result.TransformTranslateXPct := 0;
   Result.TransformTranslateYPct := 0;
   Result.TransformRotate := 0;
-  Result.AnimName := ''; Result.AnimDuration := 0; Result.AnimDelay := 0; Result.AnimIterCount := -1; Result.AnimTiming := 'ease'; Result.AnimDirection := 'normal'; Result.TransitionDuration := 0; Result.TransitionDelay := 0; Result.TransitionTiming := 'ease'; Result.TransitionProp := 'all';
+  Result.AnimName := ''; Result.AnimDuration := 0; Result.AnimDelay := 0; Result.AnimIterCount := 1; Result.AnimTiming := 'ease'; Result.AnimDirection := 'normal'; Result.TransitionDuration := 0; Result.TransitionDelay := 0; Result.TransitionTiming := 'ease'; Result.TransitionProp := 'all';
 
   Result.FontFamily := 'Segoe UI';
   Result.FontSize := 14;
@@ -3267,7 +3267,7 @@ begin
   Result.TransformTranslateXPct := 0;
   Result.TransformTranslateYPct := 0;
   Result.TransformRotate := 0;
-  Result.AnimName := ''; Result.AnimDuration := 0; Result.AnimDelay := 0; Result.AnimIterCount := -1; Result.AnimTiming := 'ease'; Result.AnimDirection := 'normal'; Result.TransitionDuration := 0; Result.TransitionDelay := 0; Result.TransitionTiming := 'ease'; Result.TransitionProp := 'all';
+  Result.AnimName := ''; Result.AnimDuration := 0; Result.AnimDelay := 0; Result.AnimIterCount := 1; Result.AnimTiming := 'ease'; Result.AnimDirection := 'normal'; Result.TransitionDuration := 0; Result.TransitionDelay := 0; Result.TransitionTiming := 'ease'; Result.TransitionProp := 'all';
 
   // Inherit from parent
   Result.FontFamily := ParentStyle.FontFamily;
@@ -4771,6 +4771,9 @@ begin
               or fLp.StartsWith('steps') then Style.AnimTiming := fLp
       else if (fLp = 'normal') or (fLp = 'reverse') or (fLp = 'alternate')
               or (fLp = 'alternate-reverse') then Style.AnimDirection := fLp
+      else if (fLp = 'forwards') or (fLp = 'backwards') or (fLp = 'both')
+              or (fLp = 'running') or (fLp = 'paused') then
+        Continue  // animation-fill-mode / play-state: recognised so it isn't taken as the name
       else if fLp = 'none' then Style.AnimName := ''
       else if StrToFloatDef(fLp, -9e9) > -9e9 then Style.AnimIterCount := StrToFloatDef(fLp, 1)
       else Style.AnimName := fLp;
