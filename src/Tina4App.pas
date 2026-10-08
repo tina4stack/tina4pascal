@@ -233,16 +233,37 @@ var
 procedure WRepaint; begin InvalidateRect(GHwnd, nil, False); end;
 
 { The back-buffer (memory DC + 32bpp top-down DIB) is kept across frames and only
-  rebuilt when the window size changes — recreating a full-screen DIB every frame
-  is a large alloc/free + GDI churn that dominates paint at high resolution. }
+  rebuilt when its size changes — recreating a full-screen DIB every frame is a
+  large alloc/free + GDI churn that dominates paint at high resolution. GBbW/GBbH
+  are the RENDER (back-buffer) dimensions, which may be smaller than the window. }
+const
+  { Software compositing is pixel-bound, so a large window is rendered at a reduced
+    resolution and StretchBlt'd up — keeps a maximised 4K window smooth. Windows up
+    to this physical width render 1:1 (crisp); wider ones are scaled. }
+  RENDER_MAX_W = 2560;
 var
   GBbDC: HDC = 0; GBbDib: HBITMAP = 0; GBbOld: HGDIOBJ = 0;
   GBbBits: PByte = nil; GBbW: Integer = 0; GBbH: Integer = 0;
 
-procedure EnsureBackBuffer(dc: HDC);
+{ Physical render size for the current window, and the density that keeps the CSS
+  viewport at the full window size (so layout is unchanged — only rasterisation
+  resolution drops). }
+procedure RenderDims(out rw, rh: Integer; out dens: Single);
+begin
+  if (GW > RENDER_MAX_W) and (GW > 0) then
+  begin
+    rw := RENDER_MAX_W;
+    rh := Round(Int64(GH) * RENDER_MAX_W div GW);
+    if rh < 1 then rh := 1;
+    dens := rw / GW;
+  end
+  else begin rw := GW; rh := GH; dens := 1.0; end;
+end;
+
+procedure EnsureBackBuffer(dc: HDC; rw, rh: Integer);
 var bmi: BITMAPINFO;
 begin
-  if (GBbDC <> 0) and (GBbW = GW) and (GBbH = GH) then Exit;   // reuse
+  if (GBbDC <> 0) and (GBbW = rw) and (GBbH = rh) then Exit;   // reuse
   if GBbDC <> 0 then
   begin
     SelectObject(GBbDC, GBbOld); DeleteObject(GBbDib); DeleteDC(GBbDC);
@@ -251,11 +272,11 @@ begin
   GBbDC := CreateCompatibleDC(dc);
   FillChar(bmi, SizeOf(bmi), 0);
   bmi.bmiHeader.biSize := SizeOf(BITMAPINFOHEADER);
-  bmi.bmiHeader.biWidth := GW; bmi.bmiHeader.biHeight := -GH;
+  bmi.bmiHeader.biWidth := rw; bmi.bmiHeader.biHeight := -rh;
   bmi.bmiHeader.biPlanes := 1; bmi.bmiHeader.biBitCount := 32; bmi.bmiHeader.biCompression := BI_RGB;
   GBbBits := nil; GBbDib := CreateDIBSection(0, bmi, DIB_RGB_COLORS, GBbBits, 0, 0);
   GBbOld := SelectObject(GBbDC, GBbDib);
-  GBbW := GW; GBbH := GH;
+  GBbW := rw; GBbH := rh;
 end;
 
 procedure FreeBackBuffer;
@@ -266,17 +287,24 @@ begin
 end;
 
 procedure WPaint(dc: HDC);
+var rw, rh: Integer; dens: Single;
 begin
-  EnsureBackBuffer(dc);
+  RenderDims(rw, rh, dens);
+  EnsureBackBuffer(dc, rw, rh);
   if (GBbDib = 0) or (GBbBits = nil) then Exit;
-  // One memset clears RGB and alpha to opaque white in a single pass — replaces a
-  // per-frame GDI FillRect plus a GW*GH per-pixel alpha loop. TinaFrame repaints
-  // the whole viewport over this each frame.
-  FillChar(GBbBits^, GW * GH * 4, $FF);
-  GCanvas.BeginFrame(GBbDC, GBbBits, GW, GH);
-  TinaFrame(GW, GH, 1.0);
+  // One memset clears RGB and alpha to opaque white in a single pass. TinaFrame
+  // repaints the whole viewport over this each frame.
+  FillChar(GBbBits^, rw * rh * 4, $FF);
+  GCanvas.BeginFrame(GBbDC, GBbBits, rw, rh);
+  TinaFrame(rw, rh, dens);     // full CSS viewport (GWxGH css px), rasterised at rw x rh
   GdiFlush;
-  BitBlt(dc, 0, 0, GW, GH, GBbDC, 0, 0, SRCCOPY);
+  if (rw = GW) and (rh = GH) then
+    BitBlt(dc, 0, 0, GW, GH, GBbDC, 0, 0, SRCCOPY)
+  else
+  begin
+    SetStretchBltMode(dc, HALFTONE); SetBrushOrgEx(dc, 0, 0, nil);
+    StretchBlt(dc, 0, 0, GW, GH, GBbDC, 0, 0, rw, rh, SRCCOPY);   // hardware upscale
+  end;
 end;
 
 function WWndProc(hwnd: HWND; msg: UINT; wp: WPARAM; lp: LPARAM): LRESULT; stdcall;
