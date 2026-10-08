@@ -31,7 +31,7 @@ implementation
 uses
   SysUtils, Classes, Tina4CanvasPdf,
 {$IFDEF WINDOWS}
-  Windows, Tina4RenderBackend, Tina4ShellWin, Tina4Interact;
+  Windows, Tina4RenderBackend, Tina4ShellWin, Tina4ShellWinD2D, Tina4Interact;
 {$ENDIF}
 {$IFDEF LINUX}
   ctypes, Tina4RenderBackend, Tina4ShellLinux, Tina4Interact;
@@ -225,12 +225,18 @@ end;
 { ---- Windows / Win32 + GDI ---- }
 var
   GCanvas: TWinCanvas;
+  GD2D: TD2DCanvas = nil;      // GPU Direct2D canvas (nil => GDI+ path)
+  GUseD2D: Boolean = False;    // set in RunApp once the D2D target is live
+  GShowFrames: Boolean = False; // TINA4_FRAMES=1: show a repaint counter in the title
+  GFrameCount: Int64 = 0;
+  GAppTitle: UnicodeString = '';
   GHwnd: HWND;
   GW: Integer = 1024;
   GH: Integer = 768;
   GMouseDown: Boolean = False;
 
 procedure WRepaint; begin InvalidateRect(GHwnd, nil, False); end;
+
 
 { The back-buffer (memory DC + 32bpp top-down DIB) is kept across frames and only
   rebuilt when its size changes — recreating a full-screen DIB every frame is a
@@ -289,6 +295,24 @@ end;
 procedure WPaint(dc: HDC);
 var rw, rh: Integer; dens: Single;
 begin
+  // GPU path: Direct2D renders the full viewport and presents straight to the
+  // HWND — no reduced-resolution back-buffer, no StretchBlt. On device-lost the
+  // target is rebuilt and the frame re-requested.
+  if GUseD2D and (GD2D <> nil) then
+  begin
+    GD2D.BeginFrame;
+    TinaFrame(GW, GH, 1.0);
+    if not GD2D.EndFrame then begin GD2D.Recreate; WRepaint; end;
+    Inc(GFrameCount);
+    // Diagnostic (TINA4_FRAMES=1): the title counter rises on every repaint, so
+    // you can confirm the window is re-rendering on hover (parallax should track).
+    if GShowFrames then
+      SetWindowTextW(GHwnd, PWideChar(GAppTitle + '  [frames ' +
+        UnicodeString(IntToStr(GFrameCount)) + '  win ' + UnicodeString(IntToStr(GW)) +
+        'x' + UnicodeString(IntToStr(GH)) + '  rt ' + UnicodeString(IntToStr(GD2D.RtW)) +
+        'x' + UnicodeString(IntToStr(GD2D.RtH)) + ']'));
+    Exit;
+  end;
   RenderDims(rw, rh, dens);
   EnsureBackBuffer(dc, rw, rh);
   if (GBbDib = 0) or (GBbBits = nil) then Exit;
@@ -307,6 +331,7 @@ begin
   end;
 end;
 
+
 function WWndProc(hwnd: HWND; msg: UINT; wp: WPARAM; lp: LPARAM): LRESULT; stdcall;
 var ps: PAINTSTRUCT; dc: HDC; x, y, dz: Integer;
 begin
@@ -314,7 +339,11 @@ begin
   case msg of
     WM_PAINT: begin dc := BeginPaint(hwnd, ps); WPaint(dc); EndPaint(hwnd, ps); end;
     WM_ERASEBKGND: Result := 1;
-    WM_SIZE: begin GW := SmallInt(lp and $FFFF); GH := SmallInt((lp shr 16) and $FFFF); WRepaint; end;
+    WM_SIZE: begin GW := SmallInt(lp and $FFFF); GH := SmallInt((lp shr 16) and $FFFF);
+      // wp=SIZE_MINIMIZED (1) gives a 0-size client — skip the rebuild then.
+      if GUseD2D and (GD2D <> nil) and (wp <> SIZE_MINIMIZED) and (GW > 0) and (GH > 0) then
+        GD2D.Recreate(GW, GH);
+      WRepaint; end;
     WM_LBUTTONDOWN: begin GMouseDown := True; SetCapture(hwnd);
       x := SmallInt(lp and $FFFF); y := SmallInt((lp shr 16) and $FFFF); TinaTouch(0, x, y); WRepaint; end;
     WM_LBUTTONUP: begin GMouseDown := False; ReleaseCapture;
@@ -325,7 +354,7 @@ begin
     WM_MOUSEWHEEL: begin dz := SmallInt((wp shr 16) and $FFFF); TinaScrollBy(GW div 2, GH div 2, 0, -dz); WRepaint; end;
     WM_CHAR: begin TinaKey(Integer(wp)); WRepaint; end;
     WM_TIMER: if TinaTick = 1 then WRepaint;
-    WM_DESTROY: begin FreeBackBuffer; PostQuitMessage(0); end;
+    WM_DESTROY: begin FreeBackBuffer; if GD2D <> nil then begin GD2D.Free; GD2D := nil; end; PostQuitMessage(0); end;
   else
     Result := DefWindowProcW(hwnd, msg, wp, lp);
   end;
@@ -409,8 +438,22 @@ begin
     SendMessageW(GHwnd, WM_SETICON, ICON_BIG, LPARAM(ico));
     SendMessageW(GHwnd, WM_SETICON, ICON_SMALL, LPARAM(ico));
   end;
-  GCanvas := TWinCanvas.Create;
-  TinaInit(GCanvas);
+  // Renderer: GPU Direct2D by default (TINA4_D2D=0 forces the GDI+ fallback). If
+  // the D2D target can't be created (old OS / no d2d1.dll), fall back silently.
+  GUseD2D := (SysUtils.GetEnvironmentVariable('TINA4_D2D') <> '0');
+  GShowFrames := (SysUtils.GetEnvironmentVariable('TINA4_FRAMES') = '1');
+  GAppTitle := cap;
+  if GUseD2D then
+  begin
+    GD2D := TD2DCanvas.Create(GHwnd);
+    if GD2D.Available then TinaInit(GD2D)
+    else begin GD2D.Free; GD2D := nil; GUseD2D := False; end;
+  end;
+  if not GUseD2D then
+  begin
+    GCanvas := TWinCanvas.Create;
+    TinaInit(GCanvas);
+  end;
   LoadUI(TemplateDir, Template, JsonContext);
   DumpHtmlAndExitIfRequested;    // --dump-html: write HTML, exit (no window)
   SetWindowTextW(GHwnd, PWideChar(cap));
