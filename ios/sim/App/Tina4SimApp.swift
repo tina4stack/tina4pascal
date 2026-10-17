@@ -9,7 +9,6 @@ struct Tina4SimApp: App {
     var body: some Scene {
         WindowGroup {
             Tina4ViewRep()
-                .ignoresSafeArea()
         }
     }
 }

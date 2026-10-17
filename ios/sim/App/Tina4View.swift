@@ -13,6 +13,7 @@ final class Tina4View: UIView {
     private var redrawTimer: Timer?
     private var imgObserver: NSObjectProtocol?     // retain the block observer, else it's torn down
     private var accentPink = false
+    private var loadedSize = CGSize.zero
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -54,7 +55,8 @@ final class Tina4View: UIView {
             // Native callbacks such as Core Location update the engine DOM
             // asynchronously. Repaint the simulator host so those changes
             // become visible without requiring another tap.
-            redrawTimer = Timer.scheduledTimer(withTimeInterval: 0.10, repeats: true) { [weak self] _ in
+            redrawTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+                _ = tina4sim_native_tick()             // advance AnimClock (replay, flings)
                 self?.setNeedsDisplay()
             }
         }
@@ -62,7 +64,8 @@ final class Tina4View: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        if started { loadHTML(); setNeedsDisplay() }   // reload at the real bounds
+        // reload only when the size really changes; a reload resets app state
+        if started && bounds.size != loadedSize { loadHTML(); setNeedsDisplay() }
     }
 
     // A drawRect context is top-left / y-down and in POINTS, matching the engine's
@@ -90,6 +93,7 @@ final class Tina4View: UIView {
     private func loadHTML() {
         let w = Int(bounds.width), h = Int(bounds.height)
         guard w > 0, h > 0 else { return }
+        loadedSize = bounds.size
         let html = bundledHTML ?? page(w: w, h: h, accentPink: accentPink)
         html.withCString { tina4sim_native_set_html($0) }
     }

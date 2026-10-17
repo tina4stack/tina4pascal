@@ -95,6 +95,13 @@ begin
   Result := TinaTouch(Action, X, Y);
 end;
 
+{ Advance time-driven content (animations, flings) by real elapsed time; call
+  once per display frame. Non-zero while something is still moving. }
+function tina4sim_native_tick: cint; cdecl;
+begin
+  Result := TinaTick;
+end;
+
 { Called by the host's image loader (ImageLoader.m) when an async <img> download
   lands: force a relayout so the next frame re-runs LoadImage and decodes the
   now-cached file. Named for the C symbol the loader expects. }
@@ -107,7 +114,8 @@ exports
   tina4sim_native_set_asset_base,
   tina4sim_native_set_html,
   tina4sim_native_frame,
-  tina4sim_native_touch;
+  tina4sim_native_touch,
+  tina4sim_native_tick;
 
 begin
 end.

@@ -25,4 +25,8 @@ void tina4sim_native_frame(CGContextRef ctx, int w, int h, float density);
 // Dispatch a touch (action 0=down 1=up 2=move); non-zero if the frame changed.
 int  tina4sim_native_touch(int action, float x, float y);
 
+// Advance animations/flings by real elapsed time; call once per display frame.
+// Non-zero while something is still moving.
+int  tina4sim_native_tick(void);
+
 #endif
