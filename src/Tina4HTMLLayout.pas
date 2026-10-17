@@ -348,13 +348,15 @@ begin
 end;
 
 { Resolve an ExplicitWidth/Height value against the containing size.
-  >=0 absolute px; -1 auto; <-1.5 percentage marker (-50 = 50%); -3 fit-content. }
+  >=0 absolute px; LEN_AUTO / LEN_FIT_CONTENT → -1 (auto); a percentage marker
+  (see LengthPct) → that share of Avail. }
 function ResolveSize(V, Avail: Single): Single;
+var pct: Single;
 begin
   if V <= -99999 then Result := ResolveCalc(V, Avail)   // deferred %-bearing calc()
   else if V >= 0 then Result := V
-  else if (V < -1.5) and (V > -1000) and (V <> -3) then Result := Avail * (-V) / 100
-  else Result := -1; // auto
+  else if LengthPct(V, pct) then Result := Avail * pct / 100
+  else Result := -1; // auto / fit-content
 end;
 
 function IsFormControlTag(const Name: string): Boolean;
@@ -1860,13 +1862,14 @@ end;
 procedure Compute3DCorners(const st: TComputedStyle; BX, BY, BW, BH: Single;
   out C: array of Single);
 var
+  pct: Single;
   ox, oy, pivotX, pivotY, cx, cy, X, Y, W4: Single;
   i: Integer;
   lx, ly: array[0..3] of Single;
 begin
   // transform-origin in px within the box
-  if st.TransformOriginX < -1.5 then ox := BW * (-st.TransformOriginX) / 100 else ox := st.TransformOriginX;
-  if st.TransformOriginY < -1.5 then oy := BH * (-st.TransformOriginY) / 100 else oy := st.TransformOriginY;
+  if LengthPct(st.TransformOriginX, pct) then ox := BW * pct / 100 else ox := st.TransformOriginX;
+  if LengthPct(st.TransformOriginY, pct) then oy := BH * pct / 100 else oy := st.TransformOriginY;
   pivotX := BX + ox; pivotY := BY + oy;
   lx[0] := -ox;      ly[0] := -oy;       // TL
   lx[1] := BW - ox;  ly[1] := -oy;       // TR
@@ -1899,8 +1902,9 @@ end;
 
 { Resolve a transform-origin component (the <-1.5 = percentage marker) to px. }
 function ResolveOrigin(v, extent: Single): Single;
+var pct: Single;
 begin
-  if v < -1.5 then Result := extent * (-v) / 100 else Result := v;
+  if LengthPct(v, pct) then Result := extent * pct / 100 else Result := v;
 end;
 
 { transform-style:preserve-3d — paint the container's children as flat textures
@@ -3475,7 +3479,7 @@ begin
     // chip stretching across a table cell instead of hugging its label.
     if (ew < 0) and (not isCol)
        and ((LowerCase(st.Display) = 'inline-flex')
-            or ((st.ExplicitWidth < -2.5) and (st.ExplicitWidth > -3.5)))
+            or (st.ExplicitWidth = LEN_FIT_CONTENT))
        and ((jc = 'flex-start') or (jc = 'start')) and (sumGrow = 0)
        and (natW + edgeL + edgeR < box.W) then
       box.W := natW + edgeL + edgeR;
@@ -5821,10 +5825,10 @@ begin
   else
     LayoutChildren(box, Tag, st, contentX, contentY, contentW, usedH);
   FContainingH := savedCH;
-  // width: fit-content / min-content / max-content (the -3 sentinel from
+  // width: fit-content / min-content / max-content (the LEN_FIT_CONTENT sentinel from
   // ParseLength) → shrink the block to its content width (approximated by
   // NaturalW, the widest laid-out line) instead of filling the container.
-  if (st.ExplicitWidth = -3) and (box.NaturalW > 0) then
+  if (st.ExplicitWidth = LEN_FIT_CONTENT) and (box.NaturalW > 0) then
     box.W := Min(box.W, box.NaturalW + edgeL + edgeR);
   // -webkit-line-clamp: cap the content to N lines and clip the rest — the box
   // becomes a (non-scrolling) clip container. Ellipsis on the clamped line is
@@ -6879,6 +6883,7 @@ end;
 procedure PaintBackgroundImage(Canvas: TTina4Canvas; Box: TLayoutBox;
   const st: TComputedStyle; y: Single);
 var
+  pct: Single;
   h, bpW, bpH, bi: Integer;
   iw, ih, dw, dh, scale, px, py, tileX, tileY: Single;
   sz, rep, blend: string;
@@ -6936,8 +6941,10 @@ begin
 
   // position: negative sentinel = percentage (center=-50, right/bottom=-100);
   // >= 0 = px offset from the top-left.
-  if st.BgPosX < 0 then px := (Box.W - dw) * (-st.BgPosX) / 100 else px := st.BgPosX;
-  if st.BgPosY < 0 then py := (Box.H - dh) * (-st.BgPosY) / 100 else py := st.BgPosY;
+  if LengthPct(st.BgPosX, pct) then px := (Box.W - dw) * pct / 100
+  else if st.BgPosX < 0 then px := (Box.W - dw) * (-st.BgPosX) / 100 else px := st.BgPosX;
+  if LengthPct(st.BgPosY, pct) then py := (Box.H - dh) * pct / 100
+  else if st.BgPosY < 0 then py := (Box.H - dh) * (-st.BgPosY) / 100 else py := st.BgPosY;
 
   rep := LowerCase(Trim(st.BgRepeat));
   noRepeat := (rep = 'no-repeat') or (sz = 'cover') or (sz = 'contain');
@@ -7027,6 +7034,7 @@ end;
 procedure PaintBoxEx(Canvas: TTina4Canvas; Box: TLayoutBox; OffsetY: Single;
   Opacity: Single; Hidden: Boolean);
 var
+  pct: Single;
   i: Integer;
   r: TTextRun;
   st: TComputedStyle;
@@ -7168,9 +7176,9 @@ begin
   begin
     Canvas.SaveState;
     // pivot at transform-origin (px or %-marker; default 50% 50% = centre)
-    if st.TransformOriginX < -1.5 then rcx := Box.X + Box.W * (-st.TransformOriginX) / 100
+    if LengthPct(st.TransformOriginX, pct) then rcx := Box.X + Box.W * pct / 100
     else rcx := Box.X + st.TransformOriginX;
-    if st.TransformOriginY < -1.5 then rcy := y + Box.H * (-st.TransformOriginY) / 100
+    if LengthPct(st.TransformOriginY, pct) then rcy := y + Box.H * pct / 100
     else rcy := y + st.TransformOriginY;
     Canvas.Translate(rcx, rcy);
     if (st.TransformRotate + wmRot) <> 0 then Canvas.Rotate(st.TransformRotate + wmRot); // +deg = CSS clockwise (flipped canvas)
@@ -7223,7 +7231,7 @@ begin
   end;
   if Box.IsSVG then
   begin
-    if Box.SVGRoot <> nil then PaintSVG(Canvas, Box.SVGRoot, Box.X, y, Box.W, Box.H);
+    if Box.SVGRoot <> nil then PaintSVG(Canvas, Box.SVGRoot, Box.X, y, Box.W, Box.H, st.Color);
     Exit;
   end;
   if Box.IsImagePlaceholder then

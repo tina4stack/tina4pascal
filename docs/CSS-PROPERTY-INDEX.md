@@ -18,7 +18,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 
 | Property | Status | Note |
 |---|---|---|
-| width, height | ✅ | px/%/auto, box-sizing-aware |
+| width, height | ✅ | px/%/auto, box-sizing-aware; every percentage resolves (0–1.5% and ~3% used to collide with the auto / fit-content sentinels — `tests/test_small_percent.pas`) |
 | min-width, max-width | ✅ | clamped in layout |
 | min-height, max-height | ✅ | clamped in LayoutBlock; **min-height also grows a flex container** (column main-axis / row cross-axis) so `flex:1` children get free space to stretch into and `align-items:center` has room to centre |
 | margin (+ 4 sides) | ✅ | shorthand, auto-center, vertical collapse |
@@ -164,7 +164,7 @@ Status: ✅ Supported · 🟡 Partial (caveat noted) · 📦 Parsed-only (in
 
 | Property | Status | Note |
 |---|---|---|
-| :hover / :active / :focus / :checked | ✅ | matcher + runtime state, end-to-end |
+| :hover / :active / :focus / :checked | ✅ | matcher + runtime state, end-to-end; `:hover` covers the hovered box AND its ancestors (an `<svg>` icon or nested block hovers its container — `tests/test_hover_ancestors.pas`) |
 | :first-child, :last-child, :only-child | ✅ | position among element siblings (#text and injected pseudo nodes skipped). Reftest `css-first-last-child` |
 | :nth-child(), :nth-last-child() | ✅ | full An+B micro-syntax: `odd`/`even`, `2n`, `2n+1`, `3`, `n`, `-n+3`. Reftest `css-nth-child` |
 | :first-of-type, :last-of-type, :only-of-type, :nth-of-type(), :nth-last-of-type() | ✅ | same as the -child variants but counted only among same-tag siblings. Reftest `css-nth-of-type` |

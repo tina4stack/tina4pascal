@@ -653,6 +653,7 @@ end;
 var
   GActiveTag: THTMLTag = nil;    // element with the :active pseudo-class (pressed)
   GHoverTag: THTMLTag = nil;     // element with the :hover pseudo-class (cursor/finger over)
+  GHoverElem: THTMLTag = nil;    // the Tier-2 element whose OnHover last saw the pointer
 
 { Dirty layout so a pseudo-class change re-applies its CSS — but only when the
   sheet actually uses :hover/:active/:focus, so a normal page pays nothing. }
@@ -662,12 +663,21 @@ begin
 end;
 
 { Set the :hover element (nil to clear). }
+{ :hover applies to the element under the pointer AND all its ancestors (CSS
+  Selectors 4). The hit test returns the deepest box — an <svg> icon inside a
+  button, a nested block — so marking only that element left `.btn:hover`
+  unmatched whenever the pointer was over a child box. Mark / clear the chain. }
+procedure MarkHoverChain(T: THTMLTag; V: Boolean);
+begin
+  while T <> nil do begin T.IsHovered := V; T := T.Parent; end;
+end;
+
 procedure SetHoverTag(T: THTMLTag);
 begin
   if T = GHoverTag then Exit;
-  if GHoverTag <> nil then GHoverTag.IsHovered := False;
+  MarkHoverChain(GHoverTag, False);
   GHoverTag := T;
-  if GHoverTag <> nil then GHoverTag.IsHovered := True;
+  MarkHoverChain(GHoverTag, True);
   PseudoDirty;
 end;
 
@@ -1245,7 +1255,7 @@ procedure ParseDoc(W: Single);
 var i: Integer; GImportSL: TStringList; linkHref, linkCss: string;
 begin
   BlurAll;
-  GActiveTag := nil; GHoverTag := nil;   // old DOM about to be freed — drop refs
+  GActiveTag := nil; GHoverTag := nil; GHoverElem := nil;   // old DOM about to be freed — drop refs
   if GParser <> nil then FreeAndNil(GParser);
   if GSheet <> nil then FreeAndNil(GSheet);
   if GEngine <> nil then FreeAndNil(GEngine);
@@ -2414,6 +2424,18 @@ begin
            neTap := ElementTapProc(ne.TagName);
            if Assigned(neTap) then
            begin
+             // tell the hook where on the element the tap landed (same origin as
+             // its Paint hook: the box's document position)
+             sb := FindBoxForTag(GRoot, ne);
+             if sb <> nil then
+             begin
+               ElementTapX := cx - sb.X;  ElementTapY := cy + GScrollY - sb.Y;
+               ElementTapW := sb.W;       ElementTapH := sb.H;
+             end
+             else
+             begin
+               ElementTapX := 0; ElementTapY := 0; ElementTapW := 0; ElementTapH := 0;
+             end;
              if neTap(ne) then begin GLayoutDirty := True; Exit; end;
              Break;
            end;
@@ -2467,6 +2489,34 @@ begin
   end;
 end;
 
+{ Tell Tier-2 elements with a hover hook where the pointer is (and when it
+  leaves them); their hooks may ask for a repaint. }
+procedure NativeHover(cx, cy: Single);
+var hit, ne: THTMLTag; hov: TElemHoverProc; sb: TLayoutBox;
+begin
+  ne := nil;
+  hit := HitTest(GRoot, cx, cy + GScrollY, GScrollY);
+  while hit <> nil do
+  begin
+    if Assigned(ElementHoverProc(hit.TagName)) then begin ne := hit; Break; end;
+    hit := hit.Parent;
+  end;
+  if (GHoverElem <> nil) and (GHoverElem <> ne) then
+  begin
+    hov := ElementHoverProc(GHoverElem.TagName);
+    if Assigned(hov) and hov(GHoverElem, False) then GMoveRepaint := True;
+    GHoverElem := nil;
+  end;
+  if ne = nil then Exit;
+  sb := FindBoxForTag(GRoot, ne);
+  if sb = nil then Exit;
+  ElementHoverX := cx - sb.X;  ElementHoverY := cy + GScrollY - sb.Y;
+  ElementHoverW := sb.W;       ElementHoverH := sb.H;
+  GHoverElem := ne;
+  hov := ElementHoverProc(ne.TagName);
+  if hov(ne, True) then GMoveRepaint := True;
+end;
+
 procedure TinaHover(X, Y: Single);
 var cx, cy: Single;
 begin
@@ -2477,6 +2527,7 @@ begin
   // Reset the repaint flag so it reflects THIS move, not a stale earlier one.
   GMoveRepaint := False;
   if GParser <> nil then FireOnMouseMove(FindOnMouseMoveTag(GParser.Root), cx, cy);
+  if AnyElementHover then NativeHover(cx, cy);
   if (GSheet = nil) or not GSheet.HasInteractiveSelectors then Exit;  // nothing hovers
   SetHoverTag(HitTest(GRoot, cx, cy + GScrollY, GScrollY));
 end;

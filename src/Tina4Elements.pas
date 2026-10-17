@@ -48,6 +48,10 @@ type
   { Tier-2 tap hook: the element was tapped. Return True if handled (the engine
     then relays out). The hook may mutate the tag and/or fire an action itself. }
   TElemTapProc = function(const Tag: THTMLTag): Boolean;
+  { Optional Tier-2 hover hook (pointer devices): called as the pointer moves
+    over the element (Inside=True, position in ElementHoverX/Y) and once when it
+    leaves (Inside=False). Return True to request a repaint. }
+  TElemHoverProc = function(const Tag: THTMLTag; Inside: Boolean): Boolean;
 
   TTina4ElementDef = record
     Name: string;         // tag name, lower-case
@@ -55,7 +59,25 @@ type
     DefaultCSS: string;   // registered into every document's sheet (both tiers)
     Paint: TElemPaintProc;// Tier-2 only
     OnTap: TElemTapProc;  // Tier-2 only
+    OnHover: TElemHoverProc; // Tier-2 only, optional
   end;
+
+var
+  { Where the current tap landed on a Tier-2 element, in CSS px relative to the
+    same box its Paint hook draws into (X/Y origin, W/H size). Set by the engine
+    immediately before OnTap runs, so a hook can tell WHERE it was tapped (a
+    board, a slider, a chart point) — the hook signature stays unchanged. Only
+    meaningful inside OnTap. }
+  ElementTapX: Single = 0;
+  ElementTapY: Single = 0;
+  ElementTapW: Single = 0;
+  ElementTapH: Single = 0;
+  { Where the pointer is over a Tier-2 element with a hover hook, in the same
+    CSS-px space as ElementTap* / its Paint hook. Only meaningful inside OnHover. }
+  ElementHoverX: Single = 0;
+  ElementHoverY: Single = 0;
+  ElementHoverW: Single = 0;
+  ElementHoverH: Single = 0;
 
 { ---- registration ------------------------------------------------------ }
 
@@ -65,6 +87,8 @@ procedure RegisterElement(const Name, Template: string; const DefaultCSS: string
 { Tier 2: a native element with paint and/or tap hooks (either may be nil). }
 procedure RegisterNativeElement(const Name: string; Paint: TElemPaintProc;
   OnTap: TElemTapProc; const DefaultCSS: string = '');
+{ Give a registered native element a hover hook (desktop pointers). }
+procedure SetElementHoverProc(const Name: string; OnHover: TElemHoverProc);
 { Drop every registration (used by tests for isolation). }
 procedure ClearElements;
 
@@ -74,6 +98,10 @@ function IsRegisteredElement(const Name: string): Boolean;
 function IsTemplateElement(const Name: string): Boolean;   // Tier 1
 function ElementPaintProc(const Name: string): TElemPaintProc;   // nil if none
 function ElementTapProc(const Name: string): TElemTapProc;       // nil if none
+function ElementHoverProc(const Name: string): TElemHoverProc;   // nil if none
+{ True when any element has a hover hook — the pointer path skips its hit test
+  otherwise, so pages without one pay nothing. }
+function AnyElementHover: Boolean;
 { Every registered element's DefaultCSS, concatenated — the engine adds this to
   the sheet so registered tags get their default sizing/appearance. }
 function ElementsDefaultCSS: string;
@@ -123,6 +151,7 @@ begin
   d.DefaultCSS := DefaultCSS;
   d.Paint := nil;
   d.OnTap := nil;
+  d.OnHover := nil;
   PutElem(d);
 end;
 
@@ -135,7 +164,35 @@ begin
   d.DefaultCSS := DefaultCSS;
   d.Paint := Paint;
   d.OnTap := OnTap;
+  d.OnHover := nil;
   PutElem(d);
+end;
+
+procedure SetElementHoverProc(const Name: string; OnHover: TElemHoverProc);
+var idx: Integer; d: TTina4ElementDef;
+begin
+  idx := IndexOfElem(Name);
+  if idx < 0 then Exit;
+  d := GElems[idx];
+  d.OnHover := OnHover;
+  GElems[idx] := d;
+end;
+
+function ElementHoverProc(const Name: string): TElemHoverProc;
+var idx: Integer;
+begin
+  Result := nil;
+  idx := IndexOfElem(Name);
+  if idx >= 0 then Result := GElems[idx].OnHover;
+end;
+
+function AnyElementHover: Boolean;
+var i: Integer;
+begin
+  Result := False;
+  if GElems = nil then Exit;
+  for i := 0 to GElems.Count - 1 do
+    if Assigned(GElems[i].OnHover) then Exit(True);
 end;
 
 procedure ClearElements;

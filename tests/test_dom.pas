@@ -35,6 +35,7 @@ begin
 end;
 
 var
+  PctOut: Single;   // LengthPct out-param in the ParseLength checks
   PassCount: Integer = 0;
 
 procedure Check(Cond: Boolean; const Msg: string);
@@ -673,7 +674,13 @@ begin
     CheckEqualsF(24, TComputedStyle.ParseLength('1.5rem'), 'ParseLength rem = 16px base');
     CheckEqualsF(-50, TComputedStyle.ParseLength('50%'), 'ParseLength % negative sentinel');
     CheckEqualsF(-1, TComputedStyle.ParseLength('auto'), 'ParseLength auto sentinel');
-    CheckEqualsF(-3, TComputedStyle.ParseLength('fit-content'), 'ParseLength fit-content sentinel');
+    CheckEqualsF(LEN_FIT_CONTENT, TComputedStyle.ParseLength('fit-content'), 'ParseLength fit-content sentinel');
+    // small/odd percentages must not collide with the auto / fit-content sentinels
+    Check(TComputedStyle.ParseLength('1%') <> LEN_AUTO, 'ParseLength 1% is not the auto sentinel');
+    Check(TComputedStyle.ParseLength('3%') <> LEN_FIT_CONTENT, 'ParseLength 3% is not the fit-content sentinel');
+    Check(LengthPct(TComputedStyle.ParseLength('1%'), PctOut) and (Abs(PctOut - 1) < 0.001), 'LengthPct decodes 1%');
+    Check(LengthPct(TComputedStyle.ParseLength('50%'), PctOut) and (Abs(PctOut - 50) < 0.001), 'LengthPct decodes 50%');
+    Check(not LengthPct(LEN_AUTO, PctOut) and not LengthPct(LEN_FIT_CONTENT, PctOut), 'LengthPct: auto / fit-content are not percentages');
     CheckEqualsF(38, TComputedStyle.ParseLength('calc(10px + 2em)', 14), 'ParseLength calc addition');
     CheckEqualsF(6, TComputedStyle.ParseLength('calc(10px - 4px)', 14), 'ParseLength calc subtraction');
     CheckEqualsF(0, TComputedStyle.ParseLength('gibberish'), 'NEGATIVE: unknown length is 0');

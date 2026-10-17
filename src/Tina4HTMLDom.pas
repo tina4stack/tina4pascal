@@ -522,10 +522,33 @@ type
 var
   GAccessCheck: TTina4AccessCheck = nil;
 
+
+const
+  { ParseLength markers. A percentage p is stored as -p, except 0 < p <= 1.5,
+    which would collide with LEN_AUTO (-1): those go in a reserved band at
+    PCT_SMALL_BASE - p. Shrink-to-fit keywords use LEN_FIT_CONTENT, outside
+    every percentage. Deferred calc() markers are <= -100000. }
+  LEN_AUTO = -1;
+  LEN_FIT_CONTENT = -99998;
+  PCT_SMALL_BASE = -50000;
+
+{ True when V (a ParseLength result) encodes a percentage; Pct gets it (50 = 50%). }
+function LengthPct(V: Single; out Pct: Single): Boolean;
+
 implementation
 
 // UTF-8 encoder used by entity decoding (Delphi appended UTF-16 code units;
 // FPC strings here are UTF-8 so we emit the byte sequence instead).
+function LengthPct(V: Single; out Pct: Single): Boolean;
+begin
+  Pct := 0;
+  if (V <= PCT_SMALL_BASE) and (V > PCT_SMALL_BASE - 2) then
+  begin Pct := PCT_SMALL_BASE - V; Exit(True); end;
+  if (V < -1.5) and (V > PCT_SMALL_BASE) then
+  begin Pct := -V; Exit(True); end;
+  Result := False;
+end;
+
 function CodePointToUTF8(CodePoint: Cardinal): string;
 begin
   if CodePoint < $80 then
@@ -3079,9 +3102,10 @@ begin
   Str := S.Trim.ToLower;
   if Str = '' then Exit(0);
   if Str = 'auto' then Exit(-1);
-  // Shrink-to-fit width keywords collapse onto a single sentinel (-3).
+  // Shrink-to-fit width keywords collapse onto one sentinel, outside every
+  // percentage marker (it used to be -3, which swallowed width:3%).
   if (Str = 'fit-content') or (Str = 'min-content') or (Str = 'max-content') then
-    Exit(-3);
+    Exit(LEN_FIT_CONTENT);
 
   // calc() / min() / max() / clamp(): full expression eval (+ - * /, px/em/rem/
   // pt/vw/vh/vmin/vmax). A % term needs the container size, so those are deferred
@@ -3139,8 +3163,11 @@ begin
   end
   else if Str.EndsWith('%') then
   begin
-    // Percentage — return negative value as marker
-    Result := -StrToFloatDef(Str.Replace('%', ''), 0);
+    // Percentage — a negative marker (decode with LengthPct). 0 < p <= 1.5 would
+    // read as LEN_AUTO (-1), so small percentages use their own band.
+    Result := StrToFloatDef(Str.Replace('%', ''), 0);
+    if (Result > 0) and (Result <= 1.5) then Result := PCT_SMALL_BASE - Result
+    else Result := -Result;
   end
   else
     Result := StrToFloatDef(Str, 0);

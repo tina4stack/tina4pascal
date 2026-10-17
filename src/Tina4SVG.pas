@@ -32,8 +32,11 @@ uses
   Tina4HTMLDom, Tina4RenderBackend;
 
 { Paints the <svg> rooted at Root into the device rectangle (X,Y,W,H),
-  scaling its viewBox (or width/height) to fit. }
-procedure PaintSVG(Canvas: TTina4Canvas; Root: THTMLTag; X, Y, W, H: Single);
+  scaling its viewBox (or width/height) to fit. CurrentColor is what
+  fill/stroke="currentColor" resolves to — the inline <svg>'s inherited CSS
+  `color`, as in browsers (an explicit color attribute on the <svg> wins). }
+procedure PaintSVG(Canvas: TTina4Canvas; Root: THTMLTag; X, Y, W, H: Single;
+  CurrentColor: TTina4Color = $FF000000);
 
 { Intrinsic pixel size of an <svg> from width/height attrs or viewBox;
   returns False if neither is present (caller picks a default). }
@@ -1063,7 +1066,8 @@ begin
   Result := (W > 0) and (H > 0);
 end;
 
-procedure PaintSVG(Canvas: TTina4Canvas; Root: THTMLTag; X, Y, W, H: Single);
+procedure PaintSVG(Canvas: TTina4Canvas; Root: THTMLTag; X, Y, W, H: Single;
+  CurrentColor: TTina4Color);
 var
   hasVB: Boolean;
   vbX, vbY, vbW, vbH, sx, sy, s: Single;
@@ -1091,7 +1095,9 @@ begin
     CollectGradients(Root);
     { The root <svg> is also a presentation-attribute source. In particular,
       merge its color before children resolve stroke="currentColor". }
-    st := MergeState(Root, DefaultState(ctm));
+    st := DefaultState(ctm);
+    st.CurrentColor := CurrentColor;   // inherited CSS color, before the root's own attrs
+    st := MergeState(Root, st);
     for c in Root.Children do PaintNode(Canvas, c, st);
   finally
     FreeAndNil(GDefs);
