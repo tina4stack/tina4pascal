@@ -716,6 +716,30 @@ proj_dump_html() {
 # numeric key from tina4.json (nesting-agnostic; jget only does top-level strings)
 jget_num() { n="$(grep -oE "\"$1\"[[:space:]]*:[[:space:]]*[0-9]+" "$PWD/tina4.json" 2>/dev/null | grep -oE '[0-9]+$' | head -1)"; printf '%s' "${n:-$2}"; }
 
+# project_icon — the square store/launcher icon (ideally 1024²) for iOS + Android:
+# tina4.json "icon" (a path relative to the project — keep it OUTSIDE assets/ so it
+# isn't also bundled as a page asset), else assets/icon.png, else the tina4 brand
+# icon so every app is branded, not generic.
+project_icon() {
+  _pi="$(jget icon "")"
+  if [ -n "$_pi" ] && [ -f "$PWD/$_pi" ]; then printf '%s' "$PWD/$_pi"; return; fi
+  if [ -f "$PWD/assets/icon.png" ]; then printf '%s' "$PWD/assets/icon.png"; return; fi
+  printf '%s' "$ROOT/branding/icon.png"
+}
+
+# icon_into <src.png> <dest.png> — write src at dest's OWN pixel size (sips on
+# macOS), so a 1024² icon doesn't land full-size in every launcher density.
+icon_into() {
+  if command -v sips >/dev/null 2>&1 && [ -f "$2" ]; then
+    _w="$(sips -g pixelWidth "$2" 2>/dev/null | awk '/pixelWidth/{print $2}')"
+    _h="$(sips -g pixelHeight "$2" 2>/dev/null | awk '/pixelHeight/{print $2}')"
+    if [ -n "$_w" ] && [ -n "$_h" ]; then
+      sips -z "$_h" "$_w" "$1" --out "$2" >/dev/null 2>&1 && return 0
+    fi
+  fi
+  cp "$1" "$2"
+}
+
 # Package a scaffolded project into a signed APK with ITS OWN applicationId.
 # Gradle-free: reuse the reference app's Java/JNI/res, bundle this project's
 # rendered UI + icon, and rename the manifest package to the project's bundleId
@@ -756,7 +780,12 @@ proj_android_build() {
   sed -i.bak "s/com\.tina4\.pascal\.tina4share/${bundle}.tina4share/g" \
     "$APPDIR/AndroidManifest.xml"
   rm -f "$APPDIR/AndroidManifest.xml.bak"
-  mkdir -p "$APPDIR/assets"; cp "$work/index.html" "$APPDIR/assets/showcase.html"
+  # the reference host's demo pages (controls/http_demo/index…) must not ship in a
+  # project's APK; showcase.html — the project UI — is the page MainActivity loads.
+  # (The project's own assets/ is copied in afterwards, so its pages are kept.)
+  mkdir -p "$APPDIR/assets"
+  find "$APPDIR/assets" -maxdepth 1 -name '*.html' -exec rm -f {} \;
+  cp "$work/index.html" "$APPDIR/assets/showcase.html"
   # bundle the project's assets (icon, images) into the APK; local-asset <img>
   # resolution on Android is a follow-up (see docs/TOOLING-DISTRIBUTION.md).
   [ -d "$PWD/assets" ] && cp -R "$PWD/assets/." "$APPDIR/assets/" 2>/dev/null || true
@@ -766,14 +795,14 @@ proj_android_build() {
   # launcher icon. A project may provide COMPLETE Android launcher resources
   # (adaptive-icon XML + foreground/background layers) — overlay those as-is, never
   # flatten them into the opaque fallback (Android would white-mask the artwork).
-  # Else use the project's assets/icon.png, else the tina4 brand icon (the same
-  # fallback the macOS .app uses) so every example is branded, not generic.
+  # Else the project icon (see project_icon), resized to each density's size.
   if [ -d "$PWD/android/res" ]; then
     cp -R "$PWD/android/res/." "$APPDIR/res/" 2>/dev/null || true
   else
-    aicon="$PWD/assets/icon.png"; [ -f "$aicon" ] || aicon="$ROOT/branding/icon.png"
-    [ -f "$aicon" ] && find "$APPDIR/res" -name 'ic_launcher*.png' \
-      -exec cp "$aicon" {} \; 2>/dev/null || true
+    aicon="$(project_icon)"
+    if [ -f "$aicon" ]; then
+      find "$APPDIR/res" -name 'ic_launcher*.png' | while IFS= read -r ic; do icon_into "$aicon" "$ic"; done
+    fi
   fi
 
   # project app-units (tina4.json "appUnits") → the staged app_units.inc, spliced
@@ -1014,9 +1043,12 @@ proj_ios_stage() {
     TINA4_APP_UNIT_DIRS="$iappdirs" sh "$ihost/build.sh" >/dev/null 2>&1 \
     || die "iOS engine build failed (run: TINA4_IOS_ENG_DIR=\"$ihost\" TINA4_SRC=\"$ROOT/src\" sh \"$ihost/build.sh\")"
   cp "$iwork/index.html" "$ihost/app/showcase.html"
-  # app icon: the project's own assets/icon.png, else the tina4 brand icon (same
-  # fallback the macOS .app uses) so every example is branded, not generic.
-  iicon="$PWD/assets/icon.png"; [ -f "$iicon" ] || iicon="$ROOT/branding/icon.png"
+  # the reference host's own demo pages (controls/shadowtest/http_demo…) must not
+  # ship inside a project's app — showcase.html (the project UI, written above) is
+  # the only page the shell loads.
+  find "$ihost/app" -maxdepth 1 -name '*.html' ! -name 'showcase.html' -exec rm -f {} \;
+  # app icon (see project_icon); xcassets compiles it into Assets.car
+  iicon="$(project_icon)"
   [ -f "$iicon" ] && cp "$iicon" \
     "$ihost/app/Assets.xcassets/AppIcon.appiconset/icon_1024.png" 2>/dev/null || true
   # bundle the project's assets/ as a FOLDER so a relative <img src="assets/…">
@@ -1048,11 +1080,13 @@ s = s.replace('    sources:\n      - path: app',
 open(f, 'w').write(s)
 PYEOF
   fi
-  # App display name + bundle name = the project's name (the staged Info.plist
-  # ships a generic default); so the home-screen label is the app, not the runtime.
+  # App display name + bundle name = the project's title (else name): the
+  # home-screen label is the app, not the runtime. plutil, not PlistBuddy, so a
+  # title with spaces/quotes ("Knight's Move") is written verbatim.
+  ititle="$(jget title "$iname")"
   if [ -f "$ihost/app/Info.plist" ]; then
-    /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $iname" "$ihost/app/Info.plist" 2>/dev/null || true
-    /usr/libexec/PlistBuddy -c "Set :CFBundleName $iname" "$ihost/app/Info.plist" 2>/dev/null || true
+    plutil -replace CFBundleDisplayName -string "$ititle" "$ihost/app/Info.plist" 2>/dev/null || true
+    plutil -replace CFBundleName -string "$ititle" "$ihost/app/Info.plist" 2>/dev/null || true
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $ivname" "$ihost/app/Info.plist" 2>/dev/null || true
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $ivcode" "$ihost/app/Info.plist" 2>/dev/null || true
   fi
@@ -1567,7 +1601,9 @@ cmd_dev() {
   dapp="$o/$dname.app"; rm -rf "$dapp"
   mkdir -p "$dapp/Contents/MacOS" "$dapp/Contents/Resources"
   cp "$o/app" "$dapp/Contents/MacOS/$dname"
-  if [ -f "$d/assets/icon.icns" ]; then cp "$d/assets/icon.icns" "$dapp/Contents/Resources/AppIcon.icns"
+  dmac="$(cd "$d" && jget macIcon "")"
+  if [ -n "$dmac" ] && [ -f "$d/$dmac" ]; then cp "$d/$dmac" "$dapp/Contents/Resources/AppIcon.icns"
+  elif [ -f "$d/assets/icon.icns" ]; then cp "$d/assets/icon.icns" "$dapp/Contents/Resources/AppIcon.icns"
   elif [ -f "$ROOT/branding/AppIcon.icns" ]; then cp "$ROOT/branding/AppIcon.icns" "$dapp/Contents/Resources/AppIcon.icns"; fi
   cat > "$dapp/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
