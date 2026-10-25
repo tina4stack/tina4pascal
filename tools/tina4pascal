@@ -1459,7 +1459,7 @@ cmd_test() {
   need_fpc
   fail=0
   clean_src_units   # never let a stray src/*.ppu shadow an engine edit
-  for t in dom keyframe_anim resizedom sparkstress highlight codearea codefold flexrebuild includes qr svg svg_currentcolor picture canvas_arcto canvas_text hover_ancestors small_percent services http docs frond pseudo media webp pdf scanner barcode crypto auth rbacui authflow secrets ssoflow share_items location; do
+  for t in dom keyframe_anim resizedom sparkstress highlight codearea codefold flexrebuild includes qr svg svg_currentcolor picture canvas_arcto canvas_text hover_ancestors small_percent services http docs frond pseudo media webp pdf scanner barcode crypto auth rbacui authflow secrets ssoflow share_items location iframe; do
     [ -f "$ROOT/tests/test_$t.pas" ] || continue
     o="$BUILD/test/$t"; mkdir -p "$o"
     "$FPC" -Mdelphi -Fu"$SRC" -FE"$o" -FU"$o" "$ROOT/tests/test_$t.pas" >/dev/null 2>&1 \
@@ -1510,6 +1510,7 @@ cmd_macos() {
   <key>LSMinimumSystemVersion</key><string>10.13</string>
   <key>NSMicrophoneUsageDescription</key><string>Record audio from a &lt;recorder&gt; element.</string>
   <key>NSCameraUsageDescription</key><string>Capture photos and scan codes from &lt;camera&gt; / scanner elements.</string>
+  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
   <key>NSLocationWhenInUseUsageDescription</key><string>Use your location while the app is in the foreground.</string>
 </dict></plist>
 PLIST
@@ -1619,6 +1620,7 @@ cmd_dev() {
   <key>LSMinimumSystemVersion</key><string>10.13</string>
   <key>NSMicrophoneUsageDescription</key><string>Record audio from a &lt;recorder&gt; element.</string>
   <key>NSCameraUsageDescription</key><string>Capture photos and scan codes from &lt;camera&gt; / scanner elements.</string>
+  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
 PLIST
   ( cd "$d" && exec "$dapp/Contents/MacOS/$dname" )   # app folder = cwd (app.html + localStore)

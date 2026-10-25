@@ -395,6 +395,7 @@ public class Tina4View extends View implements Runnable,
         int n = nativeEmbedCount();
         HashSet<String> live = new HashSet<>();
         for (int i = 0; i < n; i++) {
+            if (nativeEmbedKind(i) >= 2) continue;   // video/audio only — not scanner/3d/camera/iframe
             String src = nativeEmbedSrc(i);
             float[] r = nativeEmbedRect(i);
             if (src == null || src.isEmpty() || r == null || r.length < 4

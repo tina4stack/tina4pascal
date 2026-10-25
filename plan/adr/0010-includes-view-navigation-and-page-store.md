@@ -9,7 +9,9 @@ An app that is many screens needs a way to compose and switch pages. The web doe
 this with navigation (a new document) or an `<iframe>`/router (a foreign tree).
 Tina4Pascal renders ONE native DOM with no WebView (ADR-0002), so neither fits:
 there is no page-to-page navigation to hook, and an `<iframe>` would mean a second
-engine. Authors still want three things:
+engine. (ADR-0016 later added `<iframe>` for *external* web content, hosted by the
+OS web view. That does not change this decision: app screens still compose with
+`<include>` and views.) Authors still want three things:
 
 1. **Compose** — pull a reusable partial (header, card, screen) into a page.
 2. **Navigate** — swap the visible screen at runtime without reloading the whole

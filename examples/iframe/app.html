@@ -1,0 +1,43 @@
+<html>
+<head>
+<style>
+  body { font-family: -apple-system, sans-serif; margin: 0; background: #fbfaf7; color: #15162e; }
+  header { background: #4f46e5; color: #fff; padding: 18px 24px; }
+  header h1 { margin: 0; font-size: 22px; }
+  header p { margin: 4px 0 0 0; color: #dcdaf9; font-size: 13px; }
+  main { padding: 20px 24px; }
+  .bar { margin: 12px 0; }
+  .btn { display: inline-block; background: #f3f2fb; border: 1px solid #e6e5f0;
+         border-radius: 8px; padding: 8px 14px; margin-right: 8px; font-size: 14px; }
+  .primary { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+  .preview { width: 100%; height: 380px; border: 1px solid #c9c7dc; border-radius: 6px; }
+  .note { color: #5b5c78; font-size: 14px; line-height: 1.5; }
+  .filler { height: 90px; margin: 12px 0; background: #efeef7; border-radius: 8px; padding: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Native page · live web preview</h1>
+  <p>Everything here is drawn by tina4pascal. Only the frame below is the OS web view.</p>
+</header>
+<main>
+  <p class="note">The <b>&lt;iframe&gt;</b> is laid out by the engine like any other box. The shell
+  puts the operating system's own web view (WKWebView on macOS) over it and keeps it in
+  place as this page scrolls. Nothing is bundled with the app.</p>
+  <div class="bar">
+    <span class="btn primary" onclick="frame.go('http://127.0.0.1:8765/')">Home</span>
+    <span class="btn" onclick="frame.go('http://127.0.0.1:8765/second.html')">Second page</span>
+    <span class="btn" onclick="frame.toggle()">Hide / show</span>
+  </div>
+  <iframe id="preview" class="preview" src="http://127.0.0.1:8765/">
+    This fallback text is never shown.
+  </iframe>
+  <p class="note">Scroll this native page: the frame moves with it. Scroll inside the frame: the
+  web page scrolls on its own. Click inside the frame: the web page gets the click.</p>
+  <div class="filler">Native content below the frame (1)</div>
+  <div class="filler">Native content below the frame (2)</div>
+  <div class="filler">Native content below the frame (3)</div>
+  <div class="filler">Native content below the frame (4)</div>
+</main>
+</body>
+</html>

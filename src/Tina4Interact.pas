@@ -237,9 +237,15 @@ function TinaEmbedSrc(Index: Integer): string;
   8 muted. Poster is the poster image URL ('' if none). }
 function TinaEmbedFlags(Index: Integer): Integer;
 function TinaEmbedPoster(Index: Integer): string;
-{ Embed media kind: 0 = <video> (picture surface), 1 = <audio> (control bar).
-  Lets a shell pick the right native player for the same rect/src/flags API. }
+{ Embed kind: 0 = <video> (picture surface), 1 = <audio> (control bar),
+  2 = <barcode-scanner>, 3 = <scene>/<model>, 4 = <camera-view>, 5 = <iframe>.
+  Lets a shell pick the right native view for the same rect/src/flags API. }
 function TinaEmbedKind(Index: Integer): Integer;
+{ A stable identity for the embed across frames, so a shell can keep one native
+  view per element and react when its src changes (an <iframe> reloads in place
+  rather than being torn down). <iframe>: its id attribute, else "iframe:<n>"
+  (n = document order). Other kinds: the src. }
+function TinaEmbedKey(Index: Integer): string;
 { Scanner (kind 2) only: the requested symbologies ("qr,ean13,…"). }
 function TinaEmbedFormats(Index: Integer): string;
 { The shell reports a decoded barcode for scanner embed Index — the engine fires
@@ -264,10 +270,12 @@ type
     Formats: string;  // scanner: requested symbologies (e.g. "qr,ean13,code128")
     OnScan: string;   // scanner: action to fire with the decoded value
     ResultSel: string;// scanner: `result="#id"` — element to fill with the decoded text
+    Key: string;      // stable per-element identity (TinaEmbedKey)
   end;
 
 var
   GEmbeds: array of TEmbedRec; // shell-owned <video> boxes, refreshed by TinaEmbedCount
+  GIframeSeq: Integer = 0;      // <iframe> document-order counter for TinaEmbedKey
   GFrond: TFrond = nil;         // the template engine (created on first use)
   GTemplate: string = '';       // last template, for TinaRenderContext
   GCanvas: TTina4Canvas = nil;
@@ -2833,7 +2841,30 @@ procedure CollectEmbeds(Box: TLayoutBox);
 var c, sc: THTMLTag; b: TLayoutBox; src: string; n: Integer;
 begin
   if Box = nil then Exit;
-  if (Box.Tag <> nil) and SameText(Box.Tag.TagName, 'video') then
+  if (Box.Tag <> nil) and SameText(Box.Tag.TagName, 'iframe') then
+  begin
+    { External web content: the shell overlays the OS's own web view on the
+      CONTENT box (inside the UA frame border and any padding), loads `src`, and
+      keeps one view per element (Key) so a src change reloads it in place. The
+      engine itself never renders web content — see ADR-0016. }
+    c := Box.Tag;
+    n := Length(GEmbeds); SetLength(GEmbeds, n + 1);
+    GEmbeds[n].Src := Trim(c.GetAttribute('src'));
+    GEmbeds[n].Poster := '';
+    GEmbeds[n].X := Box.X + Box.Style.BorderWidths.Left + Box.Style.Padding.Left;
+    GEmbeds[n].Y := Box.Y + Box.Style.BorderWidths.Top + Box.Style.Padding.Top - GScrollY;
+    GEmbeds[n].W := Box.W - Box.Style.BorderWidths.Left - Box.Style.BorderWidths.Right
+                          - Box.Style.Padding.Left - Box.Style.Padding.Right;
+    GEmbeds[n].H := Box.H - Box.Style.BorderWidths.Top - Box.Style.BorderWidths.Bottom
+                          - Box.Style.Padding.Top - Box.Style.Padding.Bottom;
+    GEmbeds[n].Kind := 5;
+    GEmbeds[n].Key := c.GetAttribute('id');
+    if GEmbeds[n].Key = '' then GEmbeds[n].Key := 'iframe:' + IntToStr(GIframeSeq);
+    Inc(GIframeSeq);
+    GEmbeds[n].Formats := ''; GEmbeds[n].OnScan := ''; GEmbeds[n].ResultSel := '';
+    GEmbeds[n].Flags := 0;
+  end
+  else if (Box.Tag <> nil) and SameText(Box.Tag.TagName, 'video') then
   begin  // <audio> is now an engine-drawn control (ckAudio), not a native overlay
     c := Box.Tag;
     src := c.GetAttribute('src');
@@ -2921,6 +2952,7 @@ end;
 function TinaEmbedCount: Integer;
 begin
   SetLength(GEmbeds, 0);
+  GIframeSeq := 0;
   CollectEmbeds(GRoot);
   Result := Length(GEmbeds);
 end;
@@ -2957,6 +2989,14 @@ function TinaEmbedKind(Index: Integer): Integer;
 begin
   if (Index >= 0) and (Index < Length(GEmbeds)) then Result := GEmbeds[Index].Kind
   else Result := 0;
+end;
+
+function TinaEmbedKey(Index: Integer): string;
+begin
+  Result := '';
+  if (Index < 0) or (Index >= Length(GEmbeds)) then Exit;
+  Result := GEmbeds[Index].Key;
+  if Result = '' then Result := GEmbeds[Index].Src;
 end;
 
 function TinaEmbedFormats(Index: Integer): string;

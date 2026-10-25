@@ -158,7 +158,7 @@ type
 implementation
 
 uses
-  Tina4Interact;   // native media embeds (<video>) query — TinaEmbed*
+  Tina4Interact;   // native embeds (<video>, <iframe>) query — TinaEmbed*
 
 type
   { AVAudioRecorder's metering selectors are absent from the FPC AVFoundation
@@ -178,6 +178,23 @@ type
       itemTemplate: AVPlayerItem): AVPlayerLooper; message 'playerLooperWithPlayer:templateItem:';
   end;
 
+  { WKWebView — the OS's own web engine, hosts <iframe> content. FPC 3.2.2's
+    WebKit binding gates the WK* classes behind WK_API_ENABLED (it predates
+    them), so declare just the selectors we use, like AVPlayerLooper above.
+    The framework ships with macOS — nothing is bundled. }
+  WKWebViewConfiguration = objcclass external (NSObject)
+  end;
+
+  WKWebView = objcclass external (NSView)
+  public
+    function initWithFrame_configuration(frame: NSRect;
+      configuration: WKWebViewConfiguration): id; message 'initWithFrame:configuration:';
+    function loadRequest(request: NSURLRequest): id; message 'loadRequest:';
+    procedure stopLoading; message 'stopLoading';
+  end;
+
+{$linkframework WebKit}
+
 var
   { @font-face aliases: CSS family (lowercased) -> the font's real registered
     name. Process-global because CoreText registration is process-wide and the
@@ -187,6 +204,10 @@ var
   GVideoViews: NSMutableDictionary = nil;
   { retained AVPlayerLooper per looping <video> (else it deallocs and stops) }
   GVideoLoopers: NSMutableDictionary = nil;
+  { native <iframe> overlays, keyed by TinaEmbedKey (NSString -> WKWebView), and
+    the src each one last loaded (NSString -> NSString) so a change reloads it }
+  GWebViews: NSMutableDictionary = nil;
+  GWebSrcs: NSMutableDictionary = nil;
   { bundled fonts: scanned once, flags say which DejaVu generics shipped so
     FontFor can back the CSS generics with them (see docs/BUNDLED-FONTS.md). }
   GBundledScanned: Boolean = False;
@@ -1398,6 +1419,71 @@ begin
   end;
 end;
 
+{ Overlay the OS's own web view (WKWebView — nothing is bundled) on each
+  <iframe> content box the engine laid out. One view per element, keyed by
+  TinaEmbedKey: it is repositioned every frame (scroll / re-layout), reloaded in
+  place when its src changes, and removed when the element leaves the layout.
+  The engine never renders web content itself — see plan/adr/0016. }
+procedure SyncCocoaWebViews(host: NSView);
+var
+  n, i: LongInt; x, y, w, h: Single; src: string;
+  key, nsrc, loaded: NSString; url: NSURL; wv: WKWebView;
+  cfg: WKWebViewConfiguration; live: NSMutableSet; keys: NSArray; k: LongWord;
+begin
+  if GWebViews = nil then GWebViews := NSMutableDictionary.alloc.init;
+  if GWebSrcs = nil then GWebSrcs := NSMutableDictionary.alloc.init;
+  n := TinaEmbedCount;
+  live := NSMutableSet.setWithCapacity(4);
+  for i := 0 to n - 1 do
+  begin
+    if TinaEmbedKind(i) <> 5 then Continue;   // 5 = <iframe>
+    TinaEmbedRect(i, x, y, w, h);
+    if (w <= 0) or (h <= 0) then Continue;
+    key := NSString.stringWithUTF8String(PChar(TinaEmbedKey(i)));
+    live.addObject(key);
+    wv := WKWebView(GWebViews.objectForKey(key));
+    if wv = nil then
+    begin
+      cfg := WKWebViewConfiguration.alloc.init;
+      wv := WKWebView(WKWebView.alloc).initWithFrame_configuration(NSMakeRect(x, y, w, h), cfg);
+      cfg.release;
+      host.addSubview(wv);
+      GWebViews.setObject_forKey(wv, key);   // the dictionary + superview own it
+      wv.release;
+    end
+    else
+      wv.setFrame(NSMakeRect(x, y, w, h));   // track scroll / re-layout
+    src := TinaEmbedSrc(i);
+    if src = '' then src := 'about:blank';
+    nsrc := NSString.stringWithUTF8String(PChar(src));
+    loaded := NSString(GWebSrcs.objectForKey(key));
+    if (loaded = nil) or not loaded.isEqualToString(nsrc) then
+    begin
+      GWebSrcs.setObject_forKey(nsrc, key);   // record even a bad URL: no retry loop
+      url := NSURL.URLWithString(nsrc);
+      if url <> nil then wv.loadRequest(NSURLRequest.requestWithURL(url));
+    end;
+  end;
+  // remove web views whose <iframe> is no longer laid out
+  keys := GWebViews.allKeys;
+  if keys.count = 0 then Exit;      // NB: count is unsigned — never do count-1 at 0
+  for k := 0 to keys.count - 1 do
+  begin
+    key := NSString(keys.objectAtIndex(k));
+    if not live.containsObject(key) then
+    begin
+      wv := WKWebView(GWebViews.objectForKey(key));
+      if wv <> nil then
+      begin
+        wv.stopLoading;
+        wv.removeFromSuperview;
+      end;
+      GWebViews.removeObjectForKey(key);
+      GWebSrcs.removeObjectForKey(key);
+    end;
+  end;
+end;
+
 procedure TTina4View.drawRect(dirtyRect: NSRect);
 var path: string;
 begin
@@ -1412,7 +1498,11 @@ begin
     shell.Snapshot(path);
   end;
   // native <video> overlays — only in a real window (skip headless snapshots)
-  if window <> nil then SyncCocoaVideos(self);
+  if window <> nil then
+  begin
+    SyncCocoaVideos(self);
+    SyncCocoaWebViews(self);   // native <iframe> overlays (the OS web view)
+  end;
 end;
 
 procedure TTina4View.mouseDown(event: NSEvent);
