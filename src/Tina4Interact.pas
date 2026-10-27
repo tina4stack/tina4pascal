@@ -281,6 +281,9 @@ var
   GLayoutDirty: Boolean = False; // DOM mutated → re-run layout only
   GMoveRepaint: Boolean = False; // an onmousemove handler fired → host should repaint
   GLayoutW: Single = -1;
+  GLayoutViewH: Single = -1;    // viewport height the current layout was built at
+                                // (vh units + position:fixed bottom/top anchor to
+                                // GViewH, so a height change must force a relayout)
   GDensity: Single = 1;
   GViewH: Single = 0;           // CSS px
   GScrollY: Single = 0;         // CSS px
@@ -1303,7 +1306,7 @@ begin
   LoadFontFaces;                          // @font-face: register downloadable fonts
   GEngine := TLayoutEngine.Create(GCanvas, GSheet);
   GRoot := GEngine.Build(GParser.Root, W, GViewH);
-  GLayoutW := W;
+  GLayoutW := W; GLayoutViewH := GViewH;
   GDocDirty := False; GLayoutDirty := False;
   if AutofocusFirst(GParser.Root) then GAutoKeyboard := True;
   LoadIncludes(GParser.Root);            // fetch + splice any <include src="…">
@@ -1320,7 +1323,7 @@ begin
   GSheet.SetMediaContext(W, GDarkMode);   // @media context may have changed
   GEngine := TLayoutEngine.Create(GCanvas, GSheet);
   GRoot := GEngine.Build(GParser.Root, W, GViewH);
-  GLayoutW := W;
+  GLayoutW := W; GLayoutViewH := GViewH;
   GLayoutDirty := False;
 end;
 
@@ -2016,10 +2019,15 @@ begin
     if BuiltinsDirty then begin BuiltinsDirty := False; GLayoutDirty := True; end;
     if GDocDirty then
       ParseDoc(cssW)
-    else if GLayoutDirty or (Abs(GLayoutW - cssW) > 0.5) then
-      LayoutDoc(cssW);   // width change RELAYOUTS (keeps the DOM) — re-parsing here
-                         // frees nodes an app may still reference (e.g. runtime-
-                         // added children), and loses them across a resize.
+    else if GLayoutDirty or (Abs(GLayoutW - cssW) > 0.5)
+            or (Abs(GLayoutViewH - GViewH) > 0.5) then
+      LayoutDoc(cssW);   // width OR viewport-height change RELAYOUTS (keeps the DOM).
+                         // Height matters because vh units and position:fixed
+                         // bottom/top anchor to GViewH; without this a late client-
+                         // size settle (e.g. a height-only WM_SIZE) leaves fixed
+                         // bottom bars and 100vh anchored to the stale height.
+                         // Re-parsing here would free nodes an app may still
+                         // reference (runtime-added children), so relayout, don't reparse.
   end;
   GCanvas.FillRect(0, 0, cssW, cssH, DocCanvasBg);
   if GHtml = '' then Exit;
