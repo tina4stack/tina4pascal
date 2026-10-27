@@ -131,6 +131,11 @@ type
       nil when Tag is not a replaced element. }
     function MakeReplacedBox(T: THTMLTag; const cs: TComputedStyle;
       CW: Single): TLayoutBox;
+    { Resolve an <img>'s box size from its style (width/height px or %), the
+      intrinsic size iw x ih (0 if unknown), aspect ratio for an auto axis, and
+      min/max-width/height. Shared by the replaced-box and inline-image paths. }
+    procedure SizeImageBox(const cs: TComputedStyle; CW, iw, ih: Single;
+      out oW, oH: Single);
     function MakeControl(Tag: THTMLTag; St: TComputedStyle; AvailW: Single): TLayoutBox;
     function LayoutControlBlock(Parent: TLayoutBox; Tag: THTMLTag;
       const St: TComputedStyle; X, Y, AvailW: Single): Single;
@@ -2710,6 +2715,42 @@ begin
   end;
 end;
 
+procedure TLayoutEngine.SizeImageBox(const cs: TComputedStyle; CW, iw, ih: Single;
+  out oW, oH: Single);
+var ew, eh, mxw, mnw, mxh, mnh: Single;
+begin
+  // width/height may be px OR % — resolve against the container width. (A % height
+  // has no definite container height here, so it resolves to auto.) This is what
+  // makes width:70%/max-width work on an <img>, instead of it always taking its
+  // intrinsic size clamped to the container.
+  ew := ResolveSize(cs.ExplicitWidth, CW);
+  eh := ResolveSize(cs.ExplicitHeight, 0);
+  // each axis: explicit wins; an auto axis follows the intrinsic aspect from the
+  // other axis, else the intrinsic size, else a placeholder default.
+  if ew >= 0 then oW := ew
+  else if (eh >= 0) and (ih > 0) then oW := iw * (eh / ih)
+  else if iw > 0 then oW := iw
+  else oW := 120;
+  if eh >= 0 then oH := eh
+  else if (ew >= 0) and (iw > 0) then oH := ih * (oW / iw)
+  else if ih > 0 then oH := ih
+  else oH := 80;
+  // min/max-width & min/max-height clamps. When a clamp hits and the OTHER axis is
+  // auto, rescale it to keep the intrinsic aspect ratio.
+  mxw := ResolveSize(cs.MaxWidth, CW);
+  if (mxw >= 0) and (oW > mxw) then
+  begin if (eh < 0) and (oW > 0) then oH := oH * (mxw / oW); oW := mxw; end;
+  mnw := ResolveSize(cs.MinWidth, CW);
+  if (mnw >= 0) and (oW < mnw) then
+  begin if (eh < 0) and (oW > 0) then oH := oH * (mnw / oW); oW := mnw; end;
+  mxh := ResolveSize(cs.MaxHeight, 0);
+  if (mxh >= 0) and (oH > mxh) then
+  begin if (ew < 0) and (oH > 0) then oW := oW * (mxh / oH); oH := mxh; end;
+  mnh := ResolveSize(cs.MinHeight, 0);
+  if (mnh >= 0) and (oH < mnh) then
+  begin if (ew < 0) and (oH > 0) then oW := oW * (mnh / oH); oH := mnh; end;
+end;
+
 function TLayoutEngine.MakeReplacedBox(T: THTMLTag; const cs: TComputedStyle;
   CW: Single): TLayoutBox;
 var
@@ -2753,15 +2794,9 @@ begin
     Result := TLayoutBox.Create;
     Result.Tag := T; Result.Style := cs; Result.IsImagePlaceholder := True;
     Result.ImageHandle := FCanvas.LoadImage(ResolveImgSrc(T, FViewportW, cs.ExplicitWidth));
-    if cs.ExplicitWidth >= 0 then Result.W := cs.ExplicitWidth else Result.W := 120;
-    if cs.ExplicitHeight >= 0 then Result.H := cs.ExplicitHeight else Result.H := 80;
-    if ((cs.ExplicitWidth < 0) or (cs.ExplicitHeight < 0)) and
-       FCanvas.ImageSize(Result.ImageHandle, iw, ih) and (iw > 0) and (ih > 0) then
-    begin
-      if (cs.ExplicitWidth < 0) and (cs.ExplicitHeight < 0) then begin Result.W := iw; Result.H := ih; end
-      else if cs.ExplicitWidth < 0 then Result.W := iw * (Result.H / ih)
-      else Result.H := ih * (Result.W / iw);
-    end;
+    if not (FCanvas.ImageSize(Result.ImageHandle, iw, ih) and (iw > 0) and (ih > 0)) then
+    begin iw := 0; ih := 0; end;
+    SizeImageBox(cs, CW, iw, ih, Result.W, Result.H);
   end;
   if Result <> nil then
   begin
@@ -3084,7 +3119,17 @@ begin
     if isCol then
     begin
       contentH := 0;
-      for i := 0 to items.Count - 1 do contentH := contentH + items[i].H;
+      for i := 0 to items.Count - 1 do
+      begin
+        contentH := contentH + items[i].H;
+        // fixed (non-auto) vertical margins are part of each item's main-axis
+        // extent — positioning advances curr by margin.Top + H + margin.Bottom
+        // (see the column placement loop), so the container must reserve them too
+        // or the last item overflows (clipped). Auto margins (-1) only absorb
+        // free space when the height is definite, so they add nothing here.
+        if items[i].Style.Margin.Top > 0 then contentH := contentH + items[i].Style.Margin.Top;
+        if items[i].Style.Margin.Bottom > 0 then contentH := contentH + items[i].Style.Margin.Bottom;
+      end;
       // include the row-gaps between stacked items — items are POSITIONED with
       // them (curr += cb.H + flexGap), so omitting them left the container short
       // and the last item overflowed (clipped) its box.
@@ -4126,8 +4171,24 @@ type
   and flex paths — see the declaration for the contract. }
 procedure TLayoutEngine.LayoutAbsChild(Box: TLayoutBox; c: THTMLTag;
   const cs, ParentStyle: TComputedStyle; CX, CY, CW: Single);
-var absBox: TLayoutBox; absX, absY, absCH: Single;
+var absBox: TLayoutBox; absX, absY, absCH, stretchW: Single;
 begin
+  // If left+right are both pinned with no explicit width, the box STRETCHES to
+  // fill the gap. Resolve that width BEFORE laying out children, so they size and
+  // centre against the FINAL width. (Laying out at CW and widening the box after
+  // left the content sized/aligned for the old, narrower width — e.g. a fixed
+  // left:0;right:0 bottom bar's inner column stayed narrow and left-aligned.)
+  // For fixed the containing block is the viewport; for absolute, the parent's
+  // padding box (content + padding).
+  stretchW := -1;
+  if (ResolveSize(cs.ExplicitWidth, CW) < 0) and (cs.CSSLeft > -9998) and (cs.CSSRight > -9998) then
+  begin
+    if SameText(cs.CSSPosition, 'fixed') then
+      stretchW := Max(0, FViewportW - cs.CSSLeft - cs.CSSRight)
+    else
+      stretchW := Max(0, (CW + ParentStyle.Padding.Left + ParentStyle.Padding.Right)
+                         - cs.CSSLeft - cs.CSSRight);
+  end;
   // Replaced elements (img/svg/qrcode) are set up by MakeReplacedBox, which
   // LayoutBlock never calls — so an absolutely-positioned <img> would never
   // load or paint its image. Build it here (nil for ordinary elements, which
@@ -4137,16 +4198,16 @@ begin
     Box.Children.Add(absBox)
   else
   begin
-    LayoutBlock(Box, c, ParentStyle, CX, CY, CW);
+    if stretchW >= 0 then
+      LayoutBlock(Box, c, ParentStyle, CX, CY, stretchW)   // lay children out at final width
+    else
+      LayoutBlock(Box, c, ParentStyle, CX, CY, CW);
     absBox := Box.Children[Box.Children.Count - 1];
   end;
-  // left+right both pinned with no explicit width → stretch to fill the gap
-  // (CSS: the width resolves to containing-block − left − right). Same for
-  // top+bottom → stretch the height. This is what `inset:Npx` relies on.
-  if (ResolveSize(cs.ExplicitWidth, CW) < 0) and (cs.CSSLeft > -9998) and (cs.CSSRight > -9998) then
-    // stretch across the containing block's PADDING box (content + padding)
-    absBox.W := Max(0, (CW + ParentStyle.Padding.Left + ParentStyle.Padding.Right)
-                       - cs.CSSLeft - cs.CSSRight)
+  // left+right both pinned with no explicit width → the box fills that gap.
+  // (Same for top+bottom → stretch the height; see below. This is `inset:Npx`.)
+  if stretchW >= 0 then
+    absBox.W := stretchW
   // Shrink-to-fit: an out-of-flow box with no explicit width sizes to its
   // content (CSS "shrink-to-fit"), not the full container — e.g. a pill
   // pinned with `right` only should hug its text, not span the row.
@@ -4845,23 +4906,13 @@ var
       // <picture>/srcset: choose the best source for this viewport + slot
       it.Box.ImageHandle := FCanvas.LoadImage(
         ResolveImgSrc(T, FViewportW, cs.ExplicitWidth));
-      if cs.ExplicitWidth >= 0 then it.Box.W := cs.ExplicitWidth else it.Box.W := 120;
-      if cs.ExplicitHeight >= 0 then it.Box.H := cs.ExplicitHeight else it.Box.H := 80;
-      // no width/height attributes: fall back to the image's intrinsic size
-      if ((cs.ExplicitWidth < 0) or (cs.ExplicitHeight < 0)) and
-         FCanvas.ImageSize(it.Box.ImageHandle, iw, ih) and (iw > 0) and (ih > 0) then
-      begin
-        if (cs.ExplicitWidth < 0) and (cs.ExplicitHeight < 0) then
-        begin
-          it.Box.W := iw; it.Box.H := ih;
-        end
-        else if cs.ExplicitWidth < 0 then
-          it.Box.W := iw * (it.Box.H / ih)   // keep aspect from given height
-        else
-          it.Box.H := ih * (it.Box.W / iw);  // keep aspect from given width
-      end;
+      // size from style (width/height px or %, aspect, min/max) + intrinsic size —
+      // same rules as the replaced-box path (shared helper).
+      if not (FCanvas.ImageSize(it.Box.ImageHandle, iw, ih) and (iw > 0) and (ih > 0)) then
+      begin iw := 0; ih := 0; end;
+      SizeImageBox(cs, CW, iw, ih, it.Box.W, it.Box.H);
       if it.Box.W > CW then
-      begin // scale down to fit
+      begin // never overflow the line box's content width
         it.Box.H := it.Box.H * (CW / it.Box.W);
         it.Box.W := CW;
       end;
