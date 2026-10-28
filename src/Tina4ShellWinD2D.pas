@@ -106,7 +106,8 @@ type
       strokeWidth: Single; strokeStyle: Pointer); stdcall;
     DrawRectangle: Pointer;                                // 16
     FillRectangle: procedure(This: Pointer; const rect: TD2DRectF; brush: Pointer); stdcall; // 17
-    DrawRoundedRectangle: Pointer;                         // 18
+    DrawRoundedRectangle: procedure(This: Pointer; const rr: TD2DRoundedRect; brush: Pointer;  // 18
+      strokeWidth: Single; strokeStyle: Pointer); stdcall;   // roundRect is `const *` in the C header → const record == by-ref == pointer
     FillRoundedRectangle: procedure(This: Pointer; const rr: TD2DRoundedRect; brush: Pointer); stdcall; // 19
     DrawEllipse, FillEllipse, DrawGeometry: Pointer;       // 20..22
     FillGeometry: procedure(This: Pointer; geom, brush, opacityBrush: Pointer); stdcall; // 23
@@ -260,6 +261,7 @@ type
     procedure FillRect(X, Y, W, H: Single; Color: TTina4Color); override;
     procedure StrokeRect(X, Y, W, H, Thickness: Single; Color: TTina4Color); override;
     procedure FillRoundRect(X, Y, W, H, Radius: Single; Color: TTina4Color); override;
+    procedure StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color); override;
     procedure FillLinearGradient(X, Y, W, H, Radius, AngleDeg: Single;
       const Colors: array of TTina4Color; const Positions: array of Single); override;
     procedure FillRadialGradient(X, Y, W, H, Radius: Single;
@@ -530,6 +532,23 @@ begin
   begin RT(FRT)^.FillRectangle(FRT, RectF(X, Y, X + W, Y + H), FBrush); Exit; end;
   rr.rect := RectF(X, Y, X + W, Y + H); rr.rx := r; rr.ry := r;
   RT(FRT)^.FillRoundedRectangle(FRT, rr, FBrush);
+end;
+
+{ Rounded border stroke. Without this override the base class fell back to the
+  square StrokeRect, so every input/button border — and the accent focus ring,
+  which is just the border recoloured — rendered as a sharp rectangle around the
+  rounded fill. D2D strokes centred on the geometry path, matching the raster/GDI
+  shells (full box rect + full radius, stroke straddling the edge). }
+procedure TD2DCanvas.StrokeRoundRect(X, Y, W, H, Radius, Thickness: Single; Color: TTina4Color);
+var rr: TD2DRoundedRect; r, t: Single;
+begin
+  if (FRT = nil) or (W <= 0) or (H <= 0) then Exit;
+  t := Thickness; if t < 1 then t := 1;
+  r := Radius; if r > W / 2 then r := W / 2; if r > H / 2 then r := H / 2; if r < 0 then r := 0;
+  if r <= 0 then begin StrokeRect(X, Y, W, H, t, Color); Exit; end;
+  PD2DBrushVtbl(PPointer(FBrush)^)^.SetColor(FBrush, ColorF(Color));
+  rr.rect := RectF(X, Y, X + W, Y + H); rr.rx := r; rr.ry := r;
+  RT(FRT)^.DrawRoundedRectangle(FRT, rr, FBrush, t, nil);
 end;
 
 { Build the 0..1 stop locations (explicit position wins, else evenly spread,
