@@ -422,9 +422,14 @@ begin
     w := rc.Right - rc.Left; h := rc.Bottom - rc.Top;
     if w <= 0 then w := 1; if h <= 0 then h := 1;
   end;
-  FillChar(rtp, SizeOf(rtp), 0);     // DEFAULT type, DPI 96 (dpi 0 => default), usage/level 0
+  FillChar(rtp, SizeOf(rtp), 0);     // DEFAULT type, usage/level 0
   rtp.pixelFormat.format := DXGI_B8G8R8A8;
   rtp.pixelFormat.alphaMode := ALPHA_PREMULT;
+  // Pin the RT to 96 DPI so 1 DIP == 1 pixel and D2D never auto-scales. (dpi 0
+  // would make D2D read the DESKTOP DPI — 144 on a DPI-aware process at 150% —
+  // and double-scale on top of our own GCanvas.Scale(density). pixelSize stays
+  // physical px; all HiDPI scaling is driven explicitly by the engine's density.)
+  rtp.dpiX := 96; rtp.dpiY := 96;
   hp.hwnd := FHwnd;
   hp.pixelSize.w := w; hp.pixelSize.h := h;
   if FPresentImmediately then hp.presentOptions := PRESENT_IMMEDIATELY

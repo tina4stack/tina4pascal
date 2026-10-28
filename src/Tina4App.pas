@@ -246,6 +246,7 @@ var
   GHwnd: HWND;
   GW: Integer = 1024;
   GH: Integer = 768;
+  GWinScale: Single = 1;       // device-pixels-per-CSS-px (HiDPI). 1.5 at 150% scaling.
   GMouseDown: Boolean = False;
 
 procedure WRepaint; begin InvalidateRect(GHwnd, nil, False); end;
@@ -274,9 +275,9 @@ begin
     rw := RENDER_MAX_W;
     rh := Round(Int64(GH) * RENDER_MAX_W div GW);
     if rh < 1 then rh := 1;
-    dens := rw / GW;
+    dens := (rw / GW) * GWinScale;
   end
-  else begin rw := GW; rh := GH; dens := 1.0; end;
+  else begin rw := GW; rh := GH; dens := GWinScale; end;
 end;
 
 procedure EnsureBackBuffer(dc: HDC; rw, rh: Integer);
@@ -314,7 +315,7 @@ begin
   if GUseD2D and (GD2D <> nil) then
   begin
     GD2D.BeginFrame;
-    TinaFrame(GW, GH, 1.0);
+    TinaFrame(GW, GH, GWinScale);   // GW/GH are physical px; lay out at CSS px, raster crisp
     if not GD2D.EndFrame then begin GD2D.Recreate; WRepaint; end;
     Inc(GFrameCount);
     // Diagnostic (TINA4_FRAMES=1): the title counter rises on every repaint, so
@@ -362,7 +363,7 @@ begin
 end;
 
 function WWndProc(hwnd: HWND; msg: UINT; wp: WPARAM; lp: LPARAM): LRESULT; stdcall;
-var ps: PAINTSTRUCT; dc: HDC; x, y, dz: Integer; fdir: string;
+var ps: PAINTSTRUCT; dc: HDC; x, y, dz: Integer; fdir: string; prc: PRect;
 begin
   Result := 0;
   case msg of
@@ -372,6 +373,14 @@ begin
       // wp=SIZE_MINIMIZED (1) gives a 0-size client — skip the rebuild then.
       if GUseD2D and (GD2D <> nil) and (wp <> SIZE_MINIMIZED) and (GW > 0) and (GH > 0) then
         GD2D.Recreate(GW, GH);
+      WRepaint; end;
+    $02E0 {WM_DPICHANGED}: begin   // moved to a monitor with different scaling
+      GWinScale := (wp and $FFFF) / 96;         // new DPI in the low word of wParam
+      prc := PRect(lp);                         // Windows' suggested new window rect
+      if prc <> nil then
+        SetWindowPos(hwnd, 0, prc^.Left, prc^.Top,
+          prc^.Right - prc^.Left, prc^.Bottom - prc^.Top,
+          SWP_NOZORDER or SWP_NOACTIVATE);      // fires WM_SIZE -> D2D RT rebuilds at new px
       WRepaint; end;
     WM_LBUTTONDOWN: begin GMouseDown := True; SetCapture(hwnd);
       x := SmallInt(lp and $FFFF); y := SmallInt((lp shr 16) and $FFFF); TinaTouch(0, x, y); WRepaint; end;
@@ -438,15 +447,90 @@ begin
   GCanvas.Free; SelectObject(GhMem, oldb); DeleteObject(dib); DeleteDC(GhMem);
 end;
 
+{ ---- HiDPI ---------------------------------------------------------------
+  A DPI-UNAWARE window is rendered by Windows at 96 DPI into a logical-size
+  back-buffer and then bitmap-stretched to the monitor's scaling (e.g. 1.5x at
+  150%) — that stretch is what blurs text and borders. We declare per-monitor
+  awareness at startup so the client area becomes real device pixels (no OS
+  stretch), then feed the scale into the engine as `density`: the HTML lays out
+  at CSS px (pixel-identical to the browser) but rasterises crisp at device px.
+  The APIs are resolved dynamically so the exe still loads on older Windows. }
+procedure MakeProcessDpiAware;
+type
+  TSetCtx       = function(ctx: PtrInt): BOOL; stdcall;      // Win10 1703+
+  TSetAwareness = function(value: Integer): HResult; stdcall; // Win8.1
+  TSetAware     = function: BOOL; stdcall;                    // Vista+
+const
+  PER_MONITOR_AWARE_V2 = PtrInt(-4);     // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+  PROCESS_PER_MONITOR_DPI_AWARE = 2;
+var u32, shc: HMODULE; pCtx: TSetCtx; pAw: TSetAwareness; pOld: TSetAware;
+begin
+  u32 := GetModuleHandleW('user32.dll');
+  if u32 <> 0 then
+  begin
+    pCtx := TSetCtx(GetProcAddress(u32, 'SetProcessDpiAwarenessContext'));
+    if Assigned(pCtx) and pCtx(PER_MONITOR_AWARE_V2) then Exit;
+  end;
+  shc := LoadLibraryW('shcore.dll');
+  if shc <> 0 then
+  begin
+    pAw := TSetAwareness(GetProcAddress(shc, 'SetProcessDpiAwareness'));
+    if Assigned(pAw) and (pAw(PROCESS_PER_MONITOR_DPI_AWARE) = S_OK) then Exit;
+  end;
+  if u32 <> 0 then
+  begin
+    pOld := TSetAware(GetProcAddress(u32, 'SetProcessDPIAware'));
+    if Assigned(pOld) then pOld();
+  end;
+end;
+
+{ Scale (1.0 = 96 DPI) for a window, or the primary monitor when hwnd=0 (used to
+  size the window before it exists). Falls back to the DC's LOGPIXELSX — correct
+  for a DPI-aware process — on Windows older than 1607. }
+function DpiScaleFor(hwnd: HWND): Single;
+type
+  TGetDpiWin = function(h: HWND): UINT; stdcall;
+  TGetDpiSys = function: UINT; stdcall;
+var u32: HMODULE; pWin: TGetDpiWin; pSys: TGetDpiSys; dpi: UINT; dc: HDC;
+begin
+  dpi := 0;
+  u32 := GetModuleHandleW('user32.dll');
+  if u32 <> 0 then
+  begin
+    if hwnd <> 0 then
+    begin
+      pWin := TGetDpiWin(GetProcAddress(u32, 'GetDpiForWindow'));
+      if Assigned(pWin) then dpi := pWin(hwnd);
+    end;
+    if dpi = 0 then
+    begin
+      pSys := TGetDpiSys(GetProcAddress(u32, 'GetDpiForSystem'));
+      if Assigned(pSys) then dpi := pSys();
+    end;
+  end;
+  if dpi = 0 then
+  begin
+    dc := GetDC(0);
+    if dc <> 0 then begin dpi := GetDeviceCaps(dc, LOGPIXELSX); ReleaseDC(0, dc); end;
+  end;
+  if dpi = 0 then dpi := 96;
+  Result := dpi / 96;
+end;
+
 procedure RunApp(const Title, TemplateDir, Template, JsonContext, IconPath: string; W, H: Integer);
 var wc: WNDCLASSEXW; m: MSG; cls, cap: UnicodeString; ico, appIco: HICON;
-    snap, dk, dout: string; overlay: Boolean; ix, iy: Single;
+    snap, dk, dout: string; overlay: Boolean; ix, iy: Single; initScale: Single;
 begin
   GW := W; GH := H;
   ParseArgs(snap, GW, GH, overlay, dk, dout, ix, iy);
   RenderPdfAndExit(TemplateDir, Template, JsonContext, GW);   // --pdf: headless, no window
   if (snap <> '') or (dk <> '') or (GScript <> '') then
   begin WinHeadless(TemplateDir, Template, JsonContext, GW, GH, snap, overlay, dk, dout, ix, iy); Halt(0); end;
+  // Windowed path only: become DPI-aware BEFORE any window/DC so Windows stops
+  // stretching us. (Headless above keeps 96-DPI 1:1 — the browser-comparison
+  // ground truth — so this is deliberately after the headless early-returns.)
+  MakeProcessDpiAware;
+  initScale := DpiScaleFor(0);   // primary-monitor scale, to size the window 1:1 in apparent px
   cls := 'Tina4AppWindow';
   { the exe's own embedded icon (MAINICON, from a {$R app.rc}), if it has one —
     used for the window title bar + taskbar so a standalone app is branded with
@@ -461,7 +545,9 @@ begin
   RegisterClassExW(wc);
   cap := UnicodeString(Title);
   GHwnd := CreateWindowExW(0, PWideChar(cls), PWideChar(cap), WS_OVERLAPPEDWINDOW,
-    CW_USEDEFAULT, CW_USEDEFAULT, W, H, 0, 0, HInstance, nil);
+    CW_USEDEFAULT, CW_USEDEFAULT, Round(W * initScale), Round(H * initScale),
+    0, 0, HInstance, nil);
+  GWinScale := DpiScaleFor(GHwnd);   // the window's real scale drives layout density
   ico := 0;
   if IconPath <> '' then ico := WinLoadHIcon(IconPath);   // explicit PNG wins
   if ico = 0 then ico := appIco;                          // else the embedded icon
