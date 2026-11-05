@@ -1082,33 +1082,56 @@ end;
   (float samples, size mismatch), so the caller falls back to the OS blend. }
 function SoftBlendRepOver(src, bd: NSBitmapImageRep; const Mode: string): Boolean;
 var
-  sd, dd: PByte; sbpr, dbpr, pw, ph, bpw, bph, x, y, o, oo: Integer;
-  sOff, dOff: array[0..3] of Integer; sPM, dPM: Boolean;
+  sd, dd: PByte; sbpr, dbpr, pw, ph, bpw, bph, x, y, o, oo, sBps, dBps: Integer;
+  sOff, dOff: array[0..3] of Integer; sPM, sFloat, dFloat: Boolean;
   sa, sr, sg, sb, br, bg, bb, rr, rg, rb: Single; blended: TTina4Color;
+
+  { Read/write one channel sample at byteOff, honouring 8-bit, 16-bit unsigned
+    (what bitmapImageRepByConvertingToColorSpace hands back on a wide-gamut Mac)
+    and 16-bit half-float — the same dispatch ApplyFilterToRep uses. Without 16-bit
+    support the blend bailed to the OS (P3-space) blend, turning blue×yellow muddy. }
+  function RdS(p: PByte; byteOff, bps: Integer; flt: Boolean): Single;
+  begin
+    if flt then Result := Half2Single(PWord(p + byteOff)^)
+    else if bps = 2 then Result := PWord(p + byteOff)^ / 65535
+    else Result := p[byteOff] / 255;
+  end;
+  procedure WrS(p: PByte; byteOff, bps: Integer; flt: Boolean; v: Single);
+  begin
+    if v < 0 then v := 0; if v > 1 then v := 1;
+    if flt then PWord(p + byteOff)^ := Single2Half(v)
+    else if bps = 2 then PWord(p + byteOff)^ := Round(v * 65535)
+    else p[byteOff] := Round(v * 255);
+  end;
 begin
   Result := False;
   if (src = nil) or (bd = nil) then Exit;
-  if (src.bitsPerPixel <> 32) or (bd.bitsPerPixel <> 32) then Exit;   // 8-bit RGBA only
+  sBps := (src.bitsPerPixel div 8) div 4;   // bytes per sample: 1 (8-bit) or 2 (16-bit)
+  dBps := (bd.bitsPerPixel div 8) div 4;
+  if (sBps < 1) or (dBps < 1) then Exit;     // not 4-channel RGBA — fall back
   pw := src.pixelsWide; ph := src.pixelsHigh;
   bpw := bd.pixelsWide; bph := bd.pixelsHigh;
   if (pw = 0) or (ph = 0) or (bpw = 0) or (bph = 0) then Exit;   // backdrop may be at a different scale
   sd := PByte(src.bitmapData); dd := PByte(bd.bitmapData);
   if (sd = nil) or (dd = nil) then Exit;
   sbpr := src.bytesPerRow; dbpr := bd.bytesPerRow;
-  if (src.bitmapFormat and 1) <> 0 then begin sOff[0]:=1;sOff[1]:=2;sOff[2]:=3;sOff[3]:=0; end
-  else begin sOff[0]:=0;sOff[1]:=1;sOff[2]:=2;sOff[3]:=3; end;
-  if (bd.bitmapFormat and 1) <> 0 then begin dOff[0]:=1;dOff[1]:=2;dOff[2]:=3;dOff[3]:=0; end
-  else begin dOff[0]:=0;dOff[1]:=1;dOff[2]:=2;dOff[3]:=3; end;
-  sPM := (src.bitmapFormat and 2) = 0; dPM := (bd.bitmapFormat and 2) = 0;
+  sFloat := (src.bitmapFormat and 4) <> 0;   // NSBitmapFormatFloatingPointSamples
+  dFloat := (bd.bitmapFormat and 4) <> 0;
+  // channel byte offsets = sample index × bytes-per-sample, honouring alpha-first
+  if (src.bitmapFormat and 1) <> 0 then begin sOff[0]:=sBps;sOff[1]:=sBps*2;sOff[2]:=sBps*3;sOff[3]:=0; end
+  else begin sOff[0]:=0;sOff[1]:=sBps;sOff[2]:=sBps*2;sOff[3]:=sBps*3; end;
+  if (bd.bitmapFormat and 1) <> 0 then begin dOff[0]:=dBps;dOff[1]:=dBps*2;dOff[2]:=dBps*3;dOff[3]:=0; end
+  else begin dOff[0]:=0;dOff[1]:=dBps;dOff[2]:=dBps*2;dOff[3]:=dBps*3; end;
+  sPM := (src.bitmapFormat and 2) = 0;
   for y := 0 to ph - 1 do
     for x := 0 to pw - 1 do
     begin
-      o := y*sbpr + x*4;
-      oo := (y*bph div ph)*dbpr + (x*bpw div pw)*4;   // sample backdrop at matching position
-      sr := sd[o+sOff[0]]/255; sg := sd[o+sOff[1]]/255; sb := sd[o+sOff[2]]/255; sa := sd[o+sOff[3]]/255;
+      o := y*sbpr + x*4*sBps;
+      oo := (y*bph div ph)*dbpr + (x*bpw div pw)*4*dBps;   // sample backdrop at matching position
+      sr := RdS(sd,o+sOff[0],sBps,sFloat); sg := RdS(sd,o+sOff[1],sBps,sFloat);
+      sb := RdS(sd,o+sOff[2],sBps,sFloat); sa := RdS(sd,o+sOff[3],sBps,sFloat);
       if sPM and (sa > 0) then begin sr:=sr/sa; sg:=sg/sa; sb:=sb/sa; end;
-      br := dd[oo+dOff[0]]/255; bg := dd[oo+dOff[1]]/255; bb := dd[oo+dOff[2]]/255;
-      if dPM then ;   // backdrop alpha assumed 1 → straight == premult
+      br := RdS(dd,oo+dOff[0],dBps,dFloat); bg := RdS(dd,oo+dOff[1],dBps,dFloat); bb := RdS(dd,oo+dOff[2],dBps,dFloat);
       blended := BlendRGB(
         $FF000000 or (Round(sr*255) shl 16) or (Round(sg*255) shl 8) or Round(sb*255),
         $FF000000 or (Round(br*255) shl 16) or (Round(bg*255) shl 8) or Round(bb*255), Mode);
@@ -1116,13 +1139,8 @@ begin
       rr := sa*(((blended shr 16) and $FF)/255) + (1-sa)*br;
       rg := sa*(((blended shr 8)  and $FF)/255) + (1-sa)*bg;
       rb := sa*(( blended         and $FF)/255) + (1-sa)*bb;
-      if rr < 0 then rr := 0 else if rr > 1 then rr := 1;
-      if rg < 0 then rg := 0 else if rg > 1 then rg := 1;
-      if rb < 0 then rb := 0 else if rb > 1 then rb := 1;
-      sd[o+sOff[0]] := Round(rr*255);
-      sd[o+sOff[1]] := Round(rg*255);
-      sd[o+sOff[2]] := Round(rb*255);
-      sd[o+sOff[3]] := 255;                       // opaque result over an opaque backdrop
+      WrS(sd,o+sOff[0],sBps,sFloat,rr); WrS(sd,o+sOff[1],sBps,sFloat,rg);
+      WrS(sd,o+sOff[2],sBps,sFloat,rb); WrS(sd,o+sOff[3],sBps,sFloat,1.0);  // opaque over opaque
     end;
   Result := True;
 end;
