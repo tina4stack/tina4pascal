@@ -123,8 +123,13 @@ CLI drives FPC; the engine renders live) — the IDE assembles them.
 - **Media (`video`/`audio`/`iframe`/`canvas`)** — shell-owned native surfaces. The
   core lays out a correctly-sized placeholder box (width/height/CSS); the shell
   overlays a native view at that rect and keeps it positioned as the renderer
-  scrolls. iOS `video` via `AVPlayer`/`AVPlayerLayer` first (in progress), then
-  audio, then `iframe` (WKWebView) and a `canvas` draw hook.
+  scrolls. `video` is done on iOS/Android (macOS `AVPlayerView`), `audio` and
+  `canvas` are engine-drawn. **`iframe`** hosts the OS's own web view, nothing
+  bundled ([ADR-0016](../plan/adr/0016-iframe-hosts-the-os-web-view.md)): ✅ macOS
+  `WKWebView` (`examples/iframe`); next iOS `WKWebView`, Windows WebView2, Linux
+  WebKitGTK, Android `android.webkit.WebView`. Overlay follow-ups for all shells:
+  clip the web view under `position:fixed` chrome and track inner `overflow`
+  scrollers.
 - **iOS/Android paint parity** — native gradients (CGGradient / Android shaders) and
   numeric font-weight on those shells; they use the flat-average / binary-bold
   fallbacks today.

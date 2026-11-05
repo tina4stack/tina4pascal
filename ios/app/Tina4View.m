@@ -223,6 +223,7 @@ void tina4_ios_open_url(const char *url) {
     int n = tina4_embed_count();
     NSMutableSet<NSString *> *live = [NSMutableSet set];
     for (int i = 0; i < n; i++) {
+        if (tina4_embed_kind(i) >= 2) continue;   // video/audio only — not scanner/3d/camera/iframe
         char buf[2048];
         int len = tina4_embed_src(i, buf, (int)sizeof(buf));
         if (len <= 0) continue;

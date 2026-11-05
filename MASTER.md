@@ -60,6 +60,7 @@ gets an **ADR**. Conventions and templates: [`plan/README.md`](plan/README.md).
 - [ADR-0013](plan/adr/0013-builtins-dom-node-api.md) — runtime DOM node primitives in Tina4Builtins
 - [ADR-0014](plan/adr/0014-dynamic-node-animation-and-viewport.md) — dynamically-added nodes animate; apps can read the viewport
 - [ADR-0015](plan/adr/0015-ios-safe-area-css-values.md) — native safe-area insets flow through CSS environment values
+- [ADR-0016](plan/adr/0016-iframe-hosts-the-os-web-view.md) — `<iframe>` hosts the OS's own web view for external content; the engine still has none
 
 ### Drift tracker — `plan/drift/`
 - [framework-gaps](plan/drift/framework-gaps.md) — standing table of claim-vs-code gaps; read before promising a capability ([how to maintain](plan/drift/README.md))

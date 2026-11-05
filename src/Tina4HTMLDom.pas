@@ -2495,6 +2495,14 @@ begin
 
         Parent.Children.Add(ChildTag);
 
+        // <iframe> content is raw text (fallback for UAs without frames, as in
+        // the HTML spec) — never parsed or laid out; the shell hosts the page
+        if SameText(TagName, 'iframe') and not SelfClose then
+        begin
+          SkipRawContent(TagName);
+          Continue;
+        end;
+
         // Void or self-closing — no children
         if IsVoidTag(TagName) or SelfClose then
           Continue;
@@ -3626,6 +3634,19 @@ begin
       Result.BackgroundImage := Tag.GetAttribute('poster');
       Result.BackgroundSize := 'cover';
     end;
+    if Result.ExplicitWidth < 0 then Result.ExplicitWidth := 300;
+    if Result.ExplicitHeight < 0 then Result.ExplicitHeight := 150;
+  end
+  else if TN = 'iframe' then
+  begin
+    // External web content: the shell overlays the OS's own web view (WKWebView,
+    // WebView2, WebKitGTK, android.webkit.WebView) on the content box; the core
+    // only reserves the box. HTML default intrinsic size 300x150 with the UA's
+    // 2px frame border. A shell without a web view leaves the white box showing.
+    Result.Display := 'inline-block';
+    Result.BackgroundColor := $FFFFFFFF;
+    Result.SetBorderColor($FF8F8F8F);
+    Result.SetBorderWidth(2);
     if Result.ExplicitWidth < 0 then Result.ExplicitWidth := 300;
     if Result.ExplicitHeight < 0 then Result.ExplicitHeight := 150;
   end
